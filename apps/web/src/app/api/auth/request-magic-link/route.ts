@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
 import { getPublicEnv } from "@/lib/env";
@@ -9,23 +9,30 @@ export const runtime = "nodejs";
 
 const BodySchema = z.object({
   email: z.string().email(),
+  redirectTo: z.string().optional(),
 });
 
 function normalizeEmail(raw: string): string {
   return raw.trim().toLowerCase();
 }
 
-export async function POST(req: Request) {
-  const origin = new URL(req.url).origin;
-  const redirectTo = `${origin}/auth/callback`;
+export async function POST(request: NextRequest) {
+  const origin = new URL(request.url).origin;
 
   let email: string;
+  let postAuthRedirectTo: string | undefined;
   try {
-    const body = BodySchema.parse(await req.json());
+    const body = BodySchema.parse(await request.json());
     email = normalizeEmail(body.email);
+    postAuthRedirectTo =
+      typeof body.redirectTo === "string" && body.redirectTo.startsWith("/") ? body.redirectTo : undefined;
   } catch {
     return NextResponse.json({ ok: false }, { status: 400 });
   }
+
+  const callbackUrl = new URL("/auth/callback", origin);
+  if (postAuthRedirectTo) callbackUrl.searchParams.set("redirectTo", postAuthRedirectTo);
+  const emailRedirectTo = callbackUrl.toString();
 
   // Security posture: invite-only. We do NOT reveal allowlist membership.
   // If not allowlisted, we respond with a generic ok.
@@ -50,17 +57,20 @@ export async function POST(req: Request) {
   // - If the user doesn't exist yet: send an invite email (admin-only, still internal).
   // - If the user exists: send a standard OTP/magic link.
   const inviteRes = await admin.auth.admin.inviteUserByEmail(email, {
-    redirectTo,
+    redirectTo: emailRedirectTo,
   });
 
   if (inviteRes.error) {
     console.error("[auth] inviteUserByEmail failed; falling back to OTP", {
       message: inviteRes.error.message,
     });
-    // User probably already exists; fall back to sending a magic link via the public client.
+    // User probably already exists; fall back to sending a magic link via a stateless client.
+    // We intentionally avoid PKCE here so the link works even if opened in another browser/device;
+    // the callback uses token_hash verification to establish the session server-side.
     const env = getPublicEnv();
     const anon = createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.NEXT_PUBLIC_SUPABASE_ANON_KEY, {
       auth: {
+        flowType: "implicit",
         persistSession: false,
         autoRefreshToken: false,
       },
@@ -69,7 +79,7 @@ export async function POST(req: Request) {
     const otpRes = await anon.auth.signInWithOtp({
       email,
       options: {
-        emailRedirectTo: redirectTo,
+        emailRedirectTo: emailRedirectTo,
         // Preserve invite-only posture: OTP fallback should not create new users.
         shouldCreateUser: false,
       },
