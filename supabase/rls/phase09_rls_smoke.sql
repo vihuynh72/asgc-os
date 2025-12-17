@@ -1,7 +1,7 @@
 -- Phase 09 RLS smoke checks (task_comments + task_attachments)
 -- Run in Supabase SQL editor AFTER applying migrations:
 -- - 202512160009_phase09_comments_attachments_v1.sql
--- (Optional but recommended): 202512160008_1_phase08_projects_fix.sql
+-- (Optional but recommended): 202512160010_phase08_1_projects_fix.sql
 --
 -- These are manual assertions (read outputs / row counts / expected errors).
 --

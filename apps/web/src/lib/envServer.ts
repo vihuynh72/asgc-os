@@ -19,3 +19,27 @@ export function getServerEnv(): ServerEnv {
 
   return parsed.data;
 }
+
+const EmailEnvSchema = z.object({
+  EMAIL_PROVIDER: z.enum(["resend"]),
+  EMAIL_FROM: z.string().min(1),
+  RESEND_API_KEY: z.string().min(1),
+});
+
+export type EmailEnv = z.infer<typeof EmailEnvSchema>;
+
+export function getEmailEnv(): EmailEnv {
+  const parsed = EmailEnvSchema.safeParse({
+    EMAIL_PROVIDER: process.env.EMAIL_PROVIDER,
+    EMAIL_FROM: process.env.EMAIL_FROM,
+    RESEND_API_KEY: process.env.RESEND_API_KEY,
+  });
+
+  if (!parsed.success) {
+    throw new Error(
+      "Missing email env. Set EMAIL_PROVIDER=resend, EMAIL_FROM, and RESEND_API_KEY in .env.local (server-only).",
+    );
+  }
+
+  return parsed.data;
+}
