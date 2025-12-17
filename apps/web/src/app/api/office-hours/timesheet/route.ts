@@ -1,9 +1,14 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { z } from "zod";
 
 import { getPublicEnv } from "@/lib/env";
 
 export const runtime = "nodejs";
+
+const WeekStartSchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/);
 
 function getSupabaseForRequest(request: NextRequest) {
   const env = getPublicEnv();
@@ -32,7 +37,18 @@ export async function GET(request: NextRequest) {
   }
 
   const weekStart = request.nextUrl.searchParams.get("weekStart");
-  const weekStartParam = weekStart && weekStart.length > 0 ? weekStart : null;
+  const weekStartParam =
+    weekStart && weekStart.length > 0
+      ? (() => {
+          const parsed = WeekStartSchema.safeParse(weekStart);
+          if (!parsed.success) return null;
+          return parsed.data;
+        })()
+      : null;
+
+  if (weekStart && weekStart.length > 0 && !weekStartParam) {
+    return NextResponse.json({ error: "invalid weekStart" }, { status: 400 });
+  }
 
   const [{ data: weekly, error: weeklyErr }, { data: sessions, error: sessionsErr }, { data: exceptions, error: excErr }] =
     await Promise.all([

@@ -43,3 +43,21 @@ export function getEmailEnv(): EmailEnv {
 
   return parsed.data;
 }
+
+const CronEnvSchema = z.object({
+  CRON_SECRET: z.string().min(16),
+});
+
+export type CronEnv = z.infer<typeof CronEnvSchema>;
+
+export function getCronEnv(): CronEnv {
+  const parsed = CronEnvSchema.safeParse({
+    CRON_SECRET: process.env.CRON_SECRET,
+  });
+
+  if (!parsed.success) {
+    throw new Error("Missing cron env. Set CRON_SECRET in .env.local (server-only). ");
+  }
+
+  return parsed.data;
+}

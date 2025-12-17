@@ -24,6 +24,9 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
     throw new Error("Unsupported email provider");
   }
 
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
+
   const res = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
@@ -36,6 +39,9 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
       subject: input.subject,
       text: input.text,
     }),
+    signal: controller.signal,
+  }).finally(() => {
+    clearTimeout(timeout);
   });
 
   const json = (await res.json().catch(() => null)) as unknown;

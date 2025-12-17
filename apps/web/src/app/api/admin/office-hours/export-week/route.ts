@@ -1,9 +1,17 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { z } from "zod";
 
 import { getPublicEnv } from "@/lib/env";
 
 export const runtime = "nodejs";
+
+const WeekStartSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+
+function mitigateCsvFormulaInjection(raw: string): string {
+  // Spreadsheet programs may interpret cells starting with these characters as formulas.
+  return /^[=+\-@]/.test(raw) ? `'${raw}` : raw;
+}
 
 type AdminWeeklyHoursRow = {
   user_id: string;
@@ -16,7 +24,8 @@ type AdminWeeklyHoursRow = {
 };
 
 function csvEscape(value: unknown): string {
-  const s = value === null || value === undefined ? "" : String(value);
+  const raw = value === null || value === undefined ? "" : String(value);
+  const s = mitigateCsvFormulaInjection(raw);
   if (/[\n\r,\"]/g.test(s)) {
     return `"${s.replace(/"/g, '""')}"`;
   }
@@ -63,7 +72,18 @@ export async function GET(request: NextRequest) {
   if (!authz.ok) return authz.response;
 
   const weekStart = request.nextUrl.searchParams.get("weekStart");
-  const weekStartParam = weekStart && weekStart.length > 0 ? weekStart : null;
+  const weekStartParam =
+    weekStart && weekStart.length > 0
+      ? (() => {
+          const parsed = WeekStartSchema.safeParse(weekStart);
+          if (!parsed.success) return null;
+          return parsed.data;
+        })()
+      : null;
+
+  if (weekStart && weekStart.length > 0 && !weekStartParam) {
+    return NextResponse.json({ error: "invalid weekStart" }, { status: 400 });
+  }
 
   const { data: rows, error } = await authz.supabase.rpc("admin_weekly_hours", { _week_start: weekStartParam });
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });

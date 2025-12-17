@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Suspense, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
@@ -10,8 +10,19 @@ function normalizeEmail(raw: string): string {
   return raw.trim().toLowerCase();
 }
 
-export default function LoginPage() {
+function AuthCallbackErrorBanner() {
   const searchParams = useSearchParams();
+
+  if (searchParams.get("error") !== "auth_callback_failed") return null;
+
+  return (
+    <p className="mt-4 max-w-md text-sm text-foreground/70">
+      That sign-in link could not be verified. Please request a new link and try again.
+    </p>
+  );
+}
+
+export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [status, setStatus] = useState<"idle" | "sent" | "error">("idle");
@@ -49,11 +60,9 @@ export default function LoginPage() {
       title="Sign in"
       description="Invite-only. If you're allowlisted, you'll receive a magic link by email."
     >
-      {searchParams.get("error") === "auth_callback_failed" ? (
-        <p className="mt-4 max-w-md text-sm text-foreground/70">
-          That sign-in link could not be verified. Please request a new link and try again.
-        </p>
-      ) : null}
+      <Suspense fallback={null}>
+        <AuthCallbackErrorBanner />
+      </Suspense>
 
       <form onSubmit={onSubmit} className="mt-6 max-w-md space-y-4">
         <div className="space-y-1">
