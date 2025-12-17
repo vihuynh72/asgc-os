@@ -104,6 +104,7 @@ export async function GET(request: NextRequest) {
 
 const CreateTaskSchema = z.object({
   committeeId: z.string().uuid(),
+  projectId: z.string().uuid().nullable().optional(),
   title: z.string().trim().min(1),
   description: z.string().trim().max(5000).optional(),
   priority: z.enum(["low", "medium", "high"]).optional(),
@@ -127,10 +128,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "invalid request" }, { status: 400 });
   }
 
-  const { committeeId, title, description, priority, dueAt, assignToMe } = parsed.data;
+  const { committeeId, projectId, title, description, priority, dueAt, assignToMe } = parsed.data;
 
   const insertRow: Record<string, unknown> = {
     committee_id: committeeId,
+    project_id: projectId ?? null,
     title,
     description: description ?? null,
     priority: priority ?? "medium",
@@ -143,7 +145,7 @@ export async function POST(request: NextRequest) {
   const { data: task, error } = await supabase
     .from("tasks")
     .insert(insertRow)
-    .select("id,committee_id,title,description,status,priority,due_at,assigned_to,created_by,created_at,updated_at")
+    .select("id,committee_id,project_id,title,description,status,priority,due_at,assigned_to,created_by,created_at,updated_at")
     .single();
 
   if (error) {

@@ -25,6 +25,23 @@ type TaskRow = {
   updated_at: string;
 };
 
+type TaskCommentRow = {
+  id: string;
+  task_id: string;
+  body: string;
+  created_by: string;
+  created_at: string;
+};
+
+type TaskAttachmentRow = {
+  id: string;
+  task_id: string;
+  url: string;
+  label: string | null;
+  created_by: string;
+  created_at: string;
+};
+
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init);
   const data = (await res.json().catch(() => ({}))) as T;
@@ -73,6 +90,13 @@ export function TasksPanel({
   const [newDue, setNewDue] = useState<string>("");
   const [assignToMe, setAssignToMe] = useState<boolean>(true);
 
+  const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
+  const [commentsByTaskId, setCommentsByTaskId] = useState<Record<string, TaskCommentRow[]>>({});
+  const [attachmentsByTaskId, setAttachmentsByTaskId] = useState<Record<string, TaskAttachmentRow[]>>({});
+  const [newCommentByTaskId, setNewCommentByTaskId] = useState<Record<string, string>>({});
+  const [newAttachmentUrlByTaskId, setNewAttachmentUrlByTaskId] = useState<Record<string, string>>({});
+  const [newAttachmentLabelByTaskId, setNewAttachmentLabelByTaskId] = useState<Record<string, string>>({});
+
   const committeesById = useMemo(() => {
     const m = new Map<string, CommitteeRow>();
     for (const c of committees) m.set(c.id, c);
@@ -85,6 +109,116 @@ export function TasksPanel({
     setTasks(t);
     setCommittees(c);
     if (!newCommitteeId && c[0]?.id) setNewCommitteeId(c[0].id);
+  }
+
+  async function loadTaskExtras(taskId: string) {
+    const [commentsRes, attachmentsRes] = await Promise.all([
+      fetchJson<{ comments: TaskCommentRow[] }>(`/api/tasks/${encodeURIComponent(taskId)}/comments`),
+      fetchJson<{ attachments: TaskAttachmentRow[] }>(`/api/tasks/${encodeURIComponent(taskId)}/attachments`),
+    ]);
+
+    setCommentsByTaskId((prev) => ({ ...prev, [taskId]: commentsRes.comments }));
+    setAttachmentsByTaskId((prev) => ({ ...prev, [taskId]: attachmentsRes.attachments }));
+  }
+
+  async function toggleExpanded(taskId: string) {
+    if (expandedTaskId === taskId) {
+      setExpandedTaskId(null);
+      return;
+    }
+
+    setExpandedTaskId(taskId);
+    if (!commentsByTaskId[taskId] || !attachmentsByTaskId[taskId]) {
+      setStatus("Loading...");
+      try {
+        await loadTaskExtras(taskId);
+        setStatus("");
+      } catch (err) {
+        setStatus(err instanceof Error ? err.message : "Failed to load");
+      }
+    }
+  }
+
+  async function createComment(taskId: string) {
+    const body = (newCommentByTaskId[taskId] ?? "").trim();
+    if (!body) return;
+
+    setStatus("Posting comment...");
+    try {
+      const { comment } = await fetchJson<{ comment: TaskCommentRow }>(
+        `/api/tasks/${encodeURIComponent(taskId)}/comments`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ body }),
+        },
+      );
+
+      setCommentsByTaskId((prev) => ({ ...prev, [taskId]: [...(prev[taskId] ?? []), comment] }));
+      setNewCommentByTaskId((prev) => ({ ...prev, [taskId]: "" }));
+      setStatus("");
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : "Failed to post comment");
+    }
+  }
+
+  async function deleteComment(taskId: string, commentId: string) {
+    setStatus("Removing comment...");
+    try {
+      await fetchJson<{ ok: true }>(
+        `/api/tasks/${encodeURIComponent(taskId)}/comments/${encodeURIComponent(commentId)}`,
+        { method: "DELETE" },
+      );
+      setCommentsByTaskId((prev) => ({
+        ...prev,
+        [taskId]: (prev[taskId] ?? []).filter((c) => c.id !== commentId),
+      }));
+      setStatus("");
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : "Failed to remove comment");
+    }
+  }
+
+  async function createAttachment(taskId: string) {
+    const url = (newAttachmentUrlByTaskId[taskId] ?? "").trim();
+    const label = (newAttachmentLabelByTaskId[taskId] ?? "").trim();
+    if (!url) return;
+
+    setStatus("Adding link...");
+    try {
+      const { attachment } = await fetchJson<{ attachment: TaskAttachmentRow }>(
+        `/api/tasks/${encodeURIComponent(taskId)}/attachments`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url, label: label || undefined }),
+        },
+      );
+
+      setAttachmentsByTaskId((prev) => ({ ...prev, [taskId]: [...(prev[taskId] ?? []), attachment] }));
+      setNewAttachmentUrlByTaskId((prev) => ({ ...prev, [taskId]: "" }));
+      setNewAttachmentLabelByTaskId((prev) => ({ ...prev, [taskId]: "" }));
+      setStatus("");
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : "Failed to add link");
+    }
+  }
+
+  async function deleteAttachment(taskId: string, attachmentId: string) {
+    setStatus("Removing link...");
+    try {
+      await fetchJson<{ ok: true }>(
+        `/api/tasks/${encodeURIComponent(taskId)}/attachments/${encodeURIComponent(attachmentId)}`,
+        { method: "DELETE" },
+      );
+      setAttachmentsByTaskId((prev) => ({
+        ...prev,
+        [taskId]: (prev[taskId] ?? []).filter((a) => a.id !== attachmentId),
+      }));
+      setStatus("");
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : "Failed to remove link");
+    }
   }
 
   async function onCreateTask(e: FormEvent) {
@@ -101,6 +235,7 @@ export function TasksPanel({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           committeeId: newCommitteeId,
+          projectId: projectIdFilter ? projectIdFilter : null,
           title: newTitle,
           priority: newPriority,
           dueAt: toIsoFromDateInput(newDue),
@@ -239,31 +374,141 @@ export function TasksPanel({
             ) : (
               tasks.map((t) => {
                 const committee = committeesById.get(t.committee_id);
+                const isExpanded = expandedTaskId === t.id;
+                const comments = commentsByTaskId[t.id] ?? [];
+                const attachments = attachmentsByTaskId[t.id] ?? [];
                 return (
-                  <div key={t.id} className="flex flex-wrap items-center justify-between gap-3 px-3 py-2">
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-sm font-medium">{t.title}</div>
-                      <div className="text-xs text-foreground/70">
-                        {committee ? committee.name : t.committee_id}
-                        {t.due_at ? ` • Due ${formatDateInputValue(t.due_at)}` : ""}
+                  <div key={t.id} className="px-3 py-2">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm font-medium">{t.title}</div>
+                        <div className="text-xs text-foreground/70">
+                          {committee ? committee.name : t.committee_id}
+                          {t.due_at ? ` • Due ${formatDateInputValue(t.due_at)}` : ""}
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Button variant="ghost" onClick={() => void toggleExpanded(t.id)}>
+                          {isExpanded ? "Hide" : "Details"}
+                        </Button>
+
+                        <select
+                          className="h-9 rounded-md border bg-transparent px-2 text-sm"
+                          value={t.status}
+                          onChange={(e: ChangeEvent<HTMLSelectElement>) =>
+                            void updateTask(t.id, { status: e.target.value })
+                          }
+                        >
+                          <option value="todo">To do</option>
+                          <option value="doing">Doing</option>
+                          <option value="done">Done</option>
+                        </select>
+
+                        <Button variant="ghost" onClick={() => void deleteTask(t.id)}>
+                          Delete
+                        </Button>
                       </div>
                     </div>
 
-                    <div className="flex flex-wrap items-center gap-2">
-                      <select
-                        className="h-9 rounded-md border bg-transparent px-2 text-sm"
-                        value={t.status}
-                        onChange={(e: ChangeEvent<HTMLSelectElement>) => void updateTask(t.id, { status: e.target.value })}
-                      >
-                        <option value="todo">To do</option>
-                        <option value="doing">Doing</option>
-                        <option value="done">Done</option>
-                      </select>
+                    {isExpanded ? (
+                      <div className="mt-3 grid gap-3 rounded-md border bg-transparent p-3 md:grid-cols-2">
+                        <div className="space-y-2">
+                          <div className="text-sm font-medium">Comments</div>
+                          {comments.length === 0 ? (
+                            <div className="text-sm text-foreground/70">No comments yet.</div>
+                          ) : (
+                            <div className="space-y-2">
+                              {comments.map((c) => (
+                                <div key={c.id} className="rounded-md border px-2 py-1">
+                                  <div className="text-sm">{c.body}</div>
+                                  <div className="mt-1 flex items-center justify-between gap-2">
+                                    <div className="text-xs text-foreground/60">
+                                      {new Date(c.created_at).toLocaleString()}
+                                    </div>
+                                    <Button variant="ghost" onClick={() => void deleteComment(t.id, c.id)}>
+                                      Remove
+                                    </Button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
 
-                      <Button variant="ghost" onClick={() => void deleteTask(t.id)}>
-                        Delete
-                      </Button>
-                    </div>
+                          <div className="flex gap-2">
+                            <input
+                              className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                              value={newCommentByTaskId[t.id] ?? ""}
+                              onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                                setNewCommentByTaskId((prev) => ({ ...prev, [t.id]: e.target.value }))
+                              }
+                              placeholder="Add a comment"
+                            />
+                            <Button
+                              variant="ghost"
+                              onClick={() => void createComment(t.id)}
+                              disabled={!(newCommentByTaskId[t.id] ?? "").trim()}
+                            >
+                              Post
+                            </Button>
+                          </div>
+                        </div>
+
+                        <div className="space-y-2">
+                          <div className="text-sm font-medium">Attachments (Links)</div>
+                          {attachments.length === 0 ? (
+                            <div className="text-sm text-foreground/70">No links yet.</div>
+                          ) : (
+                            <div className="space-y-2">
+                              {attachments.map((a) => (
+                                <div key={a.id} className="flex items-center justify-between gap-2 rounded-md border px-2 py-1">
+                                  <a
+                                    className="min-w-0 flex-1 truncate text-sm underline underline-offset-4 hover:text-foreground/80"
+                                    href={a.url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    title={a.label ?? a.url}
+                                  >
+                                    {a.label ?? a.url}
+                                  </a>
+                                  <Button variant="ghost" onClick={() => void deleteAttachment(t.id, a.id)}>
+                                    Remove
+                                  </Button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          <div className="grid gap-2">
+                            <input
+                              className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                              value={newAttachmentUrlByTaskId[t.id] ?? ""}
+                              onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                                setNewAttachmentUrlByTaskId((prev) => ({ ...prev, [t.id]: e.target.value }))
+                              }
+                              placeholder="https://..."
+                            />
+                            <div className="flex gap-2">
+                              <input
+                                className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                                value={newAttachmentLabelByTaskId[t.id] ?? ""}
+                                onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                                  setNewAttachmentLabelByTaskId((prev) => ({ ...prev, [t.id]: e.target.value }))
+                                }
+                                placeholder="Optional label"
+                              />
+                              <Button
+                                variant="ghost"
+                                onClick={() => void createAttachment(t.id)}
+                                disabled={!(newAttachmentUrlByTaskId[t.id] ?? "").trim()}
+                              >
+                                Add
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                 );
               })
