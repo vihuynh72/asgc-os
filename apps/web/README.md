@@ -1,66 +1,47 @@
 ASGC OS web app (Next.js App Router + TypeScript).
 
-## Getting Started
+This folder is the Next.js app for the repo.
 
-First, install dependencies:
+For overall architecture, phases, and the “source of truth” build packet, start at the repo root README:
+- [../../README.md](../../README.md)
+
+## Local dev
+
+From this directory:
 
 ```bash
 npm install
-```
-
-Configure env (no secrets committed):
-
-```bash
 cp .env.example .env.local
+npm run dev
 ```
 
-Then set:
+### Required env
 
+Public (browser-safe):
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 
-For server-only operations (PHASE 02+):
-
+Server-only:
 - `SUPABASE_SERVICE_ROLE_KEY`
 
-For PHASE 10 notifications (server-only):
-
+PHASE 10 notifications (server-only):
 - `EMAIL_PROVIDER` (set to `resend`)
 - `EMAIL_FROM`
 - `RESEND_API_KEY`
 
-Run the development server:
+### Useful commands
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm run lint
+npx tsc -p tsconfig.json --noEmit
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Key locations
 
-Phase status:
-
-- PHASE 01: bootstrap + placeholder routes
-- PHASE 02: invite-only magic link auth
-
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- App routes: [src/app](src/app)
+- API routes: [src/app/api](src/app/api)
+- Middleware (auth/admin gates): [src/middleware.ts](src/middleware.ts)
+- Supabase clients:
+	- Browser: [src/lib/supabaseClient.ts](src/lib/supabaseClient.ts)
+	- Server components: [src/lib/supabaseServerComponent.ts](src/lib/supabaseServerComponent.ts)
+	- Service role (admin): [src/lib/supabaseAdmin.ts](src/lib/supabaseAdmin.ts)

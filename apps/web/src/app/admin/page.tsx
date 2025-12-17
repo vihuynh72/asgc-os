@@ -35,6 +35,16 @@ type OfficeLocationRow = {
   active: boolean;
 };
 
+type OfficeHourRequirementRow = {
+  id: string;
+  role_key: "advisor" | "president" | "officer" | "volunteer";
+  term_id: string | null;
+  weekly_total_hours: number;
+  weekly_in_office_hours: number;
+  effective_start: string | null;
+  effective_end: string | null;
+};
+
 async function ensureOfficeConfigRow(admin: ReturnType<typeof getSupabaseAdminClient>) {
   const { data: existing, error: existingErr } = await admin
     .from("office_config")
@@ -128,6 +138,9 @@ export default async function AdminPage() {
   let initialOfficeConfig: OfficeConfigRow | null = null;
   let initialOfficeLocation: OfficeLocationRow | null = null;
 
+  // Phase 12: office hour requirements (best-effort)
+  let initialOfficeHourRequirements: OfficeHourRequirementRow[] = [];
+
   try {
     initialOfficeConfig = await ensureOfficeConfigRow(admin);
 
@@ -144,6 +157,26 @@ export default async function AdminPage() {
     // If Phase 11 isn't applied yet, keep nulls. The client can still load via /api/admin/office-config.
   }
 
+  try {
+    if (selectedTermId) {
+      const { data: reqs, error: reqErr } = await admin
+        .from("office_hour_requirements")
+        .select(
+          "id,role_key,term_id,weekly_total_hours,weekly_in_office_hours,effective_start,effective_end",
+        )
+        .eq("term_id", selectedTermId)
+        .is("effective_start", null)
+        .is("effective_end", null)
+        .order("role_key", { ascending: true });
+
+      if (!reqErr) {
+        initialOfficeHourRequirements = (reqs ?? []) as OfficeHourRequirementRow[];
+      }
+    }
+  } catch {
+    // Keep empty; the client can load via /api/admin/office-hour-requirements.
+  }
+
   return (
     <PageShell title="Admin" description="Manage terms and role assignments (Phase 3).">
       <AdminPanel
@@ -154,6 +187,7 @@ export default async function AdminPage() {
         initialTermAssignments={(termAssignments ?? []) as AssignmentRow[]}
         initialOfficeConfig={initialOfficeConfig}
         initialOfficeLocation={initialOfficeLocation}
+        initialOfficeHourRequirements={initialOfficeHourRequirements}
       />
     </PageShell>
   );

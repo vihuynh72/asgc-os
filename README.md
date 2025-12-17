@@ -15,7 +15,7 @@ This repo is driven by the build packet files (treat these as the product + arch
 - App: Next.js App Router under [apps/web](apps/web)
 - DB: Supabase Postgres + RLS. Schema is managed via migrations under [supabase/migrations](supabase/migrations)
 - Workflow: use Supabase CLI to push migrations (dry-run first). Avoid manual SQL editor except for emergencies.
-- Status: phases 01–08 are implemented locally and have been pushed to Supabase.
+- Status: phases 01–13 are implemented and have been pushed to Supabase.
 
 ## Phase progress (Build Packet)
 
@@ -76,6 +76,77 @@ This repo is built strictly phase-by-phase per [01_stack_and_architecture.md](01
 	- UI:
 		- Projects page: [apps/web/src/app/projects/page.tsx](apps/web/src/app/projects/page.tsx)
 		- Project → Tasks deep link: `/tasks?projectId=<uuid>`
+
+- PHASE 08.1 — Projects fixes: ✅ complete
+	- Migration: [supabase/migrations/202512160010_phase08_1_projects_fix.sql](supabase/migrations/202512160010_phase08_1_projects_fix.sql)
+	- Aligns API semantics (no hard-delete) and tightens invariants.
+
+- PHASE 09 — Comments + attachments v1: ✅ complete
+	- Migration: [supabase/migrations/202512160009_phase09_comments_attachments_v1.sql](supabase/migrations/202512160009_phase09_comments_attachments_v1.sql)
+	- API:
+		- Comments: [apps/web/src/app/api/tasks/[taskId]/comments/route.ts](apps/web/src/app/api/tasks/[taskId]/comments/route.ts)
+		- Comment item: [apps/web/src/app/api/tasks/[taskId]/comments/[commentId]/route.ts](apps/web/src/app/api/tasks/[taskId]/comments/[commentId]/route.ts)
+		- Attachments: [apps/web/src/app/api/tasks/[taskId]/attachments/route.ts](apps/web/src/app/api/tasks/[taskId]/attachments/route.ts)
+		- Attachment item: [apps/web/src/app/api/tasks/[taskId]/attachments/[attachmentId]/route.ts](apps/web/src/app/api/tasks/[taskId]/attachments/[attachmentId]/route.ts)
+	- UI:
+		- Task details panel (comments + URL attachments): [apps/web/src/app/tasks/tasks-panel.tsx](apps/web/src/app/tasks/tasks-panel.tsx)
+	- RLS smoke: [supabase/rls/phase09_rls_smoke.sql](supabase/rls/phase09_rls_smoke.sql)
+
+- PHASE 10 — Notifications plumbing: ✅ complete
+	- Migration: [supabase/migrations/202512160011_phase10_notifications_plumbing.sql](supabase/migrations/202512160011_phase10_notifications_plumbing.sql)
+	- Email sender (Resend): [apps/web/src/lib/emailSender.ts](apps/web/src/lib/emailSender.ts)
+	- Admin endpoint: [apps/web/src/app/api/admin/send-test-email/route.ts](apps/web/src/app/api/admin/send-test-email/route.ts)
+	- Admin UI button: [apps/web/src/app/admin/admin-panel.tsx](apps/web/src/app/admin/admin-panel.tsx)
+	- RLS smoke: [supabase/rls/phase10_rls_smoke.sql](supabase/rls/phase10_rls_smoke.sql)
+
+- PHASE 11 — Office config + quiet hours: ✅ complete
+	- Migration: [supabase/migrations/202512160012_phase11_office_config.sql](supabase/migrations/202512160012_phase11_office_config.sql)
+	- Admin API: [apps/web/src/app/api/admin/office-config/route.ts](apps/web/src/app/api/admin/office-config/route.ts)
+	- Admin UI: [apps/web/src/app/admin/admin-panel.tsx](apps/web/src/app/admin/admin-panel.tsx)
+	- RLS smoke: [supabase/rls/phase11_rls_smoke.sql](supabase/rls/phase11_rls_smoke.sql)
+
+- PHASE 12 — Office hour requirements config: ✅ complete
+	- Migration: [supabase/migrations/202512170001_phase12_office_hour_requirements_config.sql](supabase/migrations/202512170001_phase12_office_hour_requirements_config.sql)
+	- Admin API: [apps/web/src/app/api/admin/office-hour-requirements/route.ts](apps/web/src/app/api/admin/office-hour-requirements/route.ts)
+	- Admin UI: [apps/web/src/app/admin/admin-panel.tsx](apps/web/src/app/admin/admin-panel.tsx)
+	- RLS smoke: [supabase/rls/phase12_rls_smoke.sql](supabase/rls/phase12_rls_smoke.sql)
+
+- PHASE 13 — Presence tokens (PIN generator): ✅ complete
+	- Migration: [supabase/migrations/202512170002_phase13_presence_tokens_pin.sql](supabase/migrations/202512170002_phase13_presence_tokens_pin.sql)
+	- Admin API (returns current PIN): [apps/web/src/app/api/admin/presence-pin/route.ts](apps/web/src/app/api/admin/presence-pin/route.ts)
+	- Admin UI (kiosk display): [apps/web/src/app/admin/admin-panel.tsx](apps/web/src/app/admin/admin-panel.tsx)
+	- RLS smoke: [supabase/rls/phase13_rls_smoke.sql](supabase/rls/phase13_rls_smoke.sql)
+
+## Handoff notes (for the next AI/dev)
+
+### Patterns to follow (do not deviate)
+
+- RLS is authoritative for data access.
+- Admin-only writes happen via server routes using the service-role client (`getSupabaseAdminClient()`), never from the browser.
+- User/session auth in Route Handlers uses `@supabase/ssr` `createServerClient(...)` + `supabase.auth.getUser()` (cookie-based).
+- Audit logging under RLS should be done via `SECURITY DEFINER` triggers/functions with pinned `search_path` and execution revoked.
+
+### Where to start next (Phase 14)
+
+Phase 14 (Check-in v1) should:
+
+- Use the configured primary office location from `office_config` (Phase 11).
+- Compute distance server-side (authoritative), and enforce:
+	- `distance <= radius_m`: allow
+	- `radius_m < distance <= grace_radius_m`: allow + mark `needs_review`
+	- `distance > grace_radius_m`: block
+- Validate rotating PIN using `validate_presence_pin(...)` (service-role only). Do not store raw PIN.
+- Create an `office_hour_sessions` row with `status='open'`, and enforce the single-open-session constraint.
+
+### Quick verification checklist
+
+- Login works via allowlist magic link.
+- `/admin` loads for admins only.
+- Admin: set Office config + quiet hours; verify it persists.
+- Admin: set Phase 12 requirements for the current term.
+- Admin: open “Office PIN (kiosk)” and verify the PIN rotates.
+- Tasks: create a task, add a comment, add a URL attachment.
+- Admin: send test email and confirm `notification_log` receives a row.
 
 Next up (per the phase list):
 
