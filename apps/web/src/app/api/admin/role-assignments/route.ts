@@ -28,38 +28,12 @@ async function isAdminForRequest(request: NextRequest): Promise<{ ok: true; user
     return { ok: false, response: NextResponse.json({ error: "unauthorized" }, { status: 401 }) };
   }
 
-  const { data: advisorAssignments } = await supabase
-    .from("role_assignments")
-    .select("id")
-    .eq("user_id", user.id)
-    .eq("role_key", "advisor")
-    .is("term_id", null)
-    .is("ends_at", null)
-    .limit(1);
-
-  if ((advisorAssignments?.length ?? 0) > 0) {
-    return { ok: true, userId: user.id };
-  }
-
-  const { data: currentTerm } = await supabase.from("terms").select("id").eq("is_current", true).maybeSingle();
-  if (!currentTerm?.id) {
+  const { data: isAdmin, error: adminErr } = await supabase.rpc("is_admin", { _uid: user.id });
+  if (adminErr || !isAdmin) {
     return { ok: false, response: NextResponse.json({ error: "forbidden" }, { status: 403 }) };
   }
 
-  const { data: presidentAssignments } = await supabase
-    .from("role_assignments")
-    .select("id")
-    .eq("user_id", user.id)
-    .eq("role_key", "president")
-    .eq("term_id", currentTerm.id)
-    .is("ends_at", null)
-    .limit(1);
-
-  if ((presidentAssignments?.length ?? 0) > 0) {
-    return { ok: true, userId: user.id };
-  }
-
-  return { ok: false, response: NextResponse.json({ error: "forbidden" }, { status: 403 }) };
+  return { ok: true, userId: user.id };
 }
 
 function isValidRoleKey(roleKey: string): roleKey is "advisor" | "president" | "officer" | "volunteer" {
@@ -170,6 +144,15 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
+  // Best-effort audit log (server-only)
+  await admin.rpc("log_event", {
+    action_key: "role_assignment.created",
+    actor_user_id: authz.userId,
+    target_type: "role_assignment",
+    target_id: (assignment as { id: string }).id,
+    metadata: { user_id: userId, role_key: roleKey, term_id: roleKey === "advisor" ? null : termId },
+  });
+
   return NextResponse.json({ assignment });
 }
 
@@ -196,6 +179,15 @@ export async function DELETE(request: NextRequest) {
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
+
+  // Best-effort audit log (server-only)
+  await admin.rpc("log_event", {
+    action_key: "role_assignment.ended",
+    actor_user_id: authz.userId,
+    target_type: "role_assignment",
+    target_id: assignmentId,
+    metadata: {},
+  });
 
   return NextResponse.json({ ok: true });
 }

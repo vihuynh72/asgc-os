@@ -6,7 +6,9 @@ import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
 
-async function isAdminForRequest(request: NextRequest): Promise<{ ok: true; userId: string } | { ok: false; response: NextResponse }> {
+async function isAdminForRequest(
+  request: NextRequest,
+): Promise<{ ok: true; userId: string; supabase: ReturnType<typeof createServerClient> } | { ok: false; response: NextResponse }> {
   const env = getPublicEnv();
 
   const supabase = createServerClient(env.NEXT_PUBLIC_SUPABASE_URL, env.NEXT_PUBLIC_SUPABASE_ANON_KEY, {
@@ -28,39 +30,12 @@ async function isAdminForRequest(request: NextRequest): Promise<{ ok: true; user
     return { ok: false, response: NextResponse.json({ error: "unauthorized" }, { status: 401 }) };
   }
 
-  const { data: advisorAssignments } = await supabase
-    .from("role_assignments")
-    .select("id")
-    .eq("user_id", user.id)
-    .eq("role_key", "advisor")
-    .is("term_id", null)
-    .is("ends_at", null)
-    .limit(1);
-
-  if ((advisorAssignments?.length ?? 0) > 0) {
-    return { ok: true, userId: user.id };
-  }
-
-  const { data: currentTerm } = await supabase.from("terms").select("id").eq("is_current", true).maybeSingle();
-
-  if (!currentTerm?.id) {
+  const { data: isAdmin, error: adminErr } = await supabase.rpc("is_admin", { _uid: user.id });
+  if (adminErr || !isAdmin) {
     return { ok: false, response: NextResponse.json({ error: "forbidden" }, { status: 403 }) };
   }
 
-  const { data: presidentAssignments } = await supabase
-    .from("role_assignments")
-    .select("id")
-    .eq("user_id", user.id)
-    .eq("role_key", "president")
-    .eq("term_id", currentTerm.id)
-    .is("ends_at", null)
-    .limit(1);
-
-  if ((presidentAssignments?.length ?? 0) > 0) {
-    return { ok: true, userId: user.id };
-  }
-
-  return { ok: false, response: NextResponse.json({ error: "forbidden" }, { status: 403 }) };
+  return { ok: true, userId: user.id, supabase };
 }
 
 export async function GET(request: NextRequest) {
@@ -109,6 +84,15 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
+  // Best-effort audit log (server-only)
+  await admin.rpc("log_event", {
+    action_key: "term.created",
+    actor_user_id: authz.userId,
+    target_type: "term",
+    target_id: data.id,
+    metadata: { name: data.name },
+  });
+
   return NextResponse.json({ term: data });
 }
 
@@ -139,16 +123,31 @@ export async function PATCH(request: NextRequest) {
   const admin = getSupabaseAdminClient();
 
   if (setCurrent) {
-    const { error: clearErr } = await admin.from("terms").update({ is_current: false }).eq("is_current", true);
-    if (clearErr) return NextResponse.json({ error: clearErr.message }, { status: 500 });
-
-    const { error: setErr } = await admin.from("terms").update({ is_current: true }).eq("id", termId);
+    const { error: setErr } = await authz.supabase.rpc("set_current_term", { term_id: termId });
     if (setErr) return NextResponse.json({ error: setErr.message }, { status: 500 });
+
+    // Best-effort audit log (server-only)
+    await admin.rpc("log_event", {
+      action_key: "term.set_current",
+      actor_user_id: authz.userId,
+      target_type: "term",
+      target_id: termId,
+      metadata: {},
+    });
   }
 
   if (Object.keys(patch).length > 0) {
     const { error: patchErr } = await admin.from("terms").update(patch).eq("id", termId);
     if (patchErr) return NextResponse.json({ error: patchErr.message }, { status: 500 });
+
+    // Best-effort audit log (server-only)
+    await admin.rpc("log_event", {
+      action_key: "term.updated",
+      actor_user_id: authz.userId,
+      target_type: "term",
+      target_id: termId,
+      metadata: patch,
+    });
   }
 
   const { data: term, error } = await admin

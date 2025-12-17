@@ -37,40 +37,9 @@ export async function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
 
   if (pathname.startsWith("/admin")) {
-    const { data: advisorAssignments } = await supabase
-      .from("role_assignments")
-      .select("id")
-      .eq("user_id", user.id)
-      .eq("role_key", "advisor")
-      .is("term_id", null)
-      .is("ends_at", null)
-      .limit(1);
+    const { data: isAdmin, error: adminErr } = await supabase.rpc("is_admin", { _uid: user.id });
 
-    const isAdvisor = (advisorAssignments?.length ?? 0) > 0;
-
-    let isPresident = false;
-    if (!isAdvisor) {
-      const { data: currentTerm } = await supabase
-        .from("terms")
-        .select("id")
-        .eq("is_current", true)
-        .maybeSingle();
-
-      if (currentTerm?.id) {
-        const { data: presidentAssignments } = await supabase
-          .from("role_assignments")
-          .select("id")
-          .eq("user_id", user.id)
-          .eq("role_key", "president")
-          .eq("term_id", currentTerm.id)
-          .is("ends_at", null)
-          .limit(1);
-
-        isPresident = (presidentAssignments?.length ?? 0) > 0;
-      }
-    }
-
-    if (!isAdvisor && !isPresident) {
+    if (adminErr || !isAdmin) {
       const redirectUrl = request.nextUrl.clone();
       redirectUrl.pathname = "/dashboard";
       redirectUrl.search = "";
