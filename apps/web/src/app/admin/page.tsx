@@ -28,41 +28,9 @@ export default async function AdminPage() {
     redirect("/login");
   }
 
-  const { data: advisorAssignments } = await supabase
-    .from("role_assignments")
-    .select("id")
-    .eq("user_id", user.id)
-    .eq("role_key", "advisor")
-    .is("term_id", null)
-    .is("ends_at", null)
-    .limit(1);
-
-  const isAdvisor = (advisorAssignments?.length ?? 0) > 0;
-
-  let currentTermId = "";
-  if (!isAdvisor) {
-    const { data: currentTerm } = await supabase
-      .from("terms")
-      .select("id")
-      .eq("is_current", true)
-      .maybeSingle();
-    currentTermId = currentTerm?.id ?? "";
-
-    if (!currentTermId) {
-      redirect("/dashboard");
-    }
-
-    const { data: presidentAssignments } = await supabase
-      .from("role_assignments")
-      .select("id")
-      .eq("user_id", user.id)
-      .eq("role_key", "president")
-      .eq("term_id", currentTermId)
-      .is("ends_at", null)
-      .limit(1);
-
-    const isPresident = (presidentAssignments?.length ?? 0) > 0;
-    if (!isPresident) redirect("/dashboard");
+  const { data: isAdmin, error: adminErr } = await supabase.rpc("is_admin", { _uid: user.id });
+  if (adminErr || !isAdmin) {
+    redirect("/dashboard");
   }
 
   const admin = getSupabaseAdminClient();
