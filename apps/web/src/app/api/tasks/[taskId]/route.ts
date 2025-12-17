@@ -24,6 +24,7 @@ function getSupabaseForRequest(request: NextRequest) {
 type TaskRow = {
   id: string;
   committee_id: string;
+  project_id: string | null;
   title: string;
   description: string | null;
   status: "todo" | "doing" | "done";
@@ -42,6 +43,7 @@ const PatchTaskSchema = z
     status: z.enum(["todo", "doing", "done"]).optional(),
     priority: z.enum(["low", "medium", "high"]).optional(),
     dueAt: z.string().datetime({ offset: true }).nullable().optional(),
+    projectId: z.string().uuid().nullable().optional(),
   })
   .refine((x) => Object.keys(x).length > 0, { message: "empty patch" });
 
@@ -72,12 +74,13 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   if (parsed.data.status) patch.status = parsed.data.status;
   if (parsed.data.priority) patch.priority = parsed.data.priority;
   if (parsed.data.dueAt === null || typeof parsed.data.dueAt === "string") patch.due_at = parsed.data.dueAt;
+  if (parsed.data.projectId === null || typeof parsed.data.projectId === "string") patch.project_id = parsed.data.projectId;
 
   const { data: task, error } = await supabase
     .from("tasks")
     .update(patch)
     .eq("id", taskId)
-    .select("id,committee_id,title,description,status,priority,due_at,assigned_to,created_by,created_at,updated_at")
+    .select("id,committee_id,project_id,title,description,status,priority,due_at,assigned_to,created_by,created_at,updated_at")
     .single();
 
   if (error) {

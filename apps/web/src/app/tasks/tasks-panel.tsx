@@ -13,6 +13,7 @@ type CommitteeRow = {
 type TaskRow = {
   id: string;
   committee_id: string;
+  project_id: string | null;
   title: string;
   description: string | null;
   status: "todo" | "doing" | "done";
@@ -52,7 +53,15 @@ function toIsoFromDateInput(value: string): string | null {
   return d.toISOString();
 }
 
-export function TasksPanel({ initialTasks, initialCommittees }: { initialTasks: TaskRow[]; initialCommittees: CommitteeRow[] }) {
+export function TasksPanel({
+  initialTasks,
+  initialCommittees,
+  projectIdFilter,
+}: {
+  initialTasks: TaskRow[];
+  initialCommittees: CommitteeRow[];
+  projectIdFilter: string;
+}) {
   const [tasks, setTasks] = useState<TaskRow[]>(initialTasks);
   const [committees, setCommittees] = useState<CommitteeRow[]>(initialCommittees);
 
@@ -71,7 +80,8 @@ export function TasksPanel({ initialTasks, initialCommittees }: { initialTasks: 
   }, [committees]);
 
   async function reload() {
-    const { tasks: t, committees: c } = await fetchJson<{ tasks: TaskRow[]; committees: CommitteeRow[] }>("/api/tasks");
+    const qs = projectIdFilter ? `?projectId=${encodeURIComponent(projectIdFilter)}` : "";
+    const { tasks: t, committees: c } = await fetchJson<{ tasks: TaskRow[]; committees: CommitteeRow[] }>(`/api/tasks${qs}`);
     setTasks(t);
     setCommittees(c);
     if (!newCommitteeId && c[0]?.id) setNewCommitteeId(c[0].id);
@@ -216,7 +226,10 @@ export function TasksPanel({ initialTasks, initialCommittees }: { initialTasks: 
       <section className="space-y-3">
         <div className="space-y-1">
           <h2 className="text-lg font-semibold">Tasks</h2>
-          <p className="text-sm text-foreground/70">Visible tasks are limited to your committees (or admin override).</p>
+          <p className="text-sm text-foreground/70">
+            Visible tasks are limited to your committees (or admin override)
+            {projectIdFilter ? ", filtered by project." : "."}
+          </p>
         </div>
 
         <div className="rounded-md border">
