@@ -35,11 +35,13 @@ export default function LoginPage() {
     setIsSubmitting(true);
     setStatus("idle");
 
+    const redirectTo = new URLSearchParams(window.location.search).get("redirectTo") || undefined;
+
     try {
       const res = await fetch("/api/auth/request-magic-link", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ email: normalizedEmail }),
+        body: JSON.stringify({ email: normalizedEmail, redirectTo }),
       });
 
       if (!res.ok) {
