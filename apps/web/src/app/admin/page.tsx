@@ -17,6 +17,54 @@ type AssignmentRow = {
   is_primary: boolean;
 };
 
+type OfficeConfigRow = {
+  primary_office_location_id: string;
+  quiet_hours_enabled: boolean;
+  quiet_hours_start_local: string;
+  quiet_hours_end_local: string;
+};
+
+type OfficeLocationRow = {
+  id: string;
+  name: string;
+  lat: number | null;
+  lon: number | null;
+  radius_m: number | null;
+  grace_radius_m: number | null;
+  timezone: string;
+  active: boolean;
+};
+
+async function ensureOfficeConfigRow(admin: ReturnType<typeof getSupabaseAdminClient>) {
+  const { data: existing, error: existingErr } = await admin
+    .from("office_config")
+    .select("primary_office_location_id,quiet_hours_enabled,quiet_hours_start_local,quiet_hours_end_local")
+    .eq("id", true)
+    .maybeSingle();
+
+  if (existingErr) throw existingErr;
+  if (existing) return existing as OfficeConfigRow;
+
+  const { data: office, error: officeErr } = await admin
+    .from("office_locations")
+    .select("id")
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (officeErr) throw officeErr;
+  if (!office?.id) throw new Error("No office_locations row found");
+
+  const { data: inserted, error: insertErr } = await admin
+    .from("office_config")
+    .insert({ id: true, primary_office_location_id: office.id })
+    .select("primary_office_location_id,quiet_hours_enabled,quiet_hours_start_local,quiet_hours_end_local")
+    .single();
+
+  if (insertErr) throw insertErr;
+  return inserted as OfficeConfigRow;
+}
+
 export default async function AdminPage() {
   const supabase = await getSupabaseServerComponentClient();
 
@@ -76,6 +124,26 @@ export default async function AdminPage() {
         : Promise.resolve({ data: [] as AssignmentRow[] }),
     ]);
 
+  // Phase 11: office config + quiet hours (best-effort; requires Phase 11 migration applied)
+  let initialOfficeConfig: OfficeConfigRow | null = null;
+  let initialOfficeLocation: OfficeLocationRow | null = null;
+
+  try {
+    initialOfficeConfig = await ensureOfficeConfigRow(admin);
+
+    const { data: location, error: locationErr } = await admin
+      .from("office_locations")
+      .select("id,name,lat,lon,radius_m,grace_radius_m,timezone,active")
+      .eq("id", initialOfficeConfig.primary_office_location_id)
+      .single();
+
+    if (!locationErr) {
+      initialOfficeLocation = location as OfficeLocationRow;
+    }
+  } catch {
+    // If Phase 11 isn't applied yet, keep nulls. The client can still load via /api/admin/office-config.
+  }
+
   return (
     <PageShell title="Admin" description="Manage terms and role assignments (Phase 3).">
       <AdminPanel
@@ -84,6 +152,8 @@ export default async function AdminPage() {
         initialSelectedTermId={selectedTermId}
         initialGlobalAdvisorAssignments={(globalAdvisorAssignments ?? []) as AssignmentRow[]}
         initialTermAssignments={(termAssignments ?? []) as AssignmentRow[]}
+        initialOfficeConfig={initialOfficeConfig}
+        initialOfficeLocation={initialOfficeLocation}
       />
     </PageShell>
   );

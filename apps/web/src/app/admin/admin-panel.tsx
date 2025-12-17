@@ -23,6 +23,24 @@ type UserRow = {
 
 type RoleKey = "advisor" | "president" | "officer" | "volunteer";
 
+type OfficeLocationRow = {
+  id: string;
+  name: string;
+  lat: number | null;
+  lon: number | null;
+  radius_m: number | null;
+  grace_radius_m: number | null;
+  timezone: string;
+  active: boolean;
+};
+
+type OfficeConfigRow = {
+  primary_office_location_id: string;
+  quiet_hours_enabled: boolean;
+  quiet_hours_start_local: string;
+  quiet_hours_end_local: string;
+};
+
 type AssignmentRow = {
   id: string;
   user_id: string;
@@ -62,12 +80,16 @@ export function AdminPanel({
   initialSelectedTermId,
   initialGlobalAdvisorAssignments,
   initialTermAssignments,
+  initialOfficeLocation,
+  initialOfficeConfig,
 }: {
   initialTerms: TermRow[];
   initialUsers: UserRow[];
   initialSelectedTermId: string;
   initialGlobalAdvisorAssignments: AssignmentRow[];
   initialTermAssignments: AssignmentRow[];
+  initialOfficeLocation: OfficeLocationRow | null;
+  initialOfficeConfig: OfficeConfigRow | null;
 }) {
   const [terms, setTerms] = useState<TermRow[]>(initialTerms);
   const [users, setUsers] = useState<UserRow[]>(initialUsers);
@@ -85,7 +107,24 @@ export function AdminPanel({
   const [newTermStart, setNewTermStart] = useState<string>("");
   const [newTermEnd, setNewTermEnd] = useState<string>("");
 
+  const [officeLocation, setOfficeLocation] = useState<OfficeLocationRow | null>(initialOfficeLocation);
+  const [officeConfig, setOfficeConfig] = useState<OfficeConfigRow | null>(initialOfficeConfig);
+
   const [status, setStatus] = useState<string>("");
+
+  async function loadOfficeConfig() {
+    setStatus("Loading office config...");
+    try {
+      const data = await fetchJson<{ officeConfig: OfficeConfigRow; officeLocation: OfficeLocationRow }>(
+        "/api/admin/office-config",
+      );
+      setOfficeConfig(data.officeConfig);
+      setOfficeLocation(data.officeLocation);
+      setStatus("");
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : "Failed to load office config");
+    }
+  }
 
   async function onSendTestEmail() {
     setStatus("Sending test email...");
@@ -316,6 +355,187 @@ export function AdminPanel({
             </Button>
           </div>
         </div>
+      </section>
+
+      <section className="space-y-3">
+        <div className="space-y-1">
+          <h2 className="text-lg font-semibold">Office Hours Config</h2>
+          <p className="text-sm text-foreground/70">
+            Phase 11. Single office settings and quiet hours.
+          </p>
+        </div>
+
+        {officeLocation && officeConfig ? (
+          <div className="grid gap-3 md:grid-cols-4">
+            <label className="space-y-1 text-sm md:col-span-2">
+              <div className="text-foreground/70">Office name</div>
+              <input
+                className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                value={officeLocation.name}
+                onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                  setOfficeLocation({ ...officeLocation, name: e.target.value })
+                }
+              />
+            </label>
+
+            <label className="space-y-1 text-sm md:col-span-2">
+              <div className="text-foreground/70">Timezone</div>
+              <input
+                className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                value={officeLocation.timezone}
+                onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                  setOfficeLocation({ ...officeLocation, timezone: e.target.value })
+                }
+                placeholder="America/Los_Angeles"
+              />
+            </label>
+
+            <label className="space-y-1 text-sm">
+              <div className="text-foreground/70">Latitude</div>
+              <input
+                className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                value={officeLocation.lat ?? ""}
+                onChange={(e: ChangeEvent<HTMLInputElement>) => {
+                  const v = e.target.value;
+                  setOfficeLocation({ ...officeLocation, lat: v.trim() ? Number(v) : null });
+                }}
+                placeholder="32.81..."
+              />
+            </label>
+
+            <label className="space-y-1 text-sm">
+              <div className="text-foreground/70">Longitude</div>
+              <input
+                className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                value={officeLocation.lon ?? ""}
+                onChange={(e: ChangeEvent<HTMLInputElement>) => {
+                  const v = e.target.value;
+                  setOfficeLocation({ ...officeLocation, lon: v.trim() ? Number(v) : null });
+                }}
+                placeholder="-117.00..."
+              />
+            </label>
+
+            <label className="space-y-1 text-sm">
+              <div className="text-foreground/70">Radius (m)</div>
+              <input
+                className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                value={officeLocation.radius_m ?? ""}
+                onChange={(e: ChangeEvent<HTMLInputElement>) => {
+                  const v = e.target.value;
+                  setOfficeLocation({ ...officeLocation, radius_m: v.trim() ? Number(v) : null });
+                }}
+                placeholder="20"
+              />
+            </label>
+
+            <label className="space-y-1 text-sm">
+              <div className="text-foreground/70">Grace radius (m)</div>
+              <input
+                className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                value={officeLocation.grace_radius_m ?? ""}
+                onChange={(e: ChangeEvent<HTMLInputElement>) => {
+                  const v = e.target.value;
+                  setOfficeLocation({ ...officeLocation, grace_radius_m: v.trim() ? Number(v) : null });
+                }}
+                placeholder="40"
+              />
+            </label>
+
+            <label className="flex items-center gap-2 text-sm md:col-span-2">
+              <input
+                type="checkbox"
+                checked={officeLocation.active}
+                onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                  setOfficeLocation({ ...officeLocation, active: e.target.checked })
+                }
+              />
+              <span>Office active</span>
+            </label>
+
+            <label className="flex items-center gap-2 text-sm md:col-span-2">
+              <input
+                type="checkbox"
+                checked={officeConfig.quiet_hours_enabled}
+                onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                  setOfficeConfig({ ...officeConfig, quiet_hours_enabled: e.target.checked })
+                }
+              />
+              <span>Quiet hours enabled</span>
+            </label>
+
+            <label className="space-y-1 text-sm">
+              <div className="text-foreground/70">Quiet hours start</div>
+              <input
+                type="time"
+                className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                value={officeConfig.quiet_hours_start_local.slice(0, 5)}
+                onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                  setOfficeConfig({ ...officeConfig, quiet_hours_start_local: e.target.value })
+                }
+              />
+            </label>
+
+            <label className="space-y-1 text-sm">
+              <div className="text-foreground/70">Quiet hours end</div>
+              <input
+                type="time"
+                className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                value={officeConfig.quiet_hours_end_local.slice(0, 5)}
+                onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                  setOfficeConfig({ ...officeConfig, quiet_hours_end_local: e.target.value })
+                }
+              />
+            </label>
+
+            <div className="flex items-end gap-3 md:col-span-4">
+              <Button
+                onClick={async () => {
+                  setStatus("Saving office config...");
+                  try {
+                    const payload = {
+                      name: officeLocation.name,
+                      timezone: officeLocation.timezone,
+                      lat: officeLocation.lat,
+                      lon: officeLocation.lon,
+                      radius_m: officeLocation.radius_m,
+                      grace_radius_m: officeLocation.grace_radius_m,
+                      active: officeLocation.active,
+                      quiet_hours_enabled: officeConfig.quiet_hours_enabled,
+                      quiet_hours_start_local: officeConfig.quiet_hours_start_local.slice(0, 5),
+                      quiet_hours_end_local: officeConfig.quiet_hours_end_local.slice(0, 5),
+                    };
+
+                    const data = await fetchJson<{ officeConfig: OfficeConfigRow; officeLocation: OfficeLocationRow }>(
+                      "/api/admin/office-config",
+                      {
+                        method: "PUT",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify(payload),
+                      },
+                    );
+
+                    setOfficeConfig(data.officeConfig);
+                    setOfficeLocation(data.officeLocation);
+                    setStatus("Office config saved.");
+                  } catch (e) {
+                    setStatus(e instanceof Error ? e.message : "Failed to save office config");
+                  }
+                }}
+              >
+                Save office config
+              </Button>
+
+              <Button variant="ghost" onClick={() => void loadOfficeConfig()}>
+                Reload
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="rounded-md border px-3 py-2 text-sm text-foreground/70">
+            Loading office config...
+          </div>
+        )}
       </section>
 
       <section className="space-y-3">

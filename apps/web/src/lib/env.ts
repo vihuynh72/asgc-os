@@ -15,7 +15,7 @@ export function getPublicEnv(): PublicEnv {
 
   if (!parsed.success) {
     throw new Error(
-      "Missing/invalid public env. Copy .env.example -> .env.local and set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.",
+      "Missing/invalid public env. In apps/web, copy .env.example -> .env.local and set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.",
     );
   }
 

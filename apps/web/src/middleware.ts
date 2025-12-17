@@ -1,9 +1,17 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-import { getPublicEnv } from "@/lib/env";
+import { getPublicEnv, hasPublicSupabaseEnv } from "@/lib/env";
 
 export async function middleware(request: NextRequest) {
+  if (!hasPublicSupabaseEnv()) {
+    const redirectUrl = request.nextUrl.clone();
+    redirectUrl.pathname = "/";
+    redirectUrl.searchParams.set("env", "missing");
+    redirectUrl.searchParams.set("redirectTo", request.nextUrl.pathname);
+    return NextResponse.redirect(redirectUrl);
+  }
+
   const env = getPublicEnv();
 
   const response = NextResponse.next({

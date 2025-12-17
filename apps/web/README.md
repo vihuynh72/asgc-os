@@ -19,9 +19,15 @@ Then set:
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 
-For PHASE 02 auth (server-only):
+For server-only operations (PHASE 02+):
 
 - `SUPABASE_SERVICE_ROLE_KEY`
+
+For PHASE 10 notifications (server-only):
+
+- `EMAIL_PROVIDER` (set to `resend`)
+- `EMAIL_FROM`
+- `RESEND_API_KEY`
 
 Run the development server:
 
