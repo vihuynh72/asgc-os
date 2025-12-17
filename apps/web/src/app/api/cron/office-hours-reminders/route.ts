@@ -32,6 +32,8 @@ function renderEmailText(type: string, metadata: unknown, origin: string): { sub
 
   const startsLocal = safeString(m.starts_at_local);
   const endsLocal = safeString(m.ends_at_local);
+  const checkinLocal = safeString(m.checkin_at_local);
+  const checkoutLocal = safeString(m.checkout_at_local);
   const tz = safeString(m.office_tz);
 
   const link = `${origin}/office-hours`;
@@ -54,6 +56,36 @@ function renderEmailText(type: string, metadata: unknown, origin: string): { sub
     return {
       subject: "You missed your office hours shift",
       text: `You missed your office hours shift.\n\nStart: ${startsLocal}${tz ? ` (${tz})` : ""}\nEnd: ${endsLocal}${tz ? ` (${tz})` : ""}\n\nOpen Office Hours: ${link}\n`,
+    };
+  }
+
+  // Phase 19: auto-close notifications
+  if (type === "office_hours.session_open_long") {
+    return {
+      subject: "Your office hours session is still open",
+      text: `Reminder: Your office hours session has been open for a while.\n\nChecked in: ${checkinLocal}${tz ? ` (${tz})` : ""}\n\nIf you forgot to check out, please do so now.\n\nOpen Office Hours: ${link}\n`,
+    };
+  }
+
+  if (type === "office_hours.session_auto_closed") {
+    return {
+      subject: "Your office hours session was auto-closed",
+      text: `Your office hours session was automatically closed because it exceeded the maximum allowed duration.\n\nChecked in: ${checkinLocal}${tz ? ` (${tz})` : ""}\nAuto-closed at: ${checkoutLocal}${tz ? ` (${tz})` : ""}\n\nThis session has been flagged for review.\n\nOpen Office Hours: ${link}\n`,
+    };
+  }
+
+  // Phase 20: coverage notifications
+  if (type === "office_hours.coverage_requested") {
+    return {
+      subject: "Office hours coverage needed",
+      text: `A colleague is requesting coverage for their shift.\n\nShift: ${startsLocal} – ${endsLocal}${tz ? ` (${tz})` : ""}\n\nIf you are available, you can claim this shift.\n\nOpen Office Hours: ${link}\n`,
+    };
+  }
+
+  if (type === "office_hours.coverage_claimed") {
+    return {
+      subject: "Your shift coverage was claimed",
+      text: `Good news! Someone has claimed your coverage request.\n\nShift: ${startsLocal} – ${endsLocal}${tz ? ` (${tz})` : ""}\n\nOpen Office Hours: ${link}\n`,
     };
   }
 
@@ -80,6 +112,20 @@ async function handle(request: NextRequest) {
   const origin = new URL(request.url).origin;
   const supabase = getSupabaseAdminClient();
 
+  // Phase 19: enqueue session-open reminders and auto-close long sessions
+  const { data: sessionOpenReminders, error: sessionOpenErr } = await supabase.rpc(
+    "enqueue_session_open_reminders"
+  );
+  if (sessionOpenErr) {
+    return NextResponse.json({ error: sessionOpenErr.message }, { status: 500 });
+  }
+
+  const { data: autoClosed, error: autoCloseErr } = await supabase.rpc("auto_close_sessions");
+  if (autoCloseErr) {
+    return NextResponse.json({ error: autoCloseErr.message }, { status: 500 });
+  }
+
+  // Phase 18: shift reminders and missed shifts
   const { data: enqueueRes, error: enqueueErr } = await supabase.rpc("enqueue_shift_reminders");
   if (enqueueErr) {
     return NextResponse.json({ error: enqueueErr.message }, { status: 500 });
@@ -92,10 +138,11 @@ async function handle(request: NextRequest) {
 
   const lockId = `cron:${crypto.randomUUID()}`;
 
+  // Claim all office_hours.* notifications (shifts, sessions, coverage)
   const { data: claimed, error: claimErr } = await supabase.rpc("claim_notification_log", {
     _limit: 50,
     _lock_id: lockId,
-    _type_prefix: "office_hours.shift_",
+    _type_prefix: "office_hours.",
   });
 
   if (claimErr) {
@@ -156,6 +203,8 @@ async function handle(request: NextRequest) {
 
   return NextResponse.json({
     ok: true,
+    session_open_reminders: sessionOpenReminders ?? 0,
+    auto_closed: autoClosed ?? 0,
     enqueue: enqueueRes ?? null,
     missed_marked: missedCount ?? 0,
     claimed: rows.length,

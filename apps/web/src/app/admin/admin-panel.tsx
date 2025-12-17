@@ -140,6 +140,14 @@ export function AdminPanel({
   const [shiftOfficeLocationId, setShiftOfficeLocationId] = useState<string>("");
   const [shiftStatus, setShiftStatus] = useState<string>("");
 
+  // Meeting form state (Phase 21)
+  const [meetingType, setMeetingType] = useState<string>("board");
+  const [meetingTitle, setMeetingTitle] = useState<string>("");
+  const [meetingDescription, setMeetingDescription] = useState<string>("");
+  const [meetingLocation, setMeetingLocation] = useState<string>("");
+  const [meetingStartsAtLocal, setMeetingStartsAtLocal] = useState<string>("");
+  const [meetingEndsAtLocal, setMeetingEndsAtLocal] = useState<string>("");
+
   const [status, setStatus] = useState<string>("");
 
   async function loadOfficeHourRequirements(termId: string) {
@@ -303,6 +311,45 @@ export function AdminPanel({
       setShiftOfficeLocationId("");
     } catch (e) {
       setShiftStatus(e instanceof Error ? e.message : "Failed to create shift");
+    }
+  }
+
+  async function onCreateMeeting() {
+    setStatus("Creating meeting...");
+    try {
+      if (!meetingTitle) {
+        setStatus("Meeting title is required.");
+        return;
+      }
+      if (!meetingStartsAtLocal || !meetingEndsAtLocal) {
+        setStatus("Start and end times are required.");
+        return;
+      }
+
+      const startsAtIso = new Date(meetingStartsAtLocal).toISOString();
+      const endsAtIso = new Date(meetingEndsAtLocal).toISOString();
+
+      await fetchJson<{ meeting: unknown }>("/api/admin/meetings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          meeting_type: meetingType,
+          title: meetingTitle,
+          starts_at: startsAtIso,
+          ends_at: endsAtIso,
+          description: meetingDescription.trim() || undefined,
+          location: meetingLocation.trim() || undefined,
+        }),
+      });
+
+      setStatus("Meeting created.");
+      setMeetingTitle("");
+      setMeetingDescription("");
+      setMeetingLocation("");
+      setMeetingStartsAtLocal("");
+      setMeetingEndsAtLocal("");
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : "Failed to create meeting");
     }
   }
 
@@ -923,6 +970,89 @@ export function AdminPanel({
 
         <div className="flex flex-wrap items-center gap-3">
           <Button onClick={() => void onSendTestEmail()}>Send test email</Button>
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <div className="space-y-1">
+          <h2 className="text-lg font-semibold">Meetings</h2>
+          <p className="text-sm text-foreground/70">Create a new meeting (Phase 21).</p>
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-4">
+          <label className="space-y-1 text-sm">
+            <div className="text-foreground/70">Meeting type</div>
+            <select
+              className="h-9 rounded-md border bg-transparent px-2 text-sm"
+              value={meetingType}
+              onChange={(e: ChangeEvent<HTMLSelectElement>) => setMeetingType(e.target.value)}
+            >
+              <option value="board">Board</option>
+              <option value="committee">Committee</option>
+              <option value="icc">ICC</option>
+              <option value="special">Special</option>
+              <option value="other">Other</option>
+            </select>
+          </label>
+
+          <label className="space-y-1 text-sm">
+            <div className="text-foreground/70">Title</div>
+            <input
+              type="text"
+              className="h-9 rounded-md border bg-transparent px-2 text-sm"
+              value={meetingTitle}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingTitle(e.target.value)}
+              placeholder="Meeting title"
+            />
+          </label>
+
+          <label className="space-y-1 text-sm">
+            <div className="text-foreground/70">Location</div>
+            <input
+              type="text"
+              className="h-9 rounded-md border bg-transparent px-2 text-sm"
+              value={meetingLocation}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingLocation(e.target.value)}
+              placeholder="e.g. Room 101"
+            />
+          </label>
+
+          <div className="flex items-end">
+            <Button onClick={() => void onCreateMeeting()} disabled={!meetingTitle || !meetingStartsAtLocal || !meetingEndsAtLocal}>
+              Create meeting
+            </Button>
+          </div>
+
+          <label className="space-y-1 text-sm">
+            <div className="text-foreground/70">Starts at (local)</div>
+            <input
+              type="datetime-local"
+              className="h-9 rounded-md border bg-transparent px-2 text-sm"
+              value={meetingStartsAtLocal}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingStartsAtLocal(e.target.value)}
+            />
+          </label>
+
+          <label className="space-y-1 text-sm">
+            <div className="text-foreground/70">Ends at (local)</div>
+            <input
+              type="datetime-local"
+              className="h-9 rounded-md border bg-transparent px-2 text-sm"
+              value={meetingEndsAtLocal}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingEndsAtLocal(e.target.value)}
+            />
+          </label>
+
+          <label className="space-y-1 text-sm md:col-span-2">
+            <div className="text-foreground/70">Description (optional)</div>
+            <input
+              type="text"
+              className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+              value={meetingDescription}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingDescription(e.target.value)}
+              placeholder="Optional description"
+            />
+          </label>
         </div>
       </section>
 

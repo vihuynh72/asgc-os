@@ -40,6 +40,18 @@ type OfficeHourShift = {
   starts_at: string;
   ends_at: string;
   status: string;
+  covered_by_user_id: string | null;
+};
+
+type CoverageRequest = {
+  id: string;
+  shift_id: string;
+  requestor_user_id: string;
+  claimer_user_id: string | null;
+  status: string;
+  notes: string | null;
+  created_at: string;
+  claimed_at: string | null;
 };
 
 type OpenSession = {
@@ -109,7 +121,9 @@ export default function OfficeHoursPage() {
   const [sessions, setSessions] = useState<TimesheetSession[]>([]);
   const [exceptions, setExceptions] = useState<TimesheetException[]>([]);
   const [shifts, setShifts] = useState<OfficeHourShift[]>([]);
+  const [openCoverageRequests, setOpenCoverageRequests] = useState<CoverageRequest[]>([]);
   const [officeTz, setOfficeTz] = useState<string | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
 
   const formatInOfficeTz = useCallback(
     (iso: string) => {
@@ -130,6 +144,9 @@ export default function OfficeHoursPage() {
 
   const refresh = useCallback(async () => {
     setError(null);
+
+    const { data: userData } = await supabase.auth.getUser();
+    if (userData?.user?.id) setUserId(userData.user.id);
 
     const { data: tzData, error: tzErr } = await supabase.rpc("office_timezone");
     if (!tzErr && typeof tzData === "string" && tzData.length > 0) {
@@ -174,6 +191,13 @@ export default function OfficeHoursPage() {
 
     if (shiftsErr) setError(shiftsErr.message);
     else setShifts(((shiftsData ?? []) as OfficeHourShift[]) || []);
+
+    // Fetch open coverage requests
+    const coverageRes = await fetch("/api/office-hours/coverage");
+    if (coverageRes.ok) {
+      const coverageJson = (await coverageRes.json().catch(() => null)) as { requests?: CoverageRequest[] } | null;
+      setOpenCoverageRequests((coverageJson?.requests ?? []) as CoverageRequest[]);
+    }
   }, [supabase]);
 
   useEffect(() => {
@@ -229,6 +253,77 @@ export default function OfficeHoursPage() {
       setLoading(false);
     }
   }, [pin, refresh]);
+
+  const onRequestCoverage = useCallback(
+    async (shiftId: string) => {
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await fetch("/api/office-hours/coverage", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ shift_id: shiftId }),
+        });
+
+        const json = (await res.json().catch(() => null)) as { error?: string } | null;
+        if (!res.ok) {
+          setError(json?.error ?? "Failed to request coverage");
+          return;
+        }
+
+        await refresh();
+      } finally {
+        setLoading(false);
+      }
+    },
+    [refresh],
+  );
+
+  const onClaimCoverage = useCallback(
+    async (requestId: string) => {
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await fetch(`/api/office-hours/coverage/${requestId}`, {
+          method: "POST",
+        });
+
+        const json = (await res.json().catch(() => null)) as { error?: string } | null;
+        if (!res.ok) {
+          setError(json?.error ?? "Failed to claim coverage");
+          return;
+        }
+
+        await refresh();
+      } finally {
+        setLoading(false);
+      }
+    },
+    [refresh],
+  );
+
+  const onCancelCoverageRequest = useCallback(
+    async (requestId: string) => {
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await fetch(`/api/office-hours/coverage/${requestId}`, {
+          method: "DELETE",
+        });
+
+        const json = (await res.json().catch(() => null)) as { error?: string } | null;
+        if (!res.ok) {
+          setError(json?.error ?? "Failed to cancel coverage request");
+          return;
+        }
+
+        await refresh();
+      } finally {
+        setLoading(false);
+      }
+    },
+    [refresh],
+  );
 
   return (
     <PageShell title="Office Hours" description="Check in/out with location + rotating PIN.">
@@ -313,14 +408,79 @@ export default function OfficeHoursPage() {
             <div className="mt-2 text-sm text-foreground/70">No shifts scheduled.</div>
           ) : (
             <div className="mt-2 space-y-2">
-              {shifts.map((s) => (
-                <div key={s.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-foreground/10 px-3 py-2">
-                  <div className="text-sm text-foreground/80">
-                    {formatInOfficeTz(s.starts_at)} → {formatInOfficeTz(s.ends_at)}
+              {shifts.map((s) => {
+                const isFuture = new Date(s.starts_at) > new Date();
+                const canRequest = isFuture && s.status === "scheduled" && !s.covered_by_user_id;
+                const hasPendingRequest = openCoverageRequests.some((cr) => cr.shift_id === s.id);
+                return (
+                  <div key={s.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-foreground/10 px-3 py-2">
+                    <div className="text-sm text-foreground/80">
+                      {formatInOfficeTz(s.starts_at)} → {formatInOfficeTz(s.ends_at)}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {s.covered_by_user_id ? (
+                        <span className="text-xs text-foreground/70">coverage claimed</span>
+                      ) : hasPendingRequest ? (
+                        <span className="text-xs text-foreground/70">coverage requested</span>
+                      ) : null}
+                      {canRequest && !hasPendingRequest ? (
+                        <Button
+                          variant="ghost"
+                          onClick={() => onRequestCoverage(s.id)}
+                          disabled={loading}
+                          className="h-6 px-2 text-xs"
+                        >
+                          Request coverage
+                        </Button>
+                      ) : null}
+                      <span className="text-xs text-foreground/70">{s.status}</span>
+                    </div>
                   </div>
-                  <div className="text-xs text-foreground/70">{s.status}</div>
-                </div>
-              ))}
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <div className="rounded-lg border border-foreground/10 p-4">
+          <div className="text-sm font-medium">Open coverage requests</div>
+          {openCoverageRequests.length === 0 ? (
+            <div className="mt-2 text-sm text-foreground/70">No open coverage requests.</div>
+          ) : (
+            <div className="mt-2 space-y-2">
+              {openCoverageRequests.map((cr) => {
+                const isOwn = cr.requestor_user_id === userId;
+                return (
+                  <div key={cr.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-foreground/10 px-3 py-2">
+                    <div className="text-sm text-foreground/80">
+                      Shift: {cr.shift_id.slice(0, 8)}…
+                      {cr.notes ? ` • ${cr.notes}` : ""}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {isOwn ? (
+                        <Button
+                          variant="ghost"
+                          onClick={() => onCancelCoverageRequest(cr.id)}
+                          disabled={loading}
+                          className="h-6 px-2 text-xs"
+                        >
+                          Cancel
+                        </Button>
+                      ) : (
+                        <Button
+                          variant="ghost"
+                          onClick={() => onClaimCoverage(cr.id)}
+                          disabled={loading}
+                          className="h-6 px-2 text-xs"
+                        >
+                          Claim
+                        </Button>
+                      )}
+                      <span className="text-xs text-foreground/70">{cr.status}</span>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
