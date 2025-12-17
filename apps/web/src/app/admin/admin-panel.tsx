@@ -1,7 +1,7 @@
 "use client";
 
 import type { ChangeEvent } from "react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 
@@ -39,6 +39,16 @@ type OfficeConfigRow = {
   quiet_hours_enabled: boolean;
   quiet_hours_start_local: string;
   quiet_hours_end_local: string;
+};
+
+type OfficeHourRequirementRow = {
+  id: string;
+  role_key: RoleKey;
+  term_id: string | null;
+  weekly_total_hours: number;
+  weekly_in_office_hours: number;
+  effective_start: string | null;
+  effective_end: string | null;
 };
 
 type AssignmentRow = {
@@ -82,6 +92,7 @@ export function AdminPanel({
   initialTermAssignments,
   initialOfficeLocation,
   initialOfficeConfig,
+  initialOfficeHourRequirements,
 }: {
   initialTerms: TermRow[];
   initialUsers: UserRow[];
@@ -90,6 +101,7 @@ export function AdminPanel({
   initialTermAssignments: AssignmentRow[];
   initialOfficeLocation: OfficeLocationRow | null;
   initialOfficeConfig: OfficeConfigRow | null;
+  initialOfficeHourRequirements: OfficeHourRequirementRow[];
 }) {
   const [terms, setTerms] = useState<TermRow[]>(initialTerms);
   const [users, setUsers] = useState<UserRow[]>(initialUsers);
@@ -110,7 +122,106 @@ export function AdminPanel({
   const [officeLocation, setOfficeLocation] = useState<OfficeLocationRow | null>(initialOfficeLocation);
   const [officeConfig, setOfficeConfig] = useState<OfficeConfigRow | null>(initialOfficeConfig);
 
+  const [officeHourRequirements, setOfficeHourRequirements] = useState<OfficeHourRequirementRow[]>(
+    initialOfficeHourRequirements,
+  );
+
+  const [pinStatus, setPinStatus] = useState<string>("");
+  const [currentPin, setCurrentPin] = useState<string>("");
+  const [pinValidTo, setPinValidTo] = useState<string>("");
+  const [pinWindowSeconds, setPinWindowSeconds] = useState<number>(60);
+  const [pinAutoRefresh, setPinAutoRefresh] = useState<boolean>(false);
+
   const [status, setStatus] = useState<string>("");
+
+  async function loadOfficeHourRequirements(termId: string) {
+    if (!termId) return;
+    setStatus("Loading office hour requirements...");
+    try {
+      const data = await fetchJson<{ termId: string; requirements: OfficeHourRequirementRow[] }>(
+        `/api/admin/office-hour-requirements?termId=${encodeURIComponent(termId)}`,
+      );
+      setOfficeHourRequirements(data.requirements);
+      setStatus("");
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : "Failed to load office hour requirements");
+    }
+  }
+
+  async function onSaveOfficeHourRequirements() {
+    if (!selectedTermId) return;
+
+    const roles: RoleKey[] = ["president", "officer", "volunteer"];
+    const payload = roles.map((roleKey) => {
+      const row = officeHourRequirements.find(
+        (r) => r.role_key === roleKey && r.term_id === selectedTermId && !r.effective_start && !r.effective_end,
+      );
+
+      return {
+        roleKey,
+        weeklyTotalHours: row?.weekly_total_hours ?? 0,
+        weeklyInOfficeHours: row?.weekly_in_office_hours ?? 0,
+      };
+    });
+
+    setStatus("Saving office hour requirements...");
+    try {
+      const data = await fetchJson<{ termId: string; requirements: OfficeHourRequirementRow[] }>(
+        "/api/admin/office-hour-requirements",
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ termId: selectedTermId, requirements: payload }),
+        },
+      );
+      setOfficeHourRequirements(data.requirements);
+      setStatus("Office hour requirements saved.");
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : "Failed to save office hour requirements");
+    }
+  }
+
+  function updateRequirement(roleKey: RoleKey, patch: Partial<Pick<OfficeHourRequirementRow, "weekly_total_hours" | "weekly_in_office_hours">>) {
+    if (!selectedTermId) return;
+    setOfficeHourRequirements((prev) => {
+      const next = [...prev];
+      const idx = next.findIndex(
+        (r) => r.role_key === roleKey && r.term_id === selectedTermId && !r.effective_start && !r.effective_end,
+      );
+
+      if (idx >= 0) {
+        next[idx] = { ...next[idx], ...patch };
+        return next;
+      }
+
+      next.push({
+        id: "",
+        role_key: roleKey,
+        term_id: selectedTermId,
+        weekly_total_hours: patch.weekly_total_hours ?? 0,
+        weekly_in_office_hours: patch.weekly_in_office_hours ?? 0,
+        effective_start: null,
+        effective_end: null,
+      });
+
+      return next;
+    });
+  }
+
+  async function fetchCurrentPin() {
+    setPinStatus("Loading PIN...");
+    try {
+      const data = await fetchJson<{ pin: string; validFrom: string; validTo: string; windowSeconds: number }>(
+        "/api/admin/presence-pin",
+      );
+      setCurrentPin(data.pin);
+      setPinValidTo(data.validTo);
+      setPinWindowSeconds(data.windowSeconds);
+      setPinStatus("");
+    } catch (e) {
+      setPinStatus(e instanceof Error ? e.message : "Failed to load PIN");
+    }
+  }
 
   async function loadOfficeConfig() {
     setStatus("Loading office config...");
@@ -273,13 +384,41 @@ export function AdminPanel({
     setSelectedTermId(nextTermId);
     if (!nextTermId) return;
     try {
-      await loadAssignments(nextTermId);
+      await Promise.all([loadAssignments(nextTermId), loadOfficeHourRequirements(nextTermId)]);
     } catch (e) {
       setStatus(e instanceof Error ? e.message : "Failed to load role assignments");
     }
   }
 
   const currentTermId = terms.find((t: TermRow) => t.is_current)?.id ?? "";
+
+  const reqRows = useMemo(() => {
+    const termId = selectedTermId;
+    const byRole = new Map<RoleKey, OfficeHourRequirementRow>();
+    for (const r of officeHourRequirements) {
+      if (r.term_id === termId && !r.effective_start && !r.effective_end) {
+        byRole.set(r.role_key, r);
+      }
+    }
+    return byRole;
+  }, [officeHourRequirements, selectedTermId]);
+
+  // Auto-refresh PIN when enabled.
+  // Keep it simple: poll every 5 seconds.
+  useEffect(() => {
+    if (!pinAutoRefresh) return;
+
+    window.setTimeout(() => {
+      void fetchCurrentPin();
+    }, 0);
+    const id = window.setInterval(() => {
+      void fetchCurrentPin();
+    }, 5000);
+
+    return () => {
+      window.clearInterval(id);
+    };
+  }, [pinAutoRefresh]);
 
   return (
     <div className="space-y-10">
@@ -353,6 +492,104 @@ export function AdminPanel({
             <Button onClick={onCreateTerm} disabled={!newTermName.trim()}>
               Create term
             </Button>
+          </div>
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <div className="space-y-1">
+          <h2 className="text-lg font-semibold">Office Hour Requirements</h2>
+          <p className="text-sm text-foreground/70">
+            Configure weekly required hours for the selected term. In-office hours cannot exceed total hours.
+          </p>
+        </div>
+
+        <div className="rounded-md border p-3">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+            {(["president", "officer", "volunteer"] as RoleKey[]).map((roleKey) => {
+              const row = reqRows.get(roleKey);
+              const total = row?.weekly_total_hours ?? 0;
+              const inOffice = row?.weekly_in_office_hours ?? 0;
+
+              return (
+                <div key={roleKey} className="space-y-2">
+                  <div className="text-sm font-medium">{roleKey}</div>
+
+                  <label className="block text-sm">
+                    <div className="text-foreground/70">Weekly total hours</div>
+                    <input
+                      className="mt-1 h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                      type="number"
+                      min={0}
+                      step={1}
+                      value={total}
+                      onChange={(e) => {
+                        const next = Math.max(0, Math.floor(Number(e.target.value || 0)));
+                        updateRequirement(roleKey, { weekly_total_hours: next });
+                        if (inOffice > next) {
+                          updateRequirement(roleKey, { weekly_in_office_hours: next });
+                        }
+                      }}
+                    />
+                  </label>
+
+                  <label className="block text-sm">
+                    <div className="text-foreground/70">Weekly in-office hours</div>
+                    <input
+                      className="mt-1 h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                      type="number"
+                      min={0}
+                      step={1}
+                      value={inOffice}
+                      onChange={(e) => {
+                        const next = Math.max(0, Math.floor(Number(e.target.value || 0)));
+                        updateRequirement(roleKey, { weekly_in_office_hours: Math.min(next, total) });
+                      }}
+                    />
+                  </label>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button onClick={() => void loadOfficeHourRequirements(selectedTermId)} disabled={!selectedTermId}>
+              Reload
+            </Button>
+            <Button onClick={() => void onSaveOfficeHourRequirements()} disabled={!selectedTermId}>
+              Save requirements
+            </Button>
+          </div>
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <div className="space-y-1">
+          <h2 className="text-lg font-semibold">Office PIN (kiosk)</h2>
+          <p className="text-sm text-foreground/70">
+            Rotating PIN used for Office Hours check-in (Phase 13). Keep this displayed in the office.
+          </p>
+        </div>
+
+        {pinStatus ? <div className="rounded-md border px-3 py-2 text-sm text-foreground/80">{pinStatus}</div> : null}
+
+        <div className="flex flex-wrap items-center gap-3">
+          <Button onClick={() => void fetchCurrentPin()}>Get current PIN</Button>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={pinAutoRefresh}
+              onChange={(e) => setPinAutoRefresh(e.target.checked)}
+            />
+            Auto-refresh
+          </label>
+        </div>
+
+        <div className="rounded-md border p-3">
+          <div className="text-sm text-foreground/70">PIN</div>
+          <div className="mt-1 font-mono text-3xl tracking-widest">{currentPin || "------"}</div>
+          <div className="mt-2 text-sm text-foreground/70">
+            Expires at: {pinValidTo || "—"} (window {pinWindowSeconds}s)
           </div>
         </div>
       </section>
