@@ -109,9 +109,32 @@ export default function OfficeHoursPage() {
   const [sessions, setSessions] = useState<TimesheetSession[]>([]);
   const [exceptions, setExceptions] = useState<TimesheetException[]>([]);
   const [shifts, setShifts] = useState<OfficeHourShift[]>([]);
+  const [officeTz, setOfficeTz] = useState<string | null>(null);
+
+  const formatInOfficeTz = useCallback(
+    (iso: string) => {
+      const d = new Date(iso);
+      if (!officeTz) return d.toLocaleString();
+
+      return new Intl.DateTimeFormat(undefined, {
+        timeZone: officeTz,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+      }).format(d);
+    },
+    [officeTz],
+  );
 
   const refresh = useCallback(async () => {
     setError(null);
+
+    const { data: tzData, error: tzErr } = await supabase.rpc("office_timezone");
+    if (!tzErr && typeof tzData === "string" && tzData.length > 0) {
+      setOfficeTz(tzData);
+    }
 
     const { data: weeklyData, error: weeklyError } = await supabase.rpc("my_weekly_hours");
     if (weeklyError) {
@@ -216,7 +239,7 @@ export default function OfficeHoursPage() {
               <div className="text-sm font-medium">Status</div>
               {openSession ? (
                 <div className="text-sm text-foreground/80">
-                  Checked in at {new Date(openSession.checkin_at).toLocaleString()}
+                  Checked in at {formatInOfficeTz(openSession.checkin_at)}
                   {openSession.needs_review ? (
                     <span className="ml-2 text-foreground/70">(needs review)</span>
                   ) : null}
@@ -293,7 +316,7 @@ export default function OfficeHoursPage() {
               {shifts.map((s) => (
                 <div key={s.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-foreground/10 px-3 py-2">
                   <div className="text-sm text-foreground/80">
-                    {new Date(s.starts_at).toLocaleString()} → {new Date(s.ends_at).toLocaleString()}
+                    {formatInOfficeTz(s.starts_at)} → {formatInOfficeTz(s.ends_at)}
                   </div>
                   <div className="text-xs text-foreground/70">{s.status}</div>
                 </div>
@@ -312,8 +335,8 @@ export default function OfficeHoursPage() {
                 <div key={s.id} className="rounded-md border border-foreground/10 px-3 py-2">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="text-sm text-foreground/80">
-                      {new Date(s.checkin_at).toLocaleString()}
-                      {s.checkout_at ? ` → ${new Date(s.checkout_at).toLocaleString()}` : ""}
+                      {formatInOfficeTz(s.checkin_at)}
+                      {s.checkout_at ? ` → ${formatInOfficeTz(s.checkout_at)}` : ""}
                     </div>
                     <div className="text-xs text-foreground/70">{s.status}</div>
                   </div>
@@ -340,7 +363,7 @@ export default function OfficeHoursPage() {
                     {e.kind}: {formatMinutes(e.minutes)}
                     {e.reason ? ` • ${e.reason}` : ""}
                   </div>
-                  <div className="text-xs text-foreground/70">{new Date(e.created_at).toLocaleString()}</div>
+                  <div className="text-xs text-foreground/70">{formatInOfficeTz(e.created_at)}</div>
                 </div>
               ))}
             </div>
