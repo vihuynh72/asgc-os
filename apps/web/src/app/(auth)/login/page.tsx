@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
 import { PageShell } from "@/components/page-shell";
@@ -10,6 +11,7 @@ function normalizeEmail(raw: string): string {
 }
 
 export default function LoginPage() {
+  const searchParams = useSearchParams();
   const [email, setEmail] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [status, setStatus] = useState<"idle" | "sent" | "error">("idle");
@@ -47,6 +49,12 @@ export default function LoginPage() {
       title="Sign in"
       description="Invite-only. If you're allowlisted, you'll receive a magic link by email."
     >
+      {searchParams.get("error") === "auth_callback_failed" ? (
+        <p className="mt-4 max-w-md text-sm text-foreground/70">
+          That sign-in link could not be verified. Please request a new link and try again.
+        </p>
+      ) : null}
+
       <form onSubmit={onSubmit} className="mt-6 max-w-md space-y-4">
         <div className="space-y-1">
           <label htmlFor="email" className="text-sm font-medium">

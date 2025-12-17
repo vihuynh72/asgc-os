@@ -14,6 +14,34 @@ type WeeklyHours = {
   deficit_in_office_minutes: number;
 };
 
+type TimesheetSession = {
+  id: string;
+  checkin_at: string;
+  checkout_at: string | null;
+  status: string;
+  duration_minutes: number | null;
+  within_radius: boolean;
+  within_grace: boolean;
+  needs_review: boolean;
+  review_reason: string | null;
+};
+
+type TimesheetException = {
+  id: string;
+  kind: "total" | "in_office";
+  minutes: number;
+  reason: string | null;
+  created_at: string;
+};
+
+type OfficeHourShift = {
+  id: string;
+  office_location_id: string;
+  starts_at: string;
+  ends_at: string;
+  status: string;
+};
+
 type OpenSession = {
   id: string;
   checkin_at: string;
@@ -78,6 +106,9 @@ export default function OfficeHoursPage() {
 
   const [weekly, setWeekly] = useState<WeeklyHours | null>(null);
   const [openSession, setOpenSession] = useState<OpenSession | null>(null);
+  const [sessions, setSessions] = useState<TimesheetSession[]>([]);
+  const [exceptions, setExceptions] = useState<TimesheetException[]>([]);
+  const [shifts, setShifts] = useState<OfficeHourShift[]>([]);
 
   const refresh = useCallback(async () => {
     setError(null);
@@ -104,6 +135,22 @@ export default function OfficeHoursPage() {
     } else {
       setOpenSession((sessionRow as OpenSession | null) ?? null);
     }
+
+    const [{ data: sessionsData, error: sessionsErr }, { data: excData, error: excErr }, { data: shiftsData, error: shiftsErr }] =
+      await Promise.all([
+        supabase.rpc("my_timesheet_sessions"),
+        supabase.rpc("my_timesheet_exceptions"),
+        supabase.rpc("my_office_hour_shifts_week"),
+      ]);
+
+    if (sessionsErr) setError(sessionsErr.message);
+    else setSessions(((sessionsData ?? []) as TimesheetSession[]) || []);
+
+    if (excErr) setError(excErr.message);
+    else setExceptions(((excData ?? []) as TimesheetException[]) || []);
+
+    if (shiftsErr) setError(shiftsErr.message);
+    else setShifts(((shiftsData ?? []) as OfficeHourShift[]) || []);
   }, [supabase]);
 
   useEffect(() => {
@@ -234,6 +281,69 @@ export default function OfficeHoursPage() {
             </div>
           ) : (
             <div className="mt-2 text-sm text-foreground/70">Loading…</div>
+          )}
+        </div>
+
+        <div className="rounded-lg border border-foreground/10 p-4">
+          <div className="text-sm font-medium">Shifts (this week)</div>
+          {shifts.length === 0 ? (
+            <div className="mt-2 text-sm text-foreground/70">No shifts scheduled.</div>
+          ) : (
+            <div className="mt-2 space-y-2">
+              {shifts.map((s) => (
+                <div key={s.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-foreground/10 px-3 py-2">
+                  <div className="text-sm text-foreground/80">
+                    {new Date(s.starts_at).toLocaleString()} → {new Date(s.ends_at).toLocaleString()}
+                  </div>
+                  <div className="text-xs text-foreground/70">{s.status}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="rounded-lg border border-foreground/10 p-4">
+          <div className="text-sm font-medium">Sessions (this week)</div>
+          {sessions.length === 0 ? (
+            <div className="mt-2 text-sm text-foreground/70">No sessions yet.</div>
+          ) : (
+            <div className="mt-2 space-y-2">
+              {sessions.map((s) => (
+                <div key={s.id} className="rounded-md border border-foreground/10 px-3 py-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="text-sm text-foreground/80">
+                      {new Date(s.checkin_at).toLocaleString()}
+                      {s.checkout_at ? ` → ${new Date(s.checkout_at).toLocaleString()}` : ""}
+                    </div>
+                    <div className="text-xs text-foreground/70">{s.status}</div>
+                  </div>
+                  <div className="mt-1 text-xs text-foreground/70">
+                    Duration: {s.duration_minutes === null ? "—" : formatMinutes(s.duration_minutes)}
+                    {s.needs_review ? " • needs review" : ""}
+                    {s.review_reason ? ` • ${s.review_reason}` : ""}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="rounded-lg border border-foreground/10 p-4">
+          <div className="text-sm font-medium">Approved exceptions (this week)</div>
+          {exceptions.length === 0 ? (
+            <div className="mt-2 text-sm text-foreground/70">No exceptions.</div>
+          ) : (
+            <div className="mt-2 space-y-2">
+              {exceptions.map((e) => (
+                <div key={e.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-foreground/10 px-3 py-2">
+                  <div className="text-sm text-foreground/80">
+                    {e.kind}: {formatMinutes(e.minutes)}
+                    {e.reason ? ` • ${e.reason}` : ""}
+                  </div>
+                  <div className="text-xs text-foreground/70">{new Date(e.created_at).toLocaleString()}</div>
+                </div>
+              ))}
+            </div>
           )}
         </div>
       </div>
