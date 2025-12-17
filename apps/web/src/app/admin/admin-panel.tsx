@@ -87,6 +87,16 @@ export function AdminPanel({
 
   const [status, setStatus] = useState<string>("");
 
+  async function onSendTestEmail() {
+    setStatus("Sending test email...");
+    try {
+      await fetchJson<{ ok: true }>("/api/admin/send-test-email", { method: "POST" });
+      setStatus("Test email sent (or queued). Check notification_log and your inbox.");
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : "Failed to send test email");
+    }
+  }
+
   const usersById = useMemo(() => {
     const m = new Map<string, UserRow>();
     for (const u of users) m.set(u.id, u);
@@ -305,6 +315,19 @@ export function AdminPanel({
               Create term
             </Button>
           </div>
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <div className="space-y-1">
+          <h2 className="text-lg font-semibold">Notifications</h2>
+          <p className="text-sm text-foreground/70">
+            Phase 10 plumbing. Sends a test email to your own account.
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3">
+          <Button onClick={() => void onSendTestEmail()}>Send test email</Button>
         </div>
       </section>
 
