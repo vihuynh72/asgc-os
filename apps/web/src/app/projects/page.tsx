@@ -1,7 +1,7 @@
 import { PageShell } from "@/components/page-shell";
 import { getSupabaseServerComponentClient } from "@/lib/supabaseServerComponent";
 
-import { TasksPanel } from "./tasks-panel";
+import { ProjectsPanel } from "./projects-panel";
 
 export const dynamic = "force-dynamic";
 
@@ -11,37 +11,24 @@ type CommitteeRow = {
   name: string;
 };
 
-type TaskRow = {
+type ProjectRow = {
   id: string;
   committee_id: string;
-  project_id: string | null;
-  title: string;
-  description: string | null;
-  status: "todo" | "doing" | "done";
-  priority: "low" | "medium" | "high";
-  due_at: string | null;
-  assigned_to: string | null;
+  name: string;
+  status: "active" | "archived";
   created_by: string;
   created_at: string;
   updated_at: string;
 };
 
-export default async function TasksPage({
-  searchParams,
-}: {
-  searchParams: Promise<Record<string, string | string[] | undefined>>;
-}) {
-  const sp = await searchParams;
-  const projectIdFilterRaw = sp.projectId;
-  const projectIdFilter = typeof projectIdFilterRaw === "string" ? projectIdFilterRaw : "";
-
+export default async function ProjectsPage() {
   const supabase = await getSupabaseServerComponentClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
 
   if (!user) {
-    return <PageShell title="Tasks" description="Please sign in." />;
+    return <PageShell title="Projects" description="Please sign in." />;
   }
 
   const { data: memberships } = await supabase
@@ -63,25 +50,15 @@ export default async function TasksPage({
     .in("id", committeeIds.length > 0 ? committeeIds : ["00000000-0000-0000-0000-000000000000"])
     .order("name", { ascending: true });
 
-  let tasksQuery = supabase
-    .from("tasks")
-    .select("id,committee_id,project_id,title,description,status,priority,due_at,assigned_to,created_by,created_at,updated_at")
+  const { data: projects } = await supabase
+    .from("projects")
+    .select("id,committee_id,name,status,created_by,created_at,updated_at")
     .order("created_at", { ascending: false })
     .limit(200);
 
-  if (projectIdFilter) {
-    tasksQuery = tasksQuery.eq("project_id", projectIdFilter);
-  }
-
-  const { data: tasks } = await tasksQuery;
-
   return (
-    <PageShell title="Tasks" description="Create and track committee-scoped tasks.">
-      <TasksPanel
-        initialTasks={(tasks ?? []) as TaskRow[]}
-        initialCommittees={((committees ?? []) as CommitteeRow[])}
-        projectIdFilter={projectIdFilter}
-      />
+    <PageShell title="Projects" description="Create and track committee-scoped projects.">
+      <ProjectsPanel initialProjects={(projects ?? []) as ProjectRow[]} committees={(committees ?? []) as CommitteeRow[]} />
     </PageShell>
   );
 }

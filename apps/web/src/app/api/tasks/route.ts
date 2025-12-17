@@ -30,6 +30,7 @@ type CommitteeRow = {
 type TaskRow = {
   id: string;
   committee_id: string;
+  project_id: string | null;
   title: string;
   description: string | null;
   status: "todo" | "doing" | "done";
@@ -79,11 +80,20 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: committeesError.message }, { status: 500 });
   }
 
-  const { data: tasks, error: tasksError } = await supabase
+  const url = request.nextUrl;
+  const projectId = url.searchParams.get("projectId");
+
+  let tasksQuery = supabase
     .from("tasks")
-    .select("id,committee_id,title,description,status,priority,due_at,assigned_to,created_by,created_at,updated_at")
+    .select("id,committee_id,project_id,title,description,status,priority,due_at,assigned_to,created_by,created_at,updated_at")
     .order("created_at", { ascending: false })
     .limit(200);
+
+  if (projectId) {
+    tasksQuery = tasksQuery.eq("project_id", projectId);
+  }
+
+  const { data: tasks, error: tasksError } = await tasksQuery;
 
   if (tasksError) {
     return NextResponse.json({ error: tasksError.message }, { status: 500 });
