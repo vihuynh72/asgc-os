@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { PageShell } from "@/components/page-shell";
@@ -104,7 +105,11 @@ export default function MeetingsPage() {
         ) : (
           <div className="space-y-3">
             {meetings.map((m) => (
-              <div key={m.id} className="rounded-lg border border-foreground/10 p-4">
+              <Link
+                key={m.id}
+                href={`/meetings/${m.id}`}
+                className="block rounded-lg border border-foreground/10 p-4 transition-colors hover:border-foreground/20 hover:bg-foreground/5"
+              >
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div>
                     <div className="font-medium">{m.title}</div>
@@ -121,7 +126,7 @@ export default function MeetingsPage() {
                 {m.description ? (
                   <div className="mt-2 text-sm text-foreground/70">{m.description}</div>
                 ) : null}
-              </div>
+              </Link>
             ))}
           </div>
         )}

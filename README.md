@@ -15,7 +15,7 @@ This repo is driven by the build packet files (treat these as the product + arch
 - App: Next.js App Router under [apps/web](apps/web)
 - DB: Supabase Postgres + RLS. Schema is managed via migrations under [supabase/migrations](supabase/migrations)
 - Workflow: use Supabase CLI to push migrations (dry-run first). Avoid manual SQL editor except for emergencies.
-- Status: phases 01–13 are implemented and have been pushed to Supabase.
+- Status: phases 01–24 are implemented and have been pushed to Supabase.
 
 ## Phase progress (Build Packet)
 
@@ -117,6 +117,46 @@ This repo is built strictly phase-by-phase per [01_stack_and_architecture.md](01
 	- Admin UI (kiosk display): [apps/web/src/app/admin/admin-panel.tsx](apps/web/src/app/admin/admin-panel.tsx)
 	- RLS smoke: [supabase/rls/phase13_rls_smoke.sql](supabase/rls/phase13_rls_smoke.sql)
 
+- PHASE 14 — Office hours check-in v1: ✅ complete
+	- Migration: [supabase/migrations/202512170003_phase14_office_hours_checkin_v1.sql](supabase/migrations/202512170003_phase14_office_hours_checkin_v1.sql)
+
+- PHASE 15 — Office hours checkout v1: ✅ complete
+	- Migration: [supabase/migrations/202512170004_phase15_office_hours_checkout_v1.sql](supabase/migrations/202512170004_phase15_office_hours_checkout_v1.sql)
+
+- PHASE 16 — Timesheet v1: ✅ complete
+	- Migration: [supabase/migrations/202512170005_phase16_timesheet_v1.sql](supabase/migrations/202512170005_phase16_timesheet_v1.sql)
+
+- PHASE 17 — Shifts v1: ✅ complete
+	- Migration: [supabase/migrations/202512170006_phase17_shifts_v1.sql](supabase/migrations/202512170006_phase17_shifts_v1.sql)
+
+- PHASE 18 — Reminders v1: ✅ complete
+	- Migration: [supabase/migrations/202512170007_phase18_reminders_v1.sql](supabase/migrations/202512170007_phase18_reminders_v1.sql)
+
+- PHASE 19 — Auto-close v1: ✅ complete
+	- Migration: [supabase/migrations/202512170009_phase19_auto_close_v1.sql](supabase/migrations/202512170009_phase19_auto_close_v1.sql)
+
+- PHASE 20 — Coverage v1: ✅ complete
+	- Migration: [supabase/migrations/202512170010_phase20_coverage_v1.sql](supabase/migrations/202512170010_phase20_coverage_v1.sql)
+
+- PHASE 21 — Meetings v1: ✅ complete
+	- Migration: [supabase/migrations/202512170011_phase21_meetings_v1.sql](supabase/migrations/202512170011_phase21_meetings_v1.sql)
+	- API: [apps/web/src/app/api/meetings/route.ts](apps/web/src/app/api/meetings/route.ts)
+	- UI: [apps/web/src/app/meetings/page.tsx](apps/web/src/app/meetings/page.tsx)
+
+- PHASE 22 — Agenda Items Intake: ✅ complete
+	- Migration: [supabase/migrations/202512170013_phase22_agenda_items_v1.sql](supabase/migrations/202512170013_phase22_agenda_items_v1.sql)
+	- API: [apps/web/src/app/api/meetings/[meetingId]/agenda-items/route.ts](apps/web/src/app/api/meetings/[meetingId]/agenda-items/route.ts)
+	- UI: [apps/web/src/app/meetings/[meetingId]/page.tsx](apps/web/src/app/meetings/[meetingId]/page.tsx)
+
+- PHASE 23 — Deadline Enforcement: ✅ complete
+	- Migration: [supabase/migrations/202512170014_phase23_deadline_config_v1.sql](supabase/migrations/202512170014_phase23_deadline_config_v1.sql)
+	- Logic: Integrated into agenda item submission RPCs.
+
+- PHASE 24 — Docs Library v1: ✅ complete
+	- Migration: [supabase/migrations/202512170015_phase24_docs_v1.sql](supabase/migrations/202512170015_phase24_docs_v1.sql)
+	- API: [apps/web/src/app/api/docs/route.ts](apps/web/src/app/api/docs/route.ts)
+	- UI: [apps/web/src/app/docs/page.tsx](apps/web/src/app/docs/page.tsx)
+
 ## Handoff notes (for the next AI/dev)
 
 ### Patterns to follow (do not deviate)
@@ -126,31 +166,28 @@ This repo is built strictly phase-by-phase per [01_stack_and_architecture.md](01
 - User/session auth in Route Handlers uses `@supabase/ssr` `createServerClient(...)` + `supabase.auth.getUser()` (cookie-based).
 - Audit logging under RLS should be done via `SECURITY DEFINER` triggers/functions with pinned `search_path` and execution revoked.
 
-### Where to start next (Phase 14)
+### Where to start next (Phase 25)
 
-Phase 14 (Check-in v1) should:
+Phase 25 (Budget & Funding v1) should:
 
-- Use the configured primary office location from `office_config` (Phase 11).
-- Compute distance server-side (authoritative), and enforce:
-	- `distance <= radius_m`: allow
-	- `radius_m < distance <= grace_radius_m`: allow + mark `needs_review`
-	- `distance > grace_radius_m`: block
-- Validate rotating PIN using `validate_presence_pin(...)` (service-role only). Do not store raw PIN.
-- Create an `office_hour_sessions` row with `status='open'`, and enforce the single-open-session constraint.
+- Implement `budget_lines` table to track allocations.
+- Implement `funding_requests` table for student organizations/committees to request funds.
+- Add workflow for funding request review (submitted -> committee_review -> board_review -> approved/rejected).
+- Link funding requests to agenda items for meeting discussion.
 
 ### Quick verification checklist
 
 - Login works via allowlist magic link.
 - `/admin` loads for admins only.
-- Admin: set Office config + quiet hours; verify it persists.
-- Admin: set Phase 12 requirements for the current term.
-- Admin: open “Office PIN (kiosk)” and verify the PIN rotates.
+- Meetings: View upcoming meetings and click into details.
+- Agenda Items: Submit a draft agenda item for a meeting, then finalize it.
+- Admin: Review (accept/reject) submitted agenda items.
+- Docs: Upload a document to the library and verify visibility filters.
 - Tasks: create a task, add a comment, add a URL attachment.
-- Admin: send test email and confirm `notification_log` receives a row.
 
 Next up (per the phase list):
 
-- PHASE 09 — Comments + attachments (not started)
+- PHASE 25 — Budget & Funding v1 (not started)
 
 ## Local dev (web)
 
