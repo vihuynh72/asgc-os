@@ -132,6 +132,14 @@ export function AdminPanel({
   const [pinWindowSeconds, setPinWindowSeconds] = useState<number>(60);
   const [pinAutoRefresh, setPinAutoRefresh] = useState<boolean>(false);
 
+  const [exportWeekStart, setExportWeekStart] = useState<string>("");
+
+  const [shiftUserId, setShiftUserId] = useState<string>("");
+  const [shiftStartsAtLocal, setShiftStartsAtLocal] = useState<string>("");
+  const [shiftEndsAtLocal, setShiftEndsAtLocal] = useState<string>("");
+  const [shiftOfficeLocationId, setShiftOfficeLocationId] = useState<string>("");
+  const [shiftStatus, setShiftStatus] = useState<string>("");
+
   const [status, setStatus] = useState<string>("");
 
   async function loadOfficeHourRequirements(termId: string) {
@@ -257,6 +265,46 @@ export function AdminPanel({
     () => ROLE_OPTIONS.find((r) => r.key === selectedRoleKey) ?? ROLE_OPTIONS[0],
     [selectedRoleKey],
   );
+
+  function downloadWeeklyHoursCsv() {
+    const qs = exportWeekStart.trim() ? `?weekStart=${encodeURIComponent(exportWeekStart.trim())}` : "";
+    window.location.href = `/api/admin/office-hours/export-week${qs}`;
+  }
+
+  async function onCreateShift() {
+    setShiftStatus("Creating shift...");
+    try {
+      if (!shiftUserId) {
+        setShiftStatus("Select a user.");
+        return;
+      }
+      if (!shiftStartsAtLocal || !shiftEndsAtLocal) {
+        setShiftStatus("Start and end times are required.");
+        return;
+      }
+
+      const startsAtIso = new Date(shiftStartsAtLocal).toISOString();
+      const endsAtIso = new Date(shiftEndsAtLocal).toISOString();
+
+      await fetchJson<{ shift: unknown }>("/api/admin/office-hours/shifts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: shiftUserId,
+          startsAt: startsAtIso,
+          endsAt: endsAtIso,
+          officeLocationId: shiftOfficeLocationId.trim() ? shiftOfficeLocationId.trim() : undefined,
+        }),
+      });
+
+      setShiftStatus("Shift created.");
+      setShiftStartsAtLocal("");
+      setShiftEndsAtLocal("");
+      setShiftOfficeLocationId("");
+    } catch (e) {
+      setShiftStatus(e instanceof Error ? e.message : "Failed to create shift");
+    }
+  }
 
   async function loadTermsAndUsers() {
     setStatus("Loading terms and users...");
@@ -491,6 +539,96 @@ export function AdminPanel({
           <div className="flex items-end">
             <Button onClick={onCreateTerm} disabled={!newTermName.trim()}>
               Create term
+            </Button>
+          </div>
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <div className="space-y-1">
+          <h2 className="text-lg font-semibold">Office Hours Export (CSV)</h2>
+          <p className="text-sm text-foreground/70">
+            Phase 16. Exports weekly totals/deficits for all active users.
+          </p>
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-3">
+          <label className="space-y-1 text-sm">
+            <div className="text-foreground/70">Week start (YYYY-MM-DD)</div>
+            <input
+              className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+              value={exportWeekStart}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => setExportWeekStart(e.target.value)}
+              placeholder="2025-12-15"
+            />
+          </label>
+
+          <div className="flex items-end">
+            <Button onClick={downloadWeeklyHoursCsv}>Download CSV</Button>
+          </div>
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <div className="space-y-1">
+          <h2 className="text-lg font-semibold">Office Hour Shifts</h2>
+          <p className="text-sm text-foreground/70">
+            Phase 17. Admin can schedule shifts; members can see their weekly shifts on the Office Hours page.
+          </p>
+        </div>
+
+        {shiftStatus ? <div className="rounded-md border px-3 py-2 text-sm text-foreground/80">{shiftStatus}</div> : null}
+
+        <div className="grid gap-3 md:grid-cols-4">
+          <label className="space-y-1 text-sm md:col-span-2">
+            <div className="text-foreground/70">User</div>
+            <select
+              className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+              value={shiftUserId}
+              onChange={(e: ChangeEvent<HTMLSelectElement>) => setShiftUserId(e.target.value)}
+            >
+              <option value="">Select a user…</option>
+              {users.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {formatUserLabel(u)}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="space-y-1 text-sm">
+            <div className="text-foreground/70">Starts</div>
+            <input
+              type="datetime-local"
+              className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+              value={shiftStartsAtLocal}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => setShiftStartsAtLocal(e.target.value)}
+            />
+          </label>
+
+          <label className="space-y-1 text-sm">
+            <div className="text-foreground/70">Ends</div>
+            <input
+              type="datetime-local"
+              className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+              value={shiftEndsAtLocal}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => setShiftEndsAtLocal(e.target.value)}
+            />
+          </label>
+
+          <label className="space-y-1 text-sm md:col-span-2">
+            <div className="text-foreground/70">Office location id (optional)</div>
+            <input
+              className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+              value={shiftOfficeLocationId}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => setShiftOfficeLocationId(e.target.value)}
+              placeholder={officeConfig?.primary_office_location_id || ""}
+            />
+          </label>
+
+          <div className="flex items-end">
+            <Button onClick={onCreateShift} disabled={!shiftUserId}>
+              Create shift
             </Button>
           </div>
         </div>

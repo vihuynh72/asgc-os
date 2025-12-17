@@ -38,6 +38,10 @@ export async function POST(req: Request) {
     .eq("is_active", true)
     .maybeSingle();
 
+  if (allowlistError) {
+    console.error("[auth] allowlist lookup failed", { message: allowlistError.message });
+  }
+
   if (allowlistError || !allowlisted) {
     return NextResponse.json({ ok: true });
   }
@@ -50,6 +54,9 @@ export async function POST(req: Request) {
   });
 
   if (inviteRes.error) {
+    console.error("[auth] inviteUserByEmail failed; falling back to OTP", {
+      message: inviteRes.error.message,
+    });
     // User probably already exists; fall back to sending a magic link via the public client.
     const env = getPublicEnv();
     const anon = createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.NEXT_PUBLIC_SUPABASE_ANON_KEY, {
@@ -59,12 +66,18 @@ export async function POST(req: Request) {
       },
     });
 
-    await anon.auth.signInWithOtp({
+    const otpRes = await anon.auth.signInWithOtp({
       email,
       options: {
         emailRedirectTo: redirectTo,
+        // Preserve invite-only posture: OTP fallback should not create new users.
+        shouldCreateUser: false,
       },
     });
+
+    if (otpRes.error) {
+      console.error("[auth] signInWithOtp failed", { message: otpRes.error.message });
+    }
   }
 
   return NextResponse.json({ ok: true });
