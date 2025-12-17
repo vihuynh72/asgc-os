@@ -1,10 +1,63 @@
 import { PageShell } from "@/components/page-shell";
+import { getSupabaseServerComponentClient } from "@/lib/supabaseServerComponent";
 
-export default function DocsPage() {
+import { DocsPanel } from "./docs-panel";
+
+type DocRow = {
+  id: string;
+  doc_type: string;
+  title: string;
+  description: string | null;
+  storage_path: string;
+  storage_bucket: string;
+  mime_type: string | null;
+  size_bytes: number | null;
+  visibility: string;
+  committee_id: string | null;
+  meeting_id: string | null;
+  uploaded_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type CommitteeRow = {
+  id: string;
+  committee_key: string;
+  name: string;
+};
+
+export default async function DocsPage() {
+  const supabase = await getSupabaseServerComponentClient();
+
+  // Fetch docs using RPC (visibility-aware)
+  const { data: docsData, error: docsError } = await supabase.rpc("list_docs", {
+    _doc_type: null,
+    _committee_id: null,
+    _meeting_id: null,
+    _visibility: null,
+    _limit: 50,
+    _offset: 0,
+  });
+
+  // Fetch committees for filters
+  const { data: committeesData } = await supabase
+    .from("committees")
+    .select("id, committee_key, name")
+    .order("name");
+
+  const docs = (docsData ?? []) as DocRow[];
+  const committees = (committeesData ?? []) as CommitteeRow[];
+
   return (
     <PageShell
       title="Docs"
-      description="Placeholder. Docs library + uploads start in PHASE 24."
-    />
+      description="Browse and upload documents, minutes, and reports."
+    >
+      {docsError ? (
+        <div className="text-sm text-red-600">Error: {docsError.message}</div>
+      ) : (
+        <DocsPanel initialDocs={docs} committees={committees} />
+      )}
+    </PageShell>
   );
 }
