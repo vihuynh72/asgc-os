@@ -1,10 +1,12 @@
 "use client";
 
-import { Suspense, useMemo, useState, useSyncExternalStore } from "react";
+import { Suspense, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useSearchParams } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
 import { PageShell } from "@/components/page-shell";
+import { safePostAuthRedirectPath } from "@/lib/redirects";
+import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 
 function normalizeEmail(raw: string): string {
   return raw.trim().toLowerCase();
@@ -65,6 +67,9 @@ function SupabaseHashErrorBanner() {
 }
 
 export default function LoginPage() {
+  const [existingUser, setExistingUser] = useState<{ email: string | null } | null>(null);
+  const [postAuthRedirectTo, setPostAuthRedirectTo] = useState<string>("/dashboard");
+
   const [email, setEmail] = useState("");
   const [token, setToken] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -74,6 +79,44 @@ export default function LoginPage() {
 
   const normalizedEmail = useMemo(() => normalizeEmail(email), [email]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function hydrateAuthState() {
+      try {
+        const redirectTo = safePostAuthRedirectPath(new URLSearchParams(window.location.search).get("redirectTo"));
+        if (!cancelled) setPostAuthRedirectTo(redirectTo);
+      } catch {
+        // Ignore; fallback to default.
+      }
+
+      try {
+        const supabase = getSupabaseBrowserClient();
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+        if (cancelled) return;
+        if (user) setExistingUser({ email: user.email ?? null });
+      } catch {
+        // Ignore.
+      }
+    }
+
+    void hydrateAuthState();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  function getRedirectToForRequests(): string | undefined {
+    try {
+      const safe = safePostAuthRedirectPath(new URLSearchParams(window.location.search).get("redirectTo"));
+      return safe;
+    } catch {
+      return undefined;
+    }
+  }
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
 
@@ -81,7 +124,7 @@ export default function LoginPage() {
     setStatus("idle");
     setVerifyStatus("idle");
 
-    const redirectTo = new URLSearchParams(window.location.search).get("redirectTo") || undefined;
+    const redirectTo = getRedirectToForRequests();
 
     try {
       const res = await fetch("/api/auth/request-magic-link", {
@@ -109,7 +152,7 @@ export default function LoginPage() {
     setIsVerifying(true);
     setVerifyStatus("idle");
 
-    const redirectTo = new URLSearchParams(window.location.search).get("redirectTo") || undefined;
+    const redirectTo = getRedirectToForRequests();
 
     try {
       const res = await fetch("/api/auth/verify-otp", {
@@ -138,6 +181,25 @@ export default function LoginPage() {
       title="Sign in"
       description="Invite-only. If you're allowlisted, you'll receive a sign-in email."
     >
+      {existingUser ? (
+        <div className="mt-4 max-w-md rounded-md border p-4">
+          <p className="text-sm text-foreground/70">
+            You’re already signed in as{" "}
+            <span className="font-medium text-foreground">{existingUser.email ?? "unknown"}</span>.
+          </p>
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <Button type="button" onClick={() => window.location.assign(postAuthRedirectTo)}>
+              Continue
+            </Button>
+            <form action="/auth/signout" method="post">
+              <Button type="submit" variant="outline">
+                Sign out
+              </Button>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
       <Suspense fallback={null}>
         <AuthCallbackErrorBanner />
       </Suspense>

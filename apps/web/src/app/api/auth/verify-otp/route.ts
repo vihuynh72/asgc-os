@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { getPublicEnv } from "@/lib/env";
 import { allowlistKeysForNormalizedEmail, normalizeEmail } from "@/lib/invitesAllowlist";
+import { POST_AUTH_REDIRECT_COOKIE, safePostAuthRedirectPath } from "@/lib/redirects";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
@@ -14,11 +15,6 @@ const BodySchema = z.object({
   redirectTo: z.string().optional(),
 });
 
-function safeRedirectPath(raw: string | undefined): string {
-  if (typeof raw === "string" && raw.startsWith("/")) return raw;
-  return "/dashboard";
-}
-
 export async function POST(request: NextRequest) {
   let email: string;
   let token: string;
@@ -28,7 +24,7 @@ export async function POST(request: NextRequest) {
     const body = BodySchema.parse(await request.json());
     email = normalizeEmail(body.email);
     token = body.token.trim();
-    redirectTo = safeRedirectPath(body.redirectTo);
+    redirectTo = safePostAuthRedirectPath(body.redirectTo);
   } catch {
     return NextResponse.json({ ok: false }, { status: 400 });
   }
@@ -76,6 +72,15 @@ export async function POST(request: NextRequest) {
   for (const type of attempts) {
     const { error } = await supabase.auth.verifyOtp({ email, token, type });
     if (!error) {
+      // Best-effort: consume any server-seeded bootstrap grants (helps when the user existed before grants were added).
+      try {
+        await supabase.rpc("consume_bootstrap_role_grants");
+      } catch {
+        // Ignore (RPC may not exist yet).
+      }
+
+      // Clear any remembered redirect; we’re about to navigate.
+      response.cookies.set(POST_AUTH_REDIRECT_COOKIE, "", { path: "/", maxAge: 0 });
       return response;
     }
 

@@ -85,7 +85,7 @@ Goal: prevent easy cheating without being too strict.
 
 Use layered checks:
 1) browser geolocation (distance-to-office)
-2) rotating proof token (PIN/QR) displayed in the office
+2) periodic location re-check while checked in
 3) anomaly flags + admin review (not auto-punishment)
 
 ## 7) Observability (minimal but real)
@@ -154,13 +154,12 @@ PHASE 12 — Requirements config
 - office_hour_requirements per role
 - UI to edit for a term
 
-PHASE 13 — Token generator v1 (PIN)
-- admin page to generate rotating PIN tokens
-- store hashed tokens with valid windows
+PHASE 13 — Presence validation v1 (no PIN)
+- auto-check location periodically while checked in
+- auto-check out if outside the office geofence
 
 PHASE 14 — Check-in v1
 - geofence distance calc
-- PIN validation
 - create open office_hour_session
 - audit log
 

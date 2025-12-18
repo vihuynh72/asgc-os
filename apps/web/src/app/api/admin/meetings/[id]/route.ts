@@ -20,7 +20,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   }
 
   // Check admin
-  const { data: isAdmin, error: adminErr } = await supabase.rpc("is_admin");
+  const { data: isAdmin, error: adminErr } = await supabase.rpc("is_admin", { _uid: user.id });
   if (adminErr || !isAdmin) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
@@ -74,7 +74,7 @@ export async function DELETE(request: NextRequest, { params }: Params) {
   }
 
   // Check admin
-  const { data: isAdmin, error: adminErr } = await supabase.rpc("is_admin");
+  const { data: isAdmin, error: adminErr } = await supabase.rpc("is_admin", { _uid: user.id });
   if (adminErr || !isAdmin) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }

@@ -24,7 +24,6 @@ function getSupabaseForRequest(request: NextRequest) {
 const BodySchema = z.object({
   lat: z.number().finite(),
   lon: z.number().finite(),
-  pin: z.string().trim().min(1).optional(),
 });
 
 function mapErrorStatus(message: string): number {
@@ -33,7 +32,6 @@ function mapErrorStatus(message: string): number {
       return 401;
     case "no_open_session":
       return 409;
-    case "invalid_pin":
     case "location_required":
     case "office_location_not_configured":
     case "office_location_missing":
@@ -60,13 +58,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "invalid request" }, { status: 400 });
   }
 
-  const { lat, lon, pin } = parsed.data;
+  const { lat, lon } = parsed.data;
 
-  const { data, error } = await supabase.rpc("check_out_office_hours", {
-    _lat: lat,
-    _lon: lon,
-    _pin: pin ?? null,
-  });
+  const { data, error } = await supabase.rpc("check_out_office_hours", { _lat: lat, _lon: lon });
 
   if (error) {
     const msg = error.message || "unknown";

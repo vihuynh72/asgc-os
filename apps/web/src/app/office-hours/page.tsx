@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 
 import { PageShell } from "@/components/page-shell";
 import { Button } from "@/components/ui/button";
@@ -73,10 +74,6 @@ function friendlyError(message: string): string {
   switch (message) {
     case "location_required":
       return "Location is required to check in/out.";
-    case "pin_required":
-      return "PIN is required to check in.";
-    case "invalid_pin":
-      return "Invalid or expired PIN. Try again.";
     case "outside_geofence":
       return "You appear to be outside the allowed office area.";
     case "already_checked_in":
@@ -122,9 +119,9 @@ function haversineMeters(lat1: number, lon1: number, lat2: number, lon2: number)
 }
 
 export default function OfficeHoursPage() {
+  const router = useRouter();
   const supabase = useMemo(() => getSupabaseBrowserClient(), []);
 
-  const [pin, setPin] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -346,7 +343,7 @@ export default function OfficeHoursPage() {
         const res = await fetch("/api/office-hours/check-out", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ lat, lon, pin: pin.trim().length > 0 ? pin : undefined, reason }),
+          body: JSON.stringify({ lat, lon, reason }),
         });
 
         const json = (await res.json().catch(() => null)) as { error?: string } | null;
@@ -363,7 +360,7 @@ export default function OfficeHoursPage() {
         presenceCheckLockRef.current = false;
       }
     },
-    [officeGeo, openSession, pin, refresh],
+    [officeGeo, openSession, refresh],
   );
 
   useEffect(() => {
@@ -389,74 +386,6 @@ export default function OfficeHoursPage() {
       document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [autoPresenceEnabled, openSession, runPresenceCheck]);
-
-  const onCheckIn = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    setNotice(null);
-    try {
-      const { lat, lon } = await getCurrentPosition();
-      if (officeGeo) {
-        const dist = haversineMeters(lat, lon, officeGeo.lat, officeGeo.lon);
-        const band: typeof lastDistanceBand =
-          dist <= officeGeo.radiusM ? "in_radius" : dist <= officeGeo.graceRadiusM ? "in_grace" : "outside_grace";
-        setLastPresenceCheckAt(new Date().toISOString());
-        setLastDistanceM(dist);
-        setLastDistanceBand(band);
-      }
-      const res = await fetch("/api/office-hours/check-in", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ lat, lon, pin }),
-      });
-
-      const json = (await res.json().catch(() => null)) as { error?: string } | null;
-      if (!res.ok) {
-        setError(friendlyError(json?.error ?? ""));
-        return;
-      }
-
-      await refresh();
-    } catch {
-      setError("Location permission denied or unavailable.");
-    } finally {
-      setLoading(false);
-    }
-  }, [officeGeo, pin, refresh]);
-
-  const onCheckOut = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    setNotice(null);
-    try {
-      const { lat, lon } = await getCurrentPosition();
-      if (officeGeo) {
-        const dist = haversineMeters(lat, lon, officeGeo.lat, officeGeo.lon);
-        const band: typeof lastDistanceBand =
-          dist <= officeGeo.radiusM ? "in_radius" : dist <= officeGeo.graceRadiusM ? "in_grace" : "outside_grace";
-        setLastPresenceCheckAt(new Date().toISOString());
-        setLastDistanceM(dist);
-        setLastDistanceBand(band);
-      }
-      const res = await fetch("/api/office-hours/check-out", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ lat, lon, pin: pin.trim().length > 0 ? pin : undefined }),
-      });
-
-      const json = (await res.json().catch(() => null)) as { error?: string } | null;
-      if (!res.ok) {
-        setError(friendlyError(json?.error ?? ""));
-        return;
-      }
-
-      await refresh();
-    } catch {
-      setError("Location permission denied or unavailable.");
-    } finally {
-      setLoading(false);
-    }
-  }, [officeGeo, pin, refresh]);
 
   const onRequestCoverage = useCallback(
     async (shiftId: string) => {
@@ -534,7 +463,7 @@ export default function OfficeHoursPage() {
     : null;
 
   return (
-    <PageShell title="Office Hours" description="Check in/out with location + rotating PIN.">
+    <PageShell title="Office Hours" description="Check in/out with location.">
       <div className="space-y-6">
         <div className="rounded-lg border border-foreground/10 p-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
@@ -600,32 +529,16 @@ export default function OfficeHoursPage() {
               ) : null}
             </div>
 
-            <div className="w-full sm:w-80">
-              <label className="block text-sm font-medium" htmlFor="pin">
-                PIN
-              </label>
-              <input
-                id="pin"
-                value={pin}
-                onChange={(e) => setPin(e.target.value)}
-                inputMode="numeric"
-                className="mt-1 w-full rounded-md border border-foreground/10 bg-transparent px-3 py-2 text-sm"
-                placeholder="Enter kiosk PIN"
-              />
-              <div className="mt-2 text-xs text-foreground/60">
-                Check-in requires a PIN. Check-out PIN is optional.
-              </div>
-            </div>
           </div>
 
           {notice ? <div className="mt-3 text-sm text-foreground/80">{notice}</div> : null}
           {error ? <div className="mt-3 text-sm text-red-600">{error}</div> : null}
 
           <div className="mt-4 flex gap-2">
-            <Button onClick={onCheckIn} disabled={loading || !!openSession}>
+            <Button onClick={() => router.push("/office-hours/check-in")} disabled={loading || !!openSession}>
               Check In
             </Button>
-            <Button variant="ghost" onClick={onCheckOut} disabled={loading || !openSession}>
+            <Button variant="ghost" onClick={() => router.push("/office-hours/check-out")} disabled={loading || !openSession}>
               Check Out
             </Button>
             <Button variant="ghost" onClick={refresh} disabled={loading}>

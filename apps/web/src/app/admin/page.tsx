@@ -10,7 +10,7 @@ export const revalidate = 0;
 type AssignmentRow = {
   id: string;
   user_id: string;
-  role_key: "advisor" | "president" | "officer" | "volunteer";
+  role_key: "advisor" | "president" | "executive" | "director" | "board_member" | "volunteer";
   term_id: string | null;
   starts_at: string;
   ends_at: string | null;
@@ -37,7 +37,7 @@ type OfficeLocationRow = {
 
 type OfficeHourRequirementRow = {
   id: string;
-  role_key: "advisor" | "president" | "officer" | "volunteer";
+  role_key: "advisor" | "president" | "executive" | "director" | "board_member" | "volunteer";
   term_id: string | null;
   weekly_total_hours: number;
   weekly_in_office_hours: number;
@@ -99,7 +99,7 @@ export default async function AdminPage() {
 
   const { data: isAdmin, error: adminErr } = await supabase.rpc("is_admin", { _uid: user.id });
   if (adminErr || !isAdmin) {
-    redirect("/dashboard");
+    redirect("/unauthorized?reason=admin&redirectTo=/admin");
   }
 
   const admin = getSupabaseAdminClient();

@@ -3,6 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { getPublicEnv } from "@/lib/env";
 import { allowlistKeysForNormalizedEmail, normalizeEmail } from "@/lib/invitesAllowlist";
+import { POST_AUTH_REDIRECT_COOKIE, safePostAuthRedirectPath, safeRedirectPathOrNull } from "@/lib/redirects";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
@@ -13,9 +14,9 @@ export async function GET(request: NextRequest) {
   const tokenHash = url.searchParams.get("token_hash") || url.searchParams.get("token");
   const type = url.searchParams.get("type");
 
-  const rawRedirectTo = url.searchParams.get("redirectTo") || "/dashboard";
-  // Only allow same-site relative redirects to avoid open redirects.
-  const redirectTo = rawRedirectTo.startsWith("/") ? rawRedirectTo : "/dashboard";
+  const queryRedirectTo = safeRedirectPathOrNull(url.searchParams.get("redirectTo"));
+  const cookieRedirectTo = safeRedirectPathOrNull(request.cookies.get(POST_AUTH_REDIRECT_COOKIE)?.value);
+  const redirectTo = safePostAuthRedirectPath(queryRedirectTo ?? cookieRedirectTo ?? "/dashboard");
 
   const response = NextResponse.redirect(new URL(redirectTo, url.origin));
 
@@ -42,7 +43,7 @@ export async function GET(request: NextRequest) {
   // Treat a token that looks like a PKCE code the same as an explicit `code` param.
   const pkceCode = code ?? (tokenHash?.startsWith("pkce_") ? tokenHash : null);
 
-  async function signOutAndRedirect(errorKey: "not_allowlisted" | "server_error") {
+  async function signOutAndRedirect(errorKey: "not_allowlisted" | "server_error"): Promise<false> {
     try {
       await supabase.auth.signOut();
     } catch {
@@ -53,17 +54,17 @@ export async function GET(request: NextRequest) {
     errUrl.searchParams.set("error", errorKey);
     errUrl.searchParams.set("redirectTo", redirectTo);
     response.headers.set("location", errUrl.toString());
+    return false;
   }
 
-  async function enforceInviteOnlyForSignedInUser() {
+  async function enforceInviteOnlyForSignedInUser(): Promise<boolean> {
     const {
       data: { user },
     } = await supabase.auth.getUser();
 
     const email = user?.email ? normalizeEmail(user.email) : null;
     if (!email) {
-      await signOutAndRedirect("server_error");
-      return;
+      return signOutAndRedirect("server_error");
     }
 
     try {
@@ -79,18 +80,19 @@ export async function GET(request: NextRequest) {
 
       if (allowlistError) {
         console.error("[auth] allowlist lookup failed", { message: allowlistError.message });
-        await signOutAndRedirect("server_error");
-        return;
+        return signOutAndRedirect("server_error");
       }
 
       const allowlisted = Array.isArray(allowlistedRows) && allowlistedRows.length > 0;
       if (!allowlisted) {
-        await signOutAndRedirect("not_allowlisted");
+        return signOutAndRedirect("not_allowlisted");
       }
     } catch (e) {
       console.error("[auth] allowlist lookup crashed", { message: e instanceof Error ? e.message : String(e) });
-      await signOutAndRedirect("server_error");
+      return signOutAndRedirect("server_error");
     }
+
+    return true;
   }
 
   if (pkceCode) {
@@ -103,7 +105,15 @@ export async function GET(request: NextRequest) {
       return NextResponse.redirect(errUrl);
     }
 
-    await enforceInviteOnlyForSignedInUser();
+    const inviteOk = await enforceInviteOnlyForSignedInUser();
+    if (inviteOk) {
+      try {
+        await supabase.rpc("consume_bootstrap_role_grants");
+      } catch {
+        // Ignore (RPC may not exist yet).
+      }
+      response.cookies.set(POST_AUTH_REDIRECT_COOKIE, "", { path: "/", maxAge: 0 });
+    }
     return response;
   }
 
@@ -121,6 +131,14 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(errUrl);
   }
 
-  await enforceInviteOnlyForSignedInUser();
+  const inviteOk = await enforceInviteOnlyForSignedInUser();
+  if (inviteOk) {
+    try {
+      await supabase.rpc("consume_bootstrap_role_grants");
+    } catch {
+      // Ignore (RPC may not exist yet).
+    }
+    response.cookies.set(POST_AUTH_REDIRECT_COOKIE, "", { path: "/", maxAge: 0 });
+  }
   return response;
 }

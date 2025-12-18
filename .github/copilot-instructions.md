@@ -1,38 +1,39 @@
 # Copilot instructions (ASGC OS)
 
-## Big picture (read first)
-- Product + architecture source-of-truth is the build packet: `00_product_brief.md` → `04_office_hours_spec.md`.
-- Single Next.js App Router app in `apps/web`; backend is Supabase Postgres with RLS as the authoritative permission system.
-- DB schema changes are SQL migrations in `supabase/migrations` (avoid Dashboard SQL editor except emergencies).
+## Read first (project reality)
+- The build packet is the source of truth: `00_product_brief.md` → `04_office_hours_spec.md` (phases are implemented in order; avoid “skipping ahead”).
+- Single Next.js App Router app in `apps/web`; backend is Supabase Postgres + Auth, with RLS as the authoritative permission system.
+- Schema changes happen via SQL migrations in `supabase/migrations` (avoid Dashboard SQL editor except emergencies).
 
-## Key structure + conventions
-- Pages/routes: `apps/web/src/app`; API Route Handlers live under `app/api/**/route.ts` (example: `apps/web/src/app/api/tasks/route.ts`).
-- Auth is invite-only magic-link:
-  - Request endpoint must not leak allowlist membership (always `{ ok: true }`): `apps/web/src/app/api/auth/request-magic-link/route.ts`
-  - Callback exchanges code/token for cookie session: `apps/web/src/app/auth/callback/route.ts`
-  - Route protection + `/admin` gate happens in middleware via `rpc('is_admin')`: `apps/web/src/middleware.ts`
+## Where things live
+- UI routes: `apps/web/src/app/**` (App Router).
+- API routes: `apps/web/src/app/api/**/route.ts` (example: `apps/web/src/app/api/tasks/route.ts`).
+- Auth/admin gating middleware: `apps/web/src/middleware.ts`.
 
-## Supabase clients (use these; don’t reinvent)
-- Env is Zod-validated: public in `apps/web/src/lib/env.ts`; server-only in `apps/web/src/lib/envServer.ts`.
-- Browser: `getSupabaseBrowserClient()` in `apps/web/src/lib/supabaseClient.ts`.
-- Server Components (cookie-aware): `getSupabaseServerComponentClient()` in `apps/web/src/lib/supabaseServerComponent.ts`.
-- Admin/service-role (server-only): `getSupabaseAdminClient()` in `apps/web/src/lib/supabaseAdmin.ts`.
+## Auth + admin conventions (do not break)
+- Invite-only magic link: `apps/web/src/app/api/auth/request-magic-link/route.ts` must never leak allowlist membership (always respond `{ ok: true }`).
+- Callback sets cookie session: `apps/web/src/app/auth/callback/route.ts`.
+- Admin checks use `rpc('is_admin')` (middleware + admin endpoints), e.g. `apps/web/src/app/api/admin/invites-allowlist/route.ts`.
+
+## Supabase client patterns (use existing helpers)
+- Env is Zod-validated: `apps/web/src/lib/env.ts` (public) and `apps/web/src/lib/envServer.ts` (server-only).
+- Browser client: `getSupabaseBrowserClient()` in `apps/web/src/lib/supabaseClient.ts`.
+- Server Components client: `getSupabaseServerComponentClient()` in `apps/web/src/lib/supabaseServerComponent.ts`.
+- Service-role/admin client (server-only): `getSupabaseAdminClient()` in `apps/web/src/lib/supabaseAdmin.ts`.
 - Route Handlers:
-  - If cookies must be persisted, use `getSupabaseRouteHandlerClient()` in `apps/web/src/lib/supabaseServer.ts`.
-  - For JSON endpoints that don’t need auth refresh, it’s OK to use `createServerClient(...)` with a no-op `setAll()` (pattern used in tasks API).
+  - If cookie refresh must persist, use `getSupabaseRouteHandlerClient()` in `apps/web/src/lib/supabaseServer.ts`.
+  - If you only need `auth.getUser()` and won’t set cookies, `@supabase/ssr` `createServerClient(...)` with a no-op `setAll()` is an accepted pattern.
 
-## DB/RLS patterns that affect app code
-- Assume RLS enforces access (committee scoping, admin-only tables); UI hiding is non-authoritative.
-- User-driven audit logging should be done with `SECURITY DEFINER` trigger/functions with pinned `search_path` and execution revoked (example: `supabase/migrations/202512160007_phase07_1_tasks_audit_fix.sql`).
-- RLS smoke SQL scripts live in `supabase/rls` (example: `supabase/rls/phase13_rls_smoke.sql`).
+## DB/RLS patterns that shape app code
+- Assume RLS enforces access; UI hiding is non-authoritative.
+- User-driven audit logging that would fail under RLS should be handled via `SECURITY DEFINER` functions/triggers with pinned `search_path` + EXECUTE revoked (see `supabase/migrations/202512160007_phase07_1_tasks_audit_fix.sql`).
+- RLS smoke scripts live in `supabase/rls` (e.g. `supabase/rls/phase09_rls_smoke.sql`).
 
-## Local workflows (repo-specific)
-- Web dev:
-  - `cd apps/web && npm install`
-  - `cp .env.example .env.local` then set: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`.
-  - Phase 10 email env (server-only): `EMAIL_PROVIDER=resend`, `EMAIL_FROM`, `RESEND_API_KEY`.
-  - Run: `npm run dev` (note: uses `next dev --webpack`).
-- DB migrations (recommended): `supabase link --project-ref <ref>` then `supabase db push --dry-run` → `supabase db push`.
+## Local workflows (what actually runs here)
+- Web dev: `cd apps/web && npm install && cp .env.example .env.local && npm run dev`.
+- Typecheck: `npx tsc -p apps/web/tsconfig.json --noEmit`.
+- Lint: `cd apps/web && npm run lint`.
+- DB migrations: `supabase link --project-ref <ref>` then `supabase db push --dry-run` → `supabase db push`.
 
 ## Known gotcha
-- Keep the Supabase bundling workaround: scripts use `next ... --webpack`, and `apps/web/next.config.ts` aliases `@supabase/supabase-js` to the CJS entrypoint.
+- Keep the Supabase bundling workaround: `apps/web/package.json` uses `next ... --webpack`, and `apps/web/next.config.ts` aliases `@supabase/supabase-js` to a CJS entrypoint.

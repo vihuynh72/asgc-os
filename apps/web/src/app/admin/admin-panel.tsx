@@ -1,7 +1,7 @@
 "use client";
 
 import type { ChangeEvent } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 
@@ -21,7 +21,7 @@ type UserRow = {
   created_at: string;
 };
 
-type RoleKey = "advisor" | "president" | "officer" | "volunteer";
+type RoleKey = "advisor" | "president" | "executive" | "director" | "board_member" | "volunteer";
 
 type OfficeLocationRow = {
   id: string;
@@ -75,7 +75,9 @@ type InviteAllowlistRow = {
 const ROLE_OPTIONS: Array<{ key: RoleKey; label: string; scope: "global" | "term" }> = [
   { key: "advisor", label: "Advisor (global)", scope: "global" },
   { key: "president", label: "President (term)", scope: "term" },
-  { key: "officer", label: "Officer (term)", scope: "term" },
+  { key: "executive", label: "Executive (term)", scope: "term" },
+  { key: "director", label: "Director (term)", scope: "term" },
+  { key: "board_member", label: "Board member (term)", scope: "term" },
   { key: "volunteer", label: "Volunteer (term)", scope: "term" },
 ];
 
@@ -93,6 +95,13 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
     throw new Error(message);
   }
   return data;
+}
+
+function parseOptionalNumber(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const n = Number(trimmed);
+  return Number.isFinite(n) ? n : null;
 }
 
 export function AdminPanel({
@@ -130,7 +139,7 @@ export function AdminPanel({
   const [newInviteNotes, setNewInviteNotes] = useState<string>("");
 
   const [selectedUserId, setSelectedUserId] = useState<string>("");
-  const [selectedRoleKey, setSelectedRoleKey] = useState<RoleKey>("officer");
+  const [selectedRoleKey, setSelectedRoleKey] = useState<RoleKey>("volunteer");
 
   const [newTermName, setNewTermName] = useState<string>("");
   const [newTermStart, setNewTermStart] = useState<string>("");
@@ -138,16 +147,16 @@ export function AdminPanel({
 
   const [officeLocation, setOfficeLocation] = useState<OfficeLocationRow | null>(initialOfficeLocation);
   const [officeConfig, setOfficeConfig] = useState<OfficeConfigRow | null>(initialOfficeConfig);
+  const [officeLatText, setOfficeLatText] = useState<string>(
+    typeof initialOfficeLocation?.lat === "number" ? String(initialOfficeLocation.lat) : "",
+  );
+  const [officeLonText, setOfficeLonText] = useState<string>(
+    typeof initialOfficeLocation?.lon === "number" ? String(initialOfficeLocation.lon) : "",
+  );
 
   const [officeHourRequirements, setOfficeHourRequirements] = useState<OfficeHourRequirementRow[]>(
     initialOfficeHourRequirements,
   );
-
-  const [pinStatus, setPinStatus] = useState<string>("");
-  const [currentPin, setCurrentPin] = useState<string>("");
-  const [pinValidTo, setPinValidTo] = useState<string>("");
-  const [pinWindowSeconds, setPinWindowSeconds] = useState<number>(60);
-  const [pinAutoRefresh, setPinAutoRefresh] = useState<boolean>(false);
 
   const [exportWeekStart, setExportWeekStart] = useState<string>("");
 
@@ -184,7 +193,7 @@ export function AdminPanel({
   async function onSaveOfficeHourRequirements() {
     if (!selectedTermId) return;
 
-    const roles: RoleKey[] = ["president", "officer", "volunteer"];
+    const roles: RoleKey[] = ["president", "executive", "director", "board_member", "volunteer"];
     const payload = roles.map((roleKey) => {
       const row = officeHourRequirements.find(
         (r) => r.role_key === roleKey && r.term_id === selectedTermId && !r.effective_start && !r.effective_end,
@@ -241,21 +250,6 @@ export function AdminPanel({
     });
   }
 
-  async function fetchCurrentPin() {
-    setPinStatus("Loading PIN...");
-    try {
-      const data = await fetchJson<{ pin: string; validFrom: string; validTo: string; windowSeconds: number }>(
-        "/api/admin/presence-pin",
-      );
-      setCurrentPin(data.pin);
-      setPinValidTo(data.validTo);
-      setPinWindowSeconds(data.windowSeconds);
-      setPinStatus("");
-    } catch (e) {
-      setPinStatus(e instanceof Error ? e.message : "Failed to load PIN");
-    }
-  }
-
   async function loadOfficeConfig() {
     setStatus("Loading office config...");
     try {
@@ -264,6 +258,8 @@ export function AdminPanel({
       );
       setOfficeConfig(data.officeConfig);
       setOfficeLocation(data.officeLocation);
+      setOfficeLatText(typeof data.officeLocation.lat === "number" ? String(data.officeLocation.lat) : "");
+      setOfficeLonText(typeof data.officeLocation.lon === "number" ? String(data.officeLocation.lon) : "");
       setStatus("");
     } catch (e) {
       setStatus(e instanceof Error ? e.message : "Failed to load office config");
@@ -566,23 +562,6 @@ export function AdminPanel({
     return byRole;
   }, [officeHourRequirements, selectedTermId]);
 
-  // Auto-refresh PIN when enabled.
-  // Keep it simple: poll every 5 seconds.
-  useEffect(() => {
-    if (!pinAutoRefresh) return;
-
-    window.setTimeout(() => {
-      void fetchCurrentPin();
-    }, 0);
-    const id = window.setInterval(() => {
-      void fetchCurrentPin();
-    }, 5000);
-
-    return () => {
-      window.clearInterval(id);
-    };
-  }, [pinAutoRefresh]);
-
   return (
     <div className="space-y-10">
       {status ? (
@@ -595,7 +574,7 @@ export function AdminPanel({
         <div className="space-y-1">
           <h2 className="text-lg font-semibold">Terms</h2>
           <p className="text-sm text-foreground/70">
-            Role assignments for President/Officer/Volunteer are term-scoped.
+            Role assignments for term roles are term-scoped.
           </p>
         </div>
 
@@ -664,7 +643,7 @@ export function AdminPanel({
           <h2 className="text-lg font-semibold">Invites / allowlist</h2>
           <p className="text-sm text-foreground/70">
             Add specific emails (e.g. <span className="font-mono">name@gcccd.edu</span>) or a domain entry (e.g.{" "}
-            <span className="font-mono">@gcccd.edu</span>) to allow sign-in.
+            <span className="font-mono">@gcccd.edu</span> or <span className="font-mono">gcccd.edu</span>) to allow sign-in.
           </p>
         </div>
 
@@ -675,7 +654,7 @@ export function AdminPanel({
               className="h-9 w-72 rounded-md border bg-transparent px-2 text-sm"
               value={newInviteEmail}
               onChange={(e: ChangeEvent<HTMLInputElement>) => setNewInviteEmail(e.target.value)}
-              placeholder="name@gcccd.edu or @gcccd.edu"
+              placeholder="name@gcccd.edu or @gcccd.edu (or gcccd.edu)"
             />
           </label>
 
@@ -843,7 +822,7 @@ export function AdminPanel({
 
         <div className="rounded-md border p-3">
           <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-            {(["president", "officer", "volunteer"] as RoleKey[]).map((roleKey) => {
+            {(["president", "executive", "director", "board_member", "volunteer"] as RoleKey[]).map((roleKey) => {
               const row = reqRows.get(roleKey);
               const total = row?.weekly_total_hours ?? 0;
               const inOffice = row?.weekly_in_office_hours ?? 0;
@@ -902,37 +881,6 @@ export function AdminPanel({
 
       <section className="space-y-3">
         <div className="space-y-1">
-          <h2 className="text-lg font-semibold">Office PIN (kiosk)</h2>
-          <p className="text-sm text-foreground/70">
-            Rotating PIN used for Office Hours check-in (Phase 13). Keep this displayed in the office.
-          </p>
-        </div>
-
-        {pinStatus ? <div className="rounded-md border px-3 py-2 text-sm text-foreground/80">{pinStatus}</div> : null}
-
-        <div className="flex flex-wrap items-center gap-3">
-          <Button onClick={() => void fetchCurrentPin()}>Get current PIN</Button>
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={pinAutoRefresh}
-              onChange={(e) => setPinAutoRefresh(e.target.checked)}
-            />
-            Auto-refresh
-          </label>
-        </div>
-
-        <div className="rounded-md border p-3">
-          <div className="text-sm text-foreground/70">PIN</div>
-          <div className="mt-1 font-mono text-3xl tracking-widest">{currentPin || "------"}</div>
-          <div className="mt-2 text-sm text-foreground/70">
-            Expires at: {pinValidTo || "—"} (window {pinWindowSeconds}s)
-          </div>
-        </div>
-      </section>
-
-      <section className="space-y-3">
-        <div className="space-y-1">
           <h2 className="text-lg font-semibold">Office Hours Config</h2>
           <p className="text-sm text-foreground/70">
             Phase 11. Single office settings and quiet hours.
@@ -968,11 +916,9 @@ export function AdminPanel({
               <div className="text-foreground/70">Latitude</div>
               <input
                 className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-                value={officeLocation.lat ?? ""}
-                onChange={(e: ChangeEvent<HTMLInputElement>) => {
-                  const v = e.target.value;
-                  setOfficeLocation({ ...officeLocation, lat: v.trim() ? Number(v) : null });
-                }}
+                value={officeLatText}
+                onChange={(e: ChangeEvent<HTMLInputElement>) => setOfficeLatText(e.target.value)}
+                inputMode="decimal"
                 placeholder="32.81..."
               />
             </label>
@@ -981,11 +927,9 @@ export function AdminPanel({
               <div className="text-foreground/70">Longitude</div>
               <input
                 className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-                value={officeLocation.lon ?? ""}
-                onChange={(e: ChangeEvent<HTMLInputElement>) => {
-                  const v = e.target.value;
-                  setOfficeLocation({ ...officeLocation, lon: v.trim() ? Number(v) : null });
-                }}
+                value={officeLonText}
+                onChange={(e: ChangeEvent<HTMLInputElement>) => setOfficeLonText(e.target.value)}
+                inputMode="decimal"
                 placeholder="-117.00..."
               />
             </label>
@@ -1065,13 +1009,24 @@ export function AdminPanel({
             <div className="flex items-end gap-3 md:col-span-4">
               <Button
                 onClick={async () => {
+                  const lat = parseOptionalNumber(officeLatText);
+                  const lon = parseOptionalNumber(officeLonText);
+                  if (officeLatText.trim() && lat === null) {
+                    setStatus("Latitude must be a valid number.");
+                    return;
+                  }
+                  if (officeLonText.trim() && lon === null) {
+                    setStatus("Longitude must be a valid number.");
+                    return;
+                  }
+
                   setStatus("Saving office config...");
                   try {
                     const payload = {
                       name: officeLocation.name,
                       timezone: officeLocation.timezone,
-                      lat: officeLocation.lat,
-                      lon: officeLocation.lon,
+                      lat,
+                      lon,
                       radius_m: officeLocation.radius_m,
                       grace_radius_m: officeLocation.grace_radius_m,
                       active: officeLocation.active,
@@ -1091,6 +1046,8 @@ export function AdminPanel({
 
                     setOfficeConfig(data.officeConfig);
                     setOfficeLocation(data.officeLocation);
+                    setOfficeLatText(typeof data.officeLocation.lat === "number" ? String(data.officeLocation.lat) : "");
+                    setOfficeLonText(typeof data.officeLocation.lon === "number" ? String(data.officeLocation.lon) : "");
                     setStatus("Office config saved.");
                   } catch (e) {
                     setStatus(e instanceof Error ? e.message : "Failed to save office config");
@@ -1212,7 +1169,7 @@ export function AdminPanel({
         <div className="space-y-1">
           <h2 className="text-lg font-semibold">Assign roles</h2>
           <p className="text-sm text-foreground/70">
-            Advisor is global. President/Officer/Volunteer apply to the selected term.
+            Advisor is global. All other roles apply to the selected term.
           </p>
         </div>
 

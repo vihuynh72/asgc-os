@@ -9,13 +9,11 @@ Check-in:
 - Open “Office Hours” page
 - Tap “Check In”
 - Allow location permission
-- Enter rotating PIN (or scan QR)
 - Confirm “Checked in” + timer starts
 
 Check-out:
 - Tap “Check Out”
 - Location permission (again)
-- Enter PIN again (optional but recommended)
 - Confirm session duration + weekly total shown
 
 ## 2) Presence validation
@@ -28,14 +26,9 @@ Rules:
 - radius < distance <= grace_radius: allow but mark “needs_review”
 - distance > grace_radius: block
 
-Token:
-- Rotating PIN every 30–60 seconds, displayed on a “kiosk screen” in the office
-- Server stores hash only
-- Token valid for its time window
-
-Anti-screenshot:
-- PIN changes fast enough to make sharing annoying
-- Optional: require token again at check-out
+Ongoing presence:
+- While checked in, periodically re-check location (e.g. every 30 minutes)
+- If outside the office geofence, automatically check out
 
 ## 3) Sessions
 - Only 1 open session at a time per user
@@ -92,20 +85,19 @@ Rules:
 
 ## 9) Edge cases (must be handled)
 - Location permission denied → block check-in (show clear instructions)
-- Weak signal in office → allow cached UI state, but server must confirm token validity
+- Weak signal in office → allow cached UI state, but server must confirm geofence server-side
 - Timezone/DST → store timestamptz, render in office timezone
 - Role changes mid-week → requirement selection must be term/effective-date aware
 - Check-out far away → mark disputed (not auto-invalid)
 
 ## 10) Acceptance tests (plain language)
 A) Check-in
-A1. In radius + valid token → open session created, audit logged
+A1. In radius → open session created, audit logged
 A2. Outside grace radius → blocked with clear error
-A3. Expired token → blocked
 A4. Already has open session → blocked
 
 B) Check-out
-B1. Open session + valid token → session closed, duration computed
+B1. Open session → session closed, duration computed
 B2. No open session → blocked
 B3. Checkout far away → session closed but flagged needs_review
 
