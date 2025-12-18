@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { normalizeDateOnlyString } from "@/lib/dateOnly";
+import { cn } from "@/lib/utils";
 
 type UserRow = {
   id: string;
@@ -454,7 +455,9 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
                     <td className="px-3 py-2 font-mono">{formatTimeInTz(s.checkin_at, tz)}</td>
                     <td className="px-3 py-2 font-mono">{s.checkout_at ? formatTimeInTz(s.checkout_at, tz) : "—"}</td>
                     <td className="px-3 py-2">{typeof s.duration_minutes === "number" ? formatMinutes(s.duration_minutes) : "—"}</td>
-                    <td className="px-3 py-2 font-mono">{s.status}</td>
+                    <td className="px-3 py-2">
+                      <StatusBadge status={s.status} />
+                    </td>
                     <td className="px-3 py-2">{s.office_location_name || "—"}</td>
                     <td className="px-3 py-2">{s.within_radius ? "Yes" : "No"}</td>
                   </tr>
@@ -473,81 +476,78 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
       ) : null}
 
       {view === "week" ? (
-        <div className="overflow-x-auto pb-1">
-        <div className="grid gap-3 [grid-template-columns:repeat(7,minmax(11rem,1fr))]">
-          {weekDays.map((day) => {
-            const daySessions = sessionsByDay.get(day) ?? [];
-            const dayMinutes = daySessions.reduce((sum, s) => sum + (typeof s.duration_minutes === "number" ? s.duration_minutes : 0), 0);
-            const groups = userGroupsByDay.get(day) ?? [];
-            return (
-              <div key={day} className="flex h-[28rem] flex-col rounded-md border">
-                <div className="border-b px-3 py-2">
-                  <div className="text-sm font-medium">{formatDateHeading(day, tz)}</div>
-                  <div className="text-xs text-foreground/60">
-                    {daySessions.length} session{daySessions.length === 1 ? "" : "s"} • {formatMinutes(dayMinutes)}
+        <div className="overflow-x-auto pb-4">
+          <div className="grid min-w-[1800px] grid-cols-7 gap-4">
+            {weekDays.map((day) => {
+              const daySessions = sessionsByDay.get(day) ?? [];
+              const dayMinutes = daySessions.reduce((sum, s) => sum + (typeof s.duration_minutes === "number" ? s.duration_minutes : 0), 0);
+              const groups = userGroupsByDay.get(day) ?? [];
+              const isToday = day === todayDateString();
+
+              return (
+                <div
+                  key={day}
+                  className={cn(
+                    "flex h-full min-h-[24rem] flex-col rounded-lg border bg-card text-card-foreground shadow-sm",
+                    isToday && "ring-2 ring-primary/20 border-primary/50",
+                  )}
+                >
+                  <div className="border-b p-3 bg-muted/30">
+                    <div className="flex items-center justify-between">
+                      <div className="font-semibold text-sm">{formatDateHeading(day, tz)}</div>
+                      {isToday && <span className="text-[10px] font-bold uppercase tracking-wider text-primary">Today</span>}
+                    </div>
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      {daySessions.length} session{daySessions.length === 1 ? "" : "s"}
+                      {dayMinutes > 0 && <span className="ml-1">• {formatMinutes(dayMinutes)}</span>}
+                    </div>
                   </div>
-                </div>
-                <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
-                  {daySessions.length === 0 ? (
-                    <div className="text-xs text-foreground/60">No sessions</div>
-                  ) : (
-                    groupByUser ? (
+
+                  <div className="flex-1 space-y-3 p-2 overflow-y-auto max-h-[500px]">
+                    {daySessions.length === 0 ? (
+                      <div className="py-8 text-center text-xs text-muted-foreground/50 italic">No sessions</div>
+                    ) : groupByUser ? (
                       groups.map((g) => (
-                        <details key={`${day}:${g.user_id}`} className="rounded-md border px-2 py-2 text-xs">
-                          <summary className="cursor-pointer select-none">
-                            <div className="flex items-center justify-between gap-2">
-                              <div className="min-w-0 truncate font-medium">
+                        <details
+                          key={`${day}:${g.user_id}`}
+                          className="group rounded-md border bg-background text-xs shadow-sm open:ring-1 open:ring-ring/10"
+                        >
+                          <summary className="flex cursor-pointer select-none items-center justify-between p-2 hover:bg-muted/50 transition-colors [&::-webkit-details-marker]:hidden">
+                            <div className="flex flex-col min-w-0 flex-1 mr-2">
+                              <span className="font-medium truncate" title={g.user_display_name || g.user_email || g.user_id}>
                                 {g.user_display_name || g.user_email || g.user_id}
-                              </div>
-                              <div className="text-foreground/70">{formatMinutes(g.total_minutes)}</div>
+                              </span>
+                              <span className="text-[10px] text-muted-foreground">
+                                {g.sessions.length} sess • {formatMinutes(g.total_minutes)}
+                              </span>
                             </div>
-                            <div className="mt-1 flex flex-wrap items-center gap-2 text-foreground/70">
-                              <span>{g.sessions.length} session{g.sessions.length === 1 ? "" : "s"}</span>
+                            <div className="text-muted-foreground/50 group-open:rotate-180 transition-transform duration-200">
+                              <svg width="10" height="6" viewBox="0 0 10 6" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <path
+                                  d="M1 1L5 5L9 1"
+                                  stroke="currentColor"
+                                  strokeWidth="1.5"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                />
+                              </svg>
                             </div>
                           </summary>
-                          <div className="mt-2 space-y-2">
+                          <div className="border-t bg-muted/10 p-2 space-y-2">
                             {g.sessions.map((s) => (
-                              <div key={s.id} className="rounded-md border bg-background px-2 py-2">
-                                <div className="flex items-center justify-between gap-2">
-                                  <div className="whitespace-nowrap font-mono text-foreground/70">
-                                    {formatTimeInTz(s.checkin_at, tz)}–{s.checkout_at ? formatTimeInTz(s.checkout_at, tz) : "—"}
-                                  </div>
-                                  <div className="font-mono text-foreground/70">{s.status}</div>
-                                </div>
-                                <div className="mt-1 flex flex-wrap items-center gap-2 text-foreground/70">
-                                  {typeof s.duration_minutes === "number" ? <span>{formatMinutes(s.duration_minutes)}</span> : null}
-                                  {s.within_radius === false ? (
-                                    <span className="rounded bg-foreground/5 px-1 py-0.5">outside</span>
-                                  ) : null}
-                                </div>
-                              </div>
+                              <SessionCard key={s.id} session={s} tz={tz} />
                             ))}
                           </div>
                         </details>
                       ))
                     ) : (
-                      daySessions.map((s) => (
-                        <div key={s.id} className="rounded-md border px-2 py-2 text-xs">
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="min-w-0 truncate font-medium">{s.user_display_name || s.user_email || s.user_id}</div>
-                            <div className="font-mono text-foreground/70">{s.status}</div>
-                          </div>
-                          <div className="mt-1 flex flex-wrap items-center gap-2 text-foreground/70">
-                            <span className="whitespace-nowrap font-mono">
-                              {formatTimeInTz(s.checkin_at, tz)}–{s.checkout_at ? formatTimeInTz(s.checkout_at, tz) : "—"}
-                            </span>
-                            {typeof s.duration_minutes === "number" ? <span>{formatMinutes(s.duration_minutes)}</span> : null}
-                            {s.within_radius === false ? <span className="rounded bg-foreground/5 px-1 py-0.5">outside</span> : null}
-                          </div>
-                        </div>
-                      ))
-                    )
-                  )}
+                      daySessions.map((s) => <SessionCard key={s.id} session={s} tz={tz} showUser />)
+                    )}
+                  </div>
                 </div>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
         </div>
       ) : null}
 
@@ -598,5 +598,59 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
         </div>
       ) : null}
     </div>
+  );
+}
+
+function SessionCard({
+  session,
+  tz,
+  showUser,
+}: {
+  session: OfficeHourAdminSession;
+  tz: string | null;
+  showUser?: boolean;
+}) {
+  return (
+    <div className="rounded border bg-background p-2 text-xs shadow-sm">
+      {showUser && (
+        <div className="mb-1.5 font-medium truncate border-b pb-1">
+          {session.user_display_name || session.user_email || session.user_id}
+        </div>
+      )}
+      <div className="flex items-center justify-between gap-2">
+        <div className="font-mono text-muted-foreground whitespace-nowrap">
+          {formatTimeInTz(session.checkin_at, tz)}
+          <span className="mx-1 text-muted-foreground/40">→</span>
+          {session.checkout_at ? formatTimeInTz(session.checkout_at, tz) : "—"}
+        </div>
+        <StatusBadge status={session.status} />
+      </div>
+      <div className="mt-1.5 flex items-center justify-between gap-2 text-muted-foreground">
+        <div className="font-medium">
+          {typeof session.duration_minutes === "number" ? formatMinutes(session.duration_minutes) : "—"}
+        </div>
+        {session.within_radius === false && (
+          <span className="flex items-center gap-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+            Outside
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const styles = {
+    open: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400",
+    closed: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-400",
+    auto_closed: "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400",
+    voided: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400",
+  };
+  const style = styles[status as keyof typeof styles] || "bg-gray-100 text-gray-700";
+
+  return (
+    <span className={cn("rounded-full px-1.5 py-0.5 text-[10px] font-medium capitalize", style)}>
+      {status.replace("_", " ")}
+    </span>
   );
 }
