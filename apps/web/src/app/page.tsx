@@ -16,13 +16,13 @@ export default function Home() {
   return (
     <PageShell
       title="ASGC OS"
-      description="Internal work operating system for ASGC. PHASE 01: bootstrap + placeholder routes (no auth yet)."
+      description="Internal work operating system for ASGC (invite-only)."
     >
       <div className="space-y-6">
         <div className="rounded-lg border p-4">
           <p className="text-sm text-foreground/70">
-            This repo follows the build packet phases. Office Hours is the top MVP priority, but it
-            is implemented in later phases (PHASE 11–20).
+            This repo follows the build packet phases. Office Hours is the top MVP priority and
+            uses location + a rotating office PIN.
           </p>
         </div>
 
@@ -34,7 +34,7 @@ export default function Home() {
               className="rounded-lg border p-4 transition-colors hover:bg-foreground/5"
             >
               <div className="font-medium">{l.label}</div>
-              <div className="mt-1 text-sm text-foreground/70">Placeholder page</div>
+              <div className="mt-1 text-sm text-foreground/70">Open</div>
             </Link>
           ))}
         </div>

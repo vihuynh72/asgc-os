@@ -1,16 +1,17 @@
--- PHASE 19 — Auto-close forgotten sessions + long-session reminders
--- Source of truth: 04_office_hours_spec.md (auto-close, reminders)
+-- PATCH — Phase 19 auto-close: remove duration_minutes column dependency
+-- Some environments created auto_close_sessions before office_hour_sessions had a duration_minutes column.
+-- This patch re-defines Phase 19 functions to compute duration on the fly and avoid a hard dependency.
 
 begin;
 
--- 1) Config knobs for auto-close and open-session reminders.
+-- Ensure Phase 19 config knobs exist (idempotent).
 alter table public.office_config
   add column if not exists max_session_hours integer not null default 8;
 
 alter table public.office_config
   add column if not exists reminder_session_open_hours integer not null default 2;
 
--- 2) Enqueue "session still open" reminders (idempotent).
+-- Re-define reminder enqueue (unchanged behavior).
 create or replace function public.enqueue_session_open_reminders(_now timestamptz default now())
 returns integer
 language plpgsql
@@ -87,7 +88,7 @@ revoke all on function public.enqueue_session_open_reminders(timestamptz) from p
 revoke all on function public.enqueue_session_open_reminders(timestamptz) from authenticated;
 grant execute on function public.enqueue_session_open_reminders(timestamptz) to service_role;
 
--- 3) Auto-close sessions open longer than max_session_hours.
+-- Re-define auto-close without relying on a duration_minutes column on office_hour_sessions.
 create or replace function public.auto_close_sessions(_now timestamptz default now())
 returns integer
 language plpgsql
@@ -188,3 +189,4 @@ revoke all on function public.auto_close_sessions(timestamptz) from authenticate
 grant execute on function public.auto_close_sessions(timestamptz) to service_role;
 
 commit;
+

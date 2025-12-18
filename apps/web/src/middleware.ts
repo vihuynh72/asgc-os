@@ -3,6 +3,17 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { getPublicEnv, hasPublicSupabaseEnv } from "@/lib/env";
 
+const PROTECTED_PREFIXES = [
+  "/dashboard",
+  "/office-hours",
+  "/tasks",
+  "/meetings",
+  "/docs",
+  "/finance",
+  "/admin",
+  "/projects",
+];
+
 export async function middleware(request: NextRequest) {
   if (!hasPublicSupabaseEnv()) {
     const redirectUrl = request.nextUrl.clone();
@@ -10,6 +21,30 @@ export async function middleware(request: NextRequest) {
     redirectUrl.searchParams.set("env", "missing");
     redirectUrl.searchParams.set("redirectTo", request.nextUrl.pathname);
     return NextResponse.redirect(redirectUrl);
+  }
+
+  const pathname = request.nextUrl.pathname;
+
+  const hasMagicParams =
+    request.nextUrl.searchParams.has("code") ||
+    request.nextUrl.searchParams.has("token") ||
+    request.nextUrl.searchParams.has("token_hash");
+
+  if (hasMagicParams && pathname !== "/auth/callback") {
+    const redirectUrl = new URL("/auth/callback", request.url);
+    redirectUrl.search = request.nextUrl.search;
+    return NextResponse.redirect(redirectUrl);
+  }
+
+  const isProtected = PROTECTED_PREFIXES.some(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+  );
+
+  // Unprotected routes can pass through after token forwarding.
+  if (!isProtected) {
+    return NextResponse.next({
+      request,
+    });
   }
 
   const env = getPublicEnv();
@@ -42,8 +77,6 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(redirectUrl);
   }
 
-  const pathname = request.nextUrl.pathname;
-
   if (pathname.startsWith("/admin")) {
     const { data: isAdmin, error: adminErr } = await supabase.rpc("is_admin", { _uid: user.id });
 
@@ -60,6 +93,8 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
+    "/",
+    "/login",
     "/dashboard/:path*",
     "/office-hours/:path*",
     "/tasks/:path*",
@@ -67,5 +102,6 @@ export const config = {
     "/docs/:path*",
     "/finance/:path*",
     "/admin/:path*",
+    "/projects/:path*",
   ],
 };

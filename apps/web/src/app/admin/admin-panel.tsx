@@ -61,6 +61,17 @@ type AssignmentRow = {
   is_primary: boolean;
 };
 
+type InviteAllowlistRow = {
+  id: string;
+  email: string;
+  email_normalized: string;
+  is_active: boolean;
+  invited_by: string | null;
+  invited_at: string;
+  revoked_at: string | null;
+  notes: string | null;
+};
+
 const ROLE_OPTIONS: Array<{ key: RoleKey; label: string; scope: "global" | "term" }> = [
   { key: "advisor", label: "Advisor (global)", scope: "global" },
   { key: "president", label: "President (term)", scope: "term" },
@@ -90,6 +101,7 @@ export function AdminPanel({
   initialSelectedTermId,
   initialGlobalAdvisorAssignments,
   initialTermAssignments,
+  initialInvitesAllowlist,
   initialOfficeLocation,
   initialOfficeConfig,
   initialOfficeHourRequirements,
@@ -99,6 +111,7 @@ export function AdminPanel({
   initialSelectedTermId: string;
   initialGlobalAdvisorAssignments: AssignmentRow[];
   initialTermAssignments: AssignmentRow[];
+  initialInvitesAllowlist: InviteAllowlistRow[];
   initialOfficeLocation: OfficeLocationRow | null;
   initialOfficeConfig: OfficeConfigRow | null;
   initialOfficeHourRequirements: OfficeHourRequirementRow[];
@@ -111,6 +124,10 @@ export function AdminPanel({
     initialGlobalAdvisorAssignments,
   );
   const [termAssignments, setTermAssignments] = useState<AssignmentRow[]>(initialTermAssignments);
+
+  const [invitesAllowlist, setInvitesAllowlist] = useState<InviteAllowlistRow[]>(initialInvitesAllowlist);
+  const [newInviteEmail, setNewInviteEmail] = useState<string>("");
+  const [newInviteNotes, setNewInviteNotes] = useState<string>("");
 
   const [selectedUserId, setSelectedUserId] = useState<string>("");
   const [selectedRoleKey, setSelectedRoleKey] = useState<RoleKey>("officer");
@@ -389,6 +406,57 @@ export function AdminPanel({
     setStatus("");
   }
 
+  async function loadInvitesAllowlist() {
+    setStatus("Loading invites allowlist...");
+    try {
+      const data = await fetchJson<{ invites: InviteAllowlistRow[] }>("/api/admin/invites-allowlist");
+      setInvitesAllowlist(data.invites ?? []);
+      setStatus("");
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : "Failed to load invites allowlist");
+    }
+  }
+
+  async function onAddInvite() {
+    const email = newInviteEmail.trim();
+    if (!email) return;
+
+    setStatus("Adding invite...");
+    try {
+      const data = await fetchJson<{ invite: InviteAllowlistRow }>("/api/admin/invites-allowlist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email,
+          notes: newInviteNotes.trim().length > 0 ? newInviteNotes.trim() : undefined,
+        }),
+      });
+
+      setInvitesAllowlist((prev) => [data.invite, ...prev.filter((r) => r.id !== data.invite.id)]);
+      setNewInviteEmail("");
+      setNewInviteNotes("");
+      setStatus("Invite added.");
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : "Failed to add invite");
+    }
+  }
+
+  async function onSetInviteActive(invite: InviteAllowlistRow, isActive: boolean) {
+    setStatus(isActive ? "Re-activating invite..." : "Revoking invite...");
+    try {
+      const data = await fetchJson<{ invite: InviteAllowlistRow }>("/api/admin/invites-allowlist", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: invite.id, is_active: isActive }),
+      });
+
+      setInvitesAllowlist((prev) => prev.map((r) => (r.id === invite.id ? data.invite : r)));
+      setStatus("");
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : "Failed to update invite");
+    }
+  }
+
   async function onCreateTerm() {
     setStatus("Creating term...");
     try {
@@ -588,6 +656,90 @@ export function AdminPanel({
               Create term
             </Button>
           </div>
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <div className="space-y-1">
+          <h2 className="text-lg font-semibold">Invites / allowlist</h2>
+          <p className="text-sm text-foreground/70">
+            Add specific emails (e.g. <span className="font-mono">name@gcccd.edu</span>) or a domain entry (e.g.{" "}
+            <span className="font-mono">@gcccd.edu</span>) to allow sign-in.
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="space-y-1 text-sm">
+            <div className="text-foreground/70">Email or domain</div>
+            <input
+              className="h-9 w-72 rounded-md border bg-transparent px-2 text-sm"
+              value={newInviteEmail}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => setNewInviteEmail(e.target.value)}
+              placeholder="name@gcccd.edu or @gcccd.edu"
+            />
+          </label>
+
+          <label className="space-y-1 text-sm">
+            <div className="text-foreground/70">Notes (optional)</div>
+            <input
+              className="h-9 w-72 rounded-md border bg-transparent px-2 text-sm"
+              value={newInviteNotes}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => setNewInviteNotes(e.target.value)}
+              placeholder="e.g., Spring 2026 board"
+            />
+          </label>
+
+          <Button onClick={() => void onAddInvite()} disabled={!newInviteEmail.trim()}>
+            Add
+          </Button>
+
+          <Button variant="ghost" onClick={() => void loadInvitesAllowlist()}>
+            Reload
+          </Button>
+        </div>
+
+        <div className="rounded-md border">
+          {invitesAllowlist.length === 0 ? (
+            <div className="px-3 py-2 text-sm text-foreground/70">No allowlist entries found.</div>
+          ) : (
+            <div className="divide-y">
+              {invitesAllowlist.map((inv) => (
+                <div key={inv.id} className="flex flex-wrap items-center justify-between gap-3 px-3 py-2">
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-medium">
+                      {inv.email}{" "}
+                      {!inv.is_active ? <span className="text-xs text-foreground/60">(inactive)</span> : null}
+                    </div>
+                    <div className="mt-1 text-xs text-foreground/60">
+                      {inv.notes ? `${inv.notes} • ` : ""}
+                      Invited: {inv.invited_at}
+                      {inv.revoked_at ? ` • Revoked: ${inv.revoked_at}` : ""}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {inv.is_active ? (
+                      <Button
+                        variant="ghost"
+                        onClick={() => void onSetInviteActive(inv, false)}
+                        className="h-7 px-2 text-xs"
+                      >
+                        Revoke
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="ghost"
+                        onClick={() => void onSetInviteActive(inv, true)}
+                        className="h-7 px-2 text-xs"
+                      >
+                        Reactivate
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </section>
 

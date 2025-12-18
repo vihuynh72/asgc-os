@@ -28,11 +28,13 @@ This repo is built strictly phase-by-phase per [01_stack_and_architecture.md](01
 
 - PHASE 02 — Auth (invite-only): ✅ complete
 	- Migration: [supabase/migrations/202512160001_phase02_auth_invite_only.sql](supabase/migrations/202512160001_phase02_auth_invite_only.sql)
+	- Patch (enforce allowlist in Auth DB): [supabase/migrations/202512180002_phase02_1_enforce_invite_only_auth.sql](supabase/migrations/202512180002_phase02_1_enforce_invite_only_auth.sql)
 	- Invite-only magic link flow:
 		- Login page: [apps/web/src/app/(auth)/login/page.tsx](apps/web/src/app/(auth)/login/page.tsx)
 		- Request link endpoint (allowlist-gated): [apps/web/src/app/api/auth/request-magic-link/route.ts](apps/web/src/app/api/auth/request-magic-link/route.ts)
 		- Callback route (sets session cookies): [apps/web/src/app/auth/callback/route.ts](apps/web/src/app/auth/callback/route.ts)
 		- Protected routes middleware: [apps/web/src/middleware.ts](apps/web/src/middleware.ts)
+		- Admin invite/allowlist manager (supports `@domain` entries): [apps/web/src/app/api/admin/invites-allowlist/route.ts](apps/web/src/app/api/admin/invites-allowlist/route.ts)
 
 - PHASE 03 — Roles + term model: ✅ complete
 	- Migration: [supabase/migrations/202512160002_phase03_terms_roles_admin.sql](supabase/migrations/202512160002_phase03_terms_roles_admin.sql)
@@ -134,6 +136,7 @@ This repo is built strictly phase-by-phase per [01_stack_and_architecture.md](01
 
 - PHASE 19 — Auto-close v1: ✅ complete
 	- Migration: [supabase/migrations/202512170009_phase19_auto_close_v1.sql](supabase/migrations/202512170009_phase19_auto_close_v1.sql)
+	- Patch (fix auto-close function dependency): [supabase/migrations/202512180001_patch_phase19_auto_close.sql](supabase/migrations/202512180001_patch_phase19_auto_close.sql)
 
 - PHASE 20 — Coverage v1: ✅ complete
 	- Migration: [supabase/migrations/202512170010_phase20_coverage_v1.sql](supabase/migrations/202512170010_phase20_coverage_v1.sql)
@@ -177,8 +180,9 @@ Phase 25 (Budget & Funding v1) should:
 
 ### Quick verification checklist
 
-- Login works via allowlist magic link.
+- Login works via allowlist magic link (Admin → Invites / allowlist supports `@gcccd.edu` domain entries).
 - `/admin` loads for admins only.
+- Office Hours: configure office geofence + PIN kiosk, then check in/out; auto location check runs every ~30 minutes and auto-checks out if outside grace radius.
 - Meetings: View upcoming meetings and click into details.
 - Agenda Items: Submit a draft agenda item for a meeting, then finalize it.
 - Admin: Review (accept/reject) submitted agenda items.
