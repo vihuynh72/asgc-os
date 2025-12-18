@@ -36,8 +36,8 @@ async function isAdminForRequest(request: NextRequest): Promise<{ ok: true; user
   return { ok: true, userId: user.id };
 }
 
-function isValidRoleKey(roleKey: string): roleKey is "advisor" | "president" | "officer" | "volunteer" {
-  return ["advisor", "president", "officer", "volunteer"].includes(roleKey);
+function isValidRoleKey(roleKey: string): roleKey is "advisor" | "president" | "executive" | "director" | "board_member" | "volunteer" {
+  return ["advisor", "president", "executive", "director", "board_member", "volunteer"].includes(roleKey);
 }
 
 export async function GET(request: NextRequest) {

@@ -36,9 +36,10 @@ export async function POST(request: NextRequest, { params }: Params) {
   }
 
   // Check admin status
-  const { data: isAdmin } = await supabase.rpc("is_admin");
+  const { data: isAdmin, error: adminErr } = await supabase.rpc("is_admin", { _uid: user.id });
+  const isAdminUser = !adminErr && !!isAdmin;
 
-  if (doc.uploaded_by !== user.id && !isAdmin) {
+  if (doc.uploaded_by !== user.id && !isAdminUser) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
 

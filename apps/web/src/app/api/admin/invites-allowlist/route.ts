@@ -54,6 +54,14 @@ function normalizeEntry(raw: string): string {
   return raw.trim().toLowerCase();
 }
 
+function normalizeAllowlistEntry(raw: string): string {
+  const normalized = normalizeEntry(raw);
+  if (z.string().email().safeParse(normalized).success) return normalized;
+  if (normalized.startsWith("@")) return normalized;
+  if (isValidDomain(normalized)) return `@${normalized}`;
+  return normalized;
+}
+
 function isValidDomain(domain: string): boolean {
   if (!domain) return false;
   if (domain.includes("@")) return false;
@@ -72,7 +80,7 @@ const CreateSchema = z.object({
   email: z
     .string()
     .min(3)
-    .transform(normalizeEntry)
+    .transform(normalizeAllowlistEntry)
     .refine(isValidAllowlistEntry, { message: "invalid_email" }),
   notes: z.string().optional(),
 });
@@ -107,7 +115,8 @@ export async function POST(request: NextRequest) {
 
   const parsed = CreateSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
-    return NextResponse.json({ error: "invalid_request" }, { status: 400 });
+    const message = parsed.error.issues[0]?.message || "invalid_request";
+    return NextResponse.json({ error: message }, { status: 400 });
   }
 
   const admin = getSupabaseAdminClient();
@@ -174,4 +183,3 @@ export async function PATCH(request: NextRequest) {
 
   return NextResponse.json({ invite: row as InviteAllowlistRow });
 }
-

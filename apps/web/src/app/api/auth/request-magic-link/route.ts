@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { getPublicEnv } from "@/lib/env";
 import { allowlistKeysForNormalizedEmail, normalizeEmail } from "@/lib/invitesAllowlist";
+import { POST_AUTH_REDIRECT_COOKIE, safePostAuthRedirectPath, safeRedirectPathOrNull } from "@/lib/redirects";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
@@ -21,10 +22,21 @@ export async function POST(request: NextRequest) {
   try {
     const body = BodySchema.parse(await request.json());
     email = normalizeEmail(body.email);
-    postAuthRedirectTo =
-      typeof body.redirectTo === "string" && body.redirectTo.startsWith("/") ? body.redirectTo : undefined;
+    const safeRedirect = safeRedirectPathOrNull(body.redirectTo);
+    postAuthRedirectTo = safeRedirect ? safePostAuthRedirectPath(safeRedirect) : undefined;
   } catch {
     return NextResponse.json({ ok: false }, { status: 400 });
+  }
+
+  const response = NextResponse.json({ ok: true });
+  if (postAuthRedirectTo) {
+    response.cookies.set(POST_AUTH_REDIRECT_COOKIE, postAuthRedirectTo, {
+      path: "/",
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      maxAge: 60 * 15,
+    });
   }
 
   const callbackUrl = new URL("/auth/callback", origin);
@@ -51,13 +63,12 @@ export async function POST(request: NextRequest) {
 
   const allowlisted = Array.isArray(allowlistedRows) && allowlistedRows.length > 0;
   if (!allowlisted) {
-    return NextResponse.json({ ok: true });
+    return response;
   }
 
   // Send a PKCE magic link (creates user if absent). Using PKCE ensures Supabase emails include
   // a `code` query param instead of hash fragments so /auth/callback can exchange it server-side.
   const env = getPublicEnv();
-  const response = NextResponse.json({ ok: true });
 
   const anon = createServerClient(env.NEXT_PUBLIC_SUPABASE_URL, env.NEXT_PUBLIC_SUPABASE_ANON_KEY, {
     cookies: {

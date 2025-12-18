@@ -58,7 +58,8 @@ export default async function MeetingDetailPage({ params }: { params: Params }) 
   }
 
   // Check admin status
-  const { data: isAdmin } = await supabase.rpc("is_admin");
+  const { data: isAdmin, error: adminErr } = await supabase.rpc("is_admin", { _uid: user.id });
+  const isAdminUser = !adminErr && !!isAdmin;
 
   // Get meeting
   const { data: meeting, error: meetingErr } = await supabase
@@ -142,7 +143,7 @@ export default async function MeetingDetailPage({ params }: { params: Params }) 
             meetingId={meetingId}
             initialItems={typedItems}
             initialDeadline={typedDeadline}
-            isAdmin={!!isAdmin}
+            isAdmin={isAdminUser}
             userId={user.id}
           />
         </div>

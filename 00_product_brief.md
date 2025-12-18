@@ -36,7 +36,7 @@ A) Identity + Roles
 
 B) Office Hours (highest priority)
 - Mobile check-in/out
-- Geofence + rotating proof token (PIN/QR)
+- Geofence + periodic location verification
 - Weekly totals vs role requirements
 - Reminders + weekly deficit digest
 - Coverage workflow + exceptions (approved)
@@ -106,7 +106,7 @@ Office hours:
 
 Docs:
 - As a committee chair, I can upload notes and restrict them to my committee.
-- As a board officer, I can upload minutes and attach them to a meeting record.
+- As a board member, I can upload minutes and attach them to a meeting record.
 - As a user, I can search docs by title/tags and download.
 
 Tasks:

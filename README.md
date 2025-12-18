@@ -113,11 +113,8 @@ This repo is built strictly phase-by-phase per [01_stack_and_architecture.md](01
 	- Admin UI: [apps/web/src/app/admin/admin-panel.tsx](apps/web/src/app/admin/admin-panel.tsx)
 	- RLS smoke: [supabase/rls/phase12_rls_smoke.sql](supabase/rls/phase12_rls_smoke.sql)
 
-- PHASE 13 — Presence tokens (PIN generator): ✅ complete
-	- Migration: [supabase/migrations/202512170002_phase13_presence_tokens_pin.sql](supabase/migrations/202512170002_phase13_presence_tokens_pin.sql)
-	- Admin API (returns current PIN): [apps/web/src/app/api/admin/presence-pin/route.ts](apps/web/src/app/api/admin/presence-pin/route.ts)
-	- Admin UI (kiosk display): [apps/web/src/app/admin/admin-panel.tsx](apps/web/src/app/admin/admin-panel.tsx)
-	- RLS smoke: [supabase/rls/phase13_rls_smoke.sql](supabase/rls/phase13_rls_smoke.sql)
+- PATCH — Office Hours (remove kiosk PIN): ✅ complete
+	- Migration: [supabase/migrations/202512180005_patch_office_hours_remove_pin.sql](supabase/migrations/202512180005_patch_office_hours_remove_pin.sql)
 
 - PHASE 14 — Office hours check-in v1: ✅ complete
 	- Migration: [supabase/migrations/202512170003_phase14_office_hours_checkin_v1.sql](supabase/migrations/202512170003_phase14_office_hours_checkin_v1.sql)
@@ -182,7 +179,7 @@ Phase 25 (Budget & Funding v1) should:
 
 - Login works via allowlist magic link (Admin → Invites / allowlist supports `@gcccd.edu` domain entries).
 - `/admin` loads for admins only.
-- Office Hours: configure office geofence + PIN kiosk, then check in/out; auto location check runs every ~30 minutes and auto-checks out if outside grace radius.
+- Office Hours: configure office geofence, then check in/out; auto location check runs every ~30 minutes and auto-checks out if outside grace radius.
 - Meetings: View upcoming meetings and click into details.
 - Agenda Items: Submit a draft agenda item for a meeting, then finalize it.
 - Admin: Review (accept/reject) submitted agenda items.
