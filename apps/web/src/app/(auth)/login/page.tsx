@@ -12,6 +12,47 @@ function normalizeEmail(raw: string): string {
   return raw.trim().toLowerCase();
 }
 
+const REMEMBERED_EMAILS_KEY = "asgc:remembered_emails:v1";
+
+function readRememberedEmails(): string[] {
+  try {
+    const raw = window.localStorage.getItem(REMEMBERED_EMAILS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((v) => (typeof v === "string" ? normalizeEmail(v) : ""))
+      .filter(Boolean)
+      .slice(0, 5);
+  } catch {
+    return [];
+  }
+}
+
+function writeRememberedEmails(emails: string[]) {
+  try {
+    window.localStorage.setItem(REMEMBERED_EMAILS_KEY, JSON.stringify(emails.slice(0, 5)));
+  } catch {
+    // Ignore.
+  }
+}
+
+function rememberEmailOnDevice(email: string) {
+  const normalized = normalizeEmail(email);
+  if (!normalized) return;
+  const prev = readRememberedEmails();
+  const next = [normalized, ...prev.filter((e) => e !== normalized)].slice(0, 5);
+  writeRememberedEmails(next);
+}
+
+function forgetRememberedEmails() {
+  try {
+    window.localStorage.removeItem(REMEMBERED_EMAILS_KEY);
+  } catch {
+    // Ignore.
+  }
+}
+
 function AuthCallbackErrorBanner() {
   const searchParams = useSearchParams();
   const error = searchParams.get("error");
@@ -71,6 +112,8 @@ export default function LoginPage() {
   const [postAuthRedirectTo, setPostAuthRedirectTo] = useState<string>("/dashboard");
 
   const [email, setEmail] = useState("");
+  const [rememberEmail, setRememberEmail] = useState(true);
+  const [rememberedEmails, setRememberedEmails] = useState<string[]>([]);
   const [token, setToken] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
@@ -88,6 +131,18 @@ export default function LoginPage() {
         if (!cancelled) setPostAuthRedirectTo(redirectTo);
       } catch {
         // Ignore; fallback to default.
+      }
+
+      try {
+        const saved = readRememberedEmails();
+        if (!cancelled) {
+          setRememberedEmails(saved);
+          if (saved.length > 0) {
+            setEmail((prev) => (prev.trim().length === 0 ? saved[0] : prev));
+          }
+        }
+      } catch {
+        // Ignore.
       }
 
       try {
@@ -127,6 +182,11 @@ export default function LoginPage() {
     const redirectTo = getRedirectToForRequests();
 
     try {
+      if (rememberEmail) {
+        rememberEmailOnDevice(normalizedEmail);
+        setRememberedEmails(readRememberedEmails());
+      }
+
       const res = await fetch("/api/auth/request-magic-link", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -155,6 +215,11 @@ export default function LoginPage() {
     const redirectTo = getRedirectToForRequests();
 
     try {
+      if (rememberEmail) {
+        rememberEmailOnDevice(normalizedEmail);
+        setRememberedEmails(readRememberedEmails());
+      }
+
       const res = await fetch("/api/auth/verify-otp", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -222,6 +287,43 @@ export default function LoginPage() {
             placeholder="you@example.com"
           />
         </div>
+
+        {rememberedEmails.length > 0 ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-foreground/60">Recent:</span>
+            {rememberedEmails.map((saved) => (
+              <Button
+                key={saved}
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setEmail(saved)}
+              >
+                {saved}
+              </Button>
+            ))}
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                forgetRememberedEmails();
+                setRememberedEmails([]);
+              }}
+            >
+              Forget
+            </Button>
+          </div>
+        ) : null}
+
+        <label className="flex items-center gap-2 text-sm text-foreground/70">
+          <input
+            type="checkbox"
+            checked={rememberEmail}
+            onChange={(e) => setRememberEmail(e.target.checked)}
+          />
+          Remember this email on this device
+        </label>
 
         <Button type="submit" disabled={isSubmitting || normalizedEmail.length === 0}>
           {isSubmitting ? "Sending..." : "Send magic link"}

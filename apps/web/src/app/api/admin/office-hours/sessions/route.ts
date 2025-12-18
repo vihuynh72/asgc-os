@@ -1,0 +1,215 @@
+import { createServerClient } from "@supabase/ssr";
+import { NextResponse, type NextRequest } from "next/server";
+import { z } from "zod";
+
+import { normalizeDateOnlyString } from "@/lib/dateOnly";
+import { getPublicEnv } from "@/lib/env";
+import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
+
+export const runtime = "nodejs";
+
+const DateStringSchema = z
+  .string()
+  .transform((s) => normalizeDateOnlyString(s))
+  .refine((s): s is string => typeof s === "string", { message: "invalid_date" });
+
+const QuerySchema = z.object({
+  startDate: DateStringSchema,
+  endDate: DateStringSchema,
+  userId: z.string().uuid().optional(),
+  status: z.string().optional(),
+  limit: z.string().optional(),
+});
+
+type OfficeDateBoundsRow = {
+  start_date: string;
+  end_date: string;
+  start_ts: string;
+  end_ts: string;
+  tz: string;
+};
+
+type OfficeHourSessionRow = {
+  id: string;
+  user_id: string;
+  office_location_id: string | null;
+  checkin_at: string;
+  checkout_at: string | null;
+  status: string;
+  within_radius: boolean | null;
+  within_grace: boolean | null;
+  distance_m_at_checkin: number | null;
+  distance_m_at_checkout: number | null;
+  created_at: string;
+  updated_at: string;
+};
+
+async function isAdminForRequest(
+  request: NextRequest,
+): Promise<
+  | { ok: true; userId: string; supabase: ReturnType<typeof createServerClient> }
+  | { ok: false; response: NextResponse }
+> {
+  const env = getPublicEnv();
+
+  const supabase = createServerClient(env.NEXT_PUBLIC_SUPABASE_URL, env.NEXT_PUBLIC_SUPABASE_ANON_KEY, {
+    cookies: {
+      getAll() {
+        return request.cookies.getAll();
+      },
+      setAll() {
+        // No-op: admin endpoints don't need to refresh auth cookies.
+      },
+    },
+  });
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { ok: false, response: NextResponse.json({ error: "unauthorized" }, { status: 401 }) };
+  }
+
+  const { data: isAdmin, error: adminErr } = await supabase.rpc("is_admin", { _uid: user.id });
+  if (adminErr || !isAdmin) {
+    return { ok: false, response: NextResponse.json({ error: "forbidden" }, { status: 403 }) };
+  }
+
+  return { ok: true, userId: user.id, supabase };
+}
+
+function clampLimit(raw: string | undefined): number {
+  const n = raw ? Number(raw) : 2000;
+  if (!Number.isFinite(n)) return 2000;
+  return Math.max(1, Math.min(5000, Math.floor(n)));
+}
+
+function computeDurationMinutes(checkinAtIso: string, checkoutAtIso: string | null): number | null {
+  if (!checkoutAtIso) return null;
+  const start = Date.parse(checkinAtIso);
+  const end = Date.parse(checkoutAtIso);
+  if (Number.isNaN(start) || Number.isNaN(end)) return null;
+  return Math.max(Math.round((end - start) / 60000), 0);
+}
+
+export async function GET(request: NextRequest) {
+  const authz = await isAdminForRequest(request);
+  if (!authz.ok) return authz.response;
+
+  const parsed = QuerySchema.safeParse({
+    startDate: request.nextUrl.searchParams.get("startDate"),
+    endDate: request.nextUrl.searchParams.get("endDate"),
+    userId: request.nextUrl.searchParams.get("userId") ?? undefined,
+    status: request.nextUrl.searchParams.get("status") ?? undefined,
+    limit: request.nextUrl.searchParams.get("limit") ?? undefined,
+  });
+
+  if (!parsed.success) {
+    const message = parsed.error.issues[0]?.message || "invalid_request";
+    return NextResponse.json({ error: message }, { status: 400 });
+  }
+
+  const { startDate, endDate, userId, status, limit } = parsed.data;
+  if (Date.parse(`${endDate}T00:00:00Z`) <= Date.parse(`${startDate}T00:00:00Z`)) {
+    return NextResponse.json({ error: "invalid_date_range" }, { status: 400 });
+  }
+
+  const allowedStatuses = new Set(["open", "closed", "auto_closed", "voided"]);
+  const statuses = (status ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  for (const s of statuses) {
+    if (!allowedStatuses.has(s)) {
+      return NextResponse.json({ error: "invalid_status" }, { status: 400 });
+    }
+  }
+
+  const boundsRes = await authz.supabase.rpc("office_date_bounds", { _start_date: startDate, _end_date: endDate });
+  if (boundsRes.error) {
+    return NextResponse.json({ error: boundsRes.error.message }, { status: 500 });
+  }
+
+  const boundsRow = Array.isArray(boundsRes.data) ? (boundsRes.data[0] as OfficeDateBoundsRow | undefined) : undefined;
+  if (!boundsRow?.start_ts || !boundsRow.end_ts || !boundsRow.tz) {
+    return NextResponse.json({ error: "failed_to_resolve_bounds" }, { status: 500 });
+  }
+
+  const admin = getSupabaseAdminClient();
+  const max = clampLimit(limit);
+
+  let query = admin
+    .from("office_hour_sessions")
+    .select(
+      "id,user_id,office_location_id,checkin_at,checkout_at,status,within_radius,within_grace,distance_m_at_checkin,distance_m_at_checkout,created_at,updated_at",
+    )
+    .gte("checkin_at", boundsRow.start_ts)
+    .lt("checkin_at", boundsRow.end_ts)
+    .order("checkin_at", { ascending: true })
+    .limit(max);
+
+  if (userId) query = query.eq("user_id", userId);
+  if (statuses.length > 0) query = query.in("status", statuses);
+
+  const { data: rawSessions, error: sessionsErr } = await query;
+  if (sessionsErr) return NextResponse.json({ error: sessionsErr.message }, { status: 500 });
+
+  const sessions = ((rawSessions ?? []) as OfficeHourSessionRow[]) || [];
+
+  const userIds = Array.from(new Set(sessions.map((s) => s.user_id)));
+  const officeLocationIds = Array.from(
+    new Set(sessions.map((s) => s.office_location_id).filter((id): id is string => typeof id === "string" && id.length > 0)),
+  );
+
+  const [{ data: profiles }, { data: privates }, { data: locations }] = await Promise.all([
+    admin
+      .from("profiles")
+      .select("id,display_name")
+      .in("id", userIds.length > 0 ? userIds : ["00000000-0000-0000-0000-000000000000"]),
+    admin
+      .from("profile_private")
+      .select("id,email")
+      .in("id", userIds.length > 0 ? userIds : ["00000000-0000-0000-0000-000000000000"]),
+    admin
+      .from("office_locations")
+      .select("id,name,timezone")
+      .in("id", officeLocationIds.length > 0 ? officeLocationIds : ["00000000-0000-0000-0000-000000000000"]),
+  ]);
+
+  const displayNameById = new Map<string, string>();
+  for (const p of profiles ?? []) {
+    const row = p as { id: string; display_name: string | null };
+    displayNameById.set(row.id, row.display_name ?? "");
+  }
+
+  const emailById = new Map<string, string>();
+  for (const p of privates ?? []) {
+    const row = p as { id: string; email: string | null };
+    emailById.set(row.id, row.email ?? "");
+  }
+
+  const locationById = new Map<string, { name: string; timezone: string }>();
+  for (const l of locations ?? []) {
+    const row = l as { id: string; name: string; timezone: string | null };
+    locationById.set(row.id, { name: row.name, timezone: row.timezone ?? "" });
+  }
+
+  const enriched = sessions.map((s) => ({
+    ...s,
+    duration_minutes: computeDurationMinutes(s.checkin_at, s.checkout_at),
+    user_display_name: displayNameById.get(s.user_id) ?? "",
+    user_email: emailById.get(s.user_id) ?? "",
+    office_location_name: s.office_location_id ? (locationById.get(s.office_location_id)?.name ?? "") : "",
+    office_location_timezone: s.office_location_id ? (locationById.get(s.office_location_id)?.timezone ?? "") : "",
+  }));
+
+  return NextResponse.json({
+    tz: boundsRow.tz,
+    startDate: boundsRow.start_date,
+    endDate: boundsRow.end_date,
+    startTs: boundsRow.start_ts,
+    endTs: boundsRow.end_ts,
+    sessions: enriched,
+  });
+}

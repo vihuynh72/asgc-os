@@ -3,7 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
 import { getPublicEnv } from "@/lib/env";
-import { allowlistKeysForNormalizedEmail, normalizeEmail } from "@/lib/invitesAllowlist";
+import { normalizeEmail } from "@/lib/invitesAllowlist";
 import { POST_AUTH_REDIRECT_COOKIE, safePostAuthRedirectPath, safeRedirectPathOrNull } from "@/lib/redirects";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 
@@ -47,21 +47,13 @@ export async function POST(request: NextRequest) {
   // If not allowlisted, we respond with a generic ok.
   const admin = getSupabaseAdminClient();
 
-  const allowlistKeys = allowlistKeysForNormalizedEmail(email);
-
-  const { data: allowlistedRows, error: allowlistError } = await admin
-    .from("invites_allowlist")
-    .select("id")
-    .in("email_normalized", allowlistKeys)
-    .eq("is_active", true)
-    .limit(1);
+  const { data: allowlisted, error: allowlistError } = await admin.rpc("is_email_allowlisted", { _email: email });
 
   if (allowlistError) {
-    console.error("[auth] allowlist lookup failed", { message: allowlistError.message });
+    console.error("[auth] is_email_allowlisted failed", { message: allowlistError.message });
     return NextResponse.json({ ok: false }, { status: 500 });
   }
 
-  const allowlisted = Array.isArray(allowlistedRows) && allowlistedRows.length > 0;
   if (!allowlisted) {
     return response;
   }

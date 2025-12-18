@@ -2,7 +2,7 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
 import { getPublicEnv } from "@/lib/env";
-import { allowlistKeysForNormalizedEmail, normalizeEmail } from "@/lib/invitesAllowlist";
+import { normalizeEmail } from "@/lib/invitesAllowlist";
 import { POST_AUTH_REDIRECT_COOKIE, safePostAuthRedirectPath, safeRedirectPathOrNull } from "@/lib/redirects";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 
@@ -69,21 +69,13 @@ export async function GET(request: NextRequest) {
 
     try {
       const admin = getSupabaseAdminClient();
-      const allowlistKeys = allowlistKeysForNormalizedEmail(email);
-
-      const { data: allowlistedRows, error: allowlistError } = await admin
-        .from("invites_allowlist")
-        .select("id")
-        .in("email_normalized", allowlistKeys)
-        .eq("is_active", true)
-        .limit(1);
+      const { data: allowlisted, error: allowlistError } = await admin.rpc("is_email_allowlisted", { _email: email });
 
       if (allowlistError) {
-        console.error("[auth] allowlist lookup failed", { message: allowlistError.message });
+        console.error("[auth] is_email_allowlisted failed", { message: allowlistError.message });
         return signOutAndRedirect("server_error");
       }
 
-      const allowlisted = Array.isArray(allowlistedRows) && allowlistedRows.length > 0;
       if (!allowlisted) {
         return signOutAndRedirect("not_allowlisted");
       }

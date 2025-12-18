@@ -4,6 +4,8 @@ import type { ChangeEvent } from "react";
 import { useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { addDaysDateOnly, normalizeDateOnlyString, startOfWeekMondayDateOnly, todayDateString } from "@/lib/dateOnly";
+import { allowlistKeysForNormalizedEmail } from "@/lib/invitesAllowlist";
 
 type TermRow = {
   id: string;
@@ -65,11 +67,46 @@ type InviteAllowlistRow = {
   id: string;
   email: string;
   email_normalized: string;
+  sort_order: number;
   is_active: boolean;
   invited_by: string | null;
   invited_at: string;
   revoked_at: string | null;
   notes: string | null;
+};
+
+type InviteBlocklistRow = {
+  id: string;
+  pattern: string;
+  pattern_normalized: string;
+  is_active: boolean;
+  banned_by: string | null;
+  banned_at: string;
+  unbanned_at: string | null;
+  notes: string | null;
+};
+
+type BootstrapRoleGrantRow = {
+  id: string;
+  email: string;
+  email_normalized: string;
+  role_key: RoleKey;
+  term_id: string | null;
+  is_active: boolean;
+  consumed_at: string | null;
+  created_at: string;
+  notes: string | null;
+};
+
+type AdminWeeklyHoursPreviewRow = {
+  user_id: string;
+  week_start: string;
+  display_name: string;
+  email: string;
+  total_minutes: number | string;
+  in_office_minutes: number | string;
+  deficit_minutes: number | string;
+  deficit_in_office_minutes: number | string;
 };
 
 const ROLE_OPTIONS: Array<{ key: RoleKey; label: string; scope: "global" | "term" }> = [
@@ -80,6 +117,15 @@ const ROLE_OPTIONS: Array<{ key: RoleKey; label: string; scope: "global" | "term
   { key: "board_member", label: "Board member (term)", scope: "term" },
   { key: "volunteer", label: "Volunteer (term)", scope: "term" },
 ];
+
+const ROLE_LABEL_BY_KEY: Record<RoleKey, string> = {
+  advisor: "Advisor",
+  president: "President",
+  executive: "Executive",
+  director: "Director",
+  board_member: "Board member",
+  volunteer: "Volunteer",
+};
 
 function formatUserLabel(u: UserRow) {
   const primary = u.display_name?.trim() || u.email?.trim() || u.id;
@@ -104,6 +150,70 @@ function parseOptionalNumber(raw: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+function formatMinutes(totalMinutes: number): string {
+  const minutes = Math.max(0, Math.round(totalMinutes));
+  const hoursPart = Math.floor(minutes / 60);
+  const minutesPart = minutes % 60;
+  return `${hoursPart}h ${minutesPart}m`;
+}
+
+function parseMinutesValue(value: number | string | null | undefined): number | null {
+  if (value === null || value === undefined) return null;
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function formatMinutesValue(value: number | string | null | undefined): string {
+  const n = parseMinutesValue(value);
+  return n === null ? "—" : formatMinutes(n);
+}
+
+type BulkInviteCandidate = { email: string; notes?: string };
+
+function stripOuterQuotes(raw: string): string {
+  const s = raw.trim();
+  if (s.length >= 2 && ((s.startsWith("\"") && s.endsWith("\"")) || (s.startsWith("'") && s.endsWith("'")))) {
+    return s.slice(1, -1).trim();
+  }
+  return s;
+}
+
+function parseBulkInvites(raw: string): BulkInviteCandidate[] {
+  const emailRegex = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i;
+
+  const parts = raw
+    .replaceAll("\r\n", "\n")
+    .replaceAll("\r", "\n")
+    .split(/[;\n]/g)
+    .map((p) => p.trim())
+    .filter(Boolean);
+
+  const out: BulkInviteCandidate[] = [];
+
+  for (const part of parts) {
+    const angleMatch = part.match(/<([^>]+)>/);
+    const emailRaw = (angleMatch?.[1] ?? part.match(emailRegex)?.[0] ?? "").trim();
+    if (!emailRaw) continue;
+
+    const nameRaw = angleMatch ? part.slice(0, angleMatch.index ?? 0) : part.replace(emailRaw, "");
+    const name = stripOuterQuotes(nameRaw);
+
+    out.push({
+      email: emailRaw,
+      notes: name && !name.includes("@") ? name : undefined,
+    });
+  }
+
+  const seen = new Set<string>();
+  return out.filter((r) => {
+    const key = r.email.trim().toLowerCase();
+    if (!key) return false;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 export function AdminPanel({
   initialTerms,
   initialUsers,
@@ -111,6 +221,8 @@ export function AdminPanel({
   initialGlobalAdvisorAssignments,
   initialTermAssignments,
   initialInvitesAllowlist,
+  initialInvitesBlocklist,
+  initialBootstrapRoleGrants,
   initialOfficeLocation,
   initialOfficeConfig,
   initialOfficeHourRequirements,
@@ -121,6 +233,8 @@ export function AdminPanel({
   initialGlobalAdvisorAssignments: AssignmentRow[];
   initialTermAssignments: AssignmentRow[];
   initialInvitesAllowlist: InviteAllowlistRow[];
+  initialInvitesBlocklist: InviteBlocklistRow[];
+  initialBootstrapRoleGrants: BootstrapRoleGrantRow[];
   initialOfficeLocation: OfficeLocationRow | null;
   initialOfficeConfig: OfficeConfigRow | null;
   initialOfficeHourRequirements: OfficeHourRequirementRow[];
@@ -128,6 +242,7 @@ export function AdminPanel({
   const [terms, setTerms] = useState<TermRow[]>(initialTerms);
   const [users, setUsers] = useState<UserRow[]>(initialUsers);
   const [selectedTermId, setSelectedTermId] = useState<string>(initialSelectedTermId);
+  const [adminTab, setAdminTab] = useState<"access" | "office_hours" | "roles" | "meetings">("access");
 
   const [globalAdvisorAssignments, setGlobalAdvisorAssignments] = useState<AssignmentRow[]>(
     initialGlobalAdvisorAssignments,
@@ -135,11 +250,29 @@ export function AdminPanel({
   const [termAssignments, setTermAssignments] = useState<AssignmentRow[]>(initialTermAssignments);
 
   const [invitesAllowlist, setInvitesAllowlist] = useState<InviteAllowlistRow[]>(initialInvitesAllowlist);
+  const [invitesBlocklist, setInvitesBlocklist] = useState<InviteBlocklistRow[]>(initialInvitesBlocklist);
+  const [bootstrapRoleGrants, setBootstrapRoleGrants] = useState<BootstrapRoleGrantRow[]>(initialBootstrapRoleGrants);
   const [newInviteEmail, setNewInviteEmail] = useState<string>("");
   const [newInviteNotes, setNewInviteNotes] = useState<string>("");
+  const [bulkInviteText, setBulkInviteText] = useState<string>("");
+  const [inviteNotesDraftById, setInviteNotesDraftById] = useState<Record<string, string>>({});
+  const [inviteSearch, setInviteSearch] = useState<string>("");
+  const [showInactiveInvites, setShowInactiveInvites] = useState<boolean>(false);
+  const [selectedInviteIds, setSelectedInviteIds] = useState<Record<string, boolean>>({});
+  const [roleGrantInviteId, setRoleGrantInviteId] = useState<string | null>(null);
+  const [roleGrantRoleKey, setRoleGrantRoleKey] = useState<RoleKey>("volunteer");
+  const [roleGrantTermId, setRoleGrantTermId] = useState<string>(initialSelectedTermId);
+  function onSelectAdminTab(nextTab: typeof adminTab) {
+    if (nextTab !== "access") setRoleGrantInviteId(null);
+    setAdminTab(nextTab);
+  }
+
+  const [newBanPattern, setNewBanPattern] = useState<string>("");
+  const [newBanNotes, setNewBanNotes] = useState<string>("");
 
   const [selectedUserId, setSelectedUserId] = useState<string>("");
   const [selectedRoleKey, setSelectedRoleKey] = useState<RoleKey>("volunteer");
+  const [userSearch, setUserSearch] = useState<string>("");
 
   const [newTermName, setNewTermName] = useState<string>("");
   const [newTermStart, setNewTermStart] = useState<string>("");
@@ -158,7 +291,8 @@ export function AdminPanel({
     initialOfficeHourRequirements,
   );
 
-  const [exportWeekStart, setExportWeekStart] = useState<string>("");
+  const [exportWeekStart, setExportWeekStart] = useState<string>(() => todayDateString());
+  const [exportPreviewRows, setExportPreviewRows] = useState<AdminWeeklyHoursPreviewRow[] | null>(null);
 
   const [shiftUserId, setShiftUserId] = useState<string>("");
   const [shiftStartsAtLocal, setShiftStartsAtLocal] = useState<string>("");
@@ -282,14 +416,134 @@ export function AdminPanel({
     return m;
   }, [users]);
 
+  const usersForRolePicker = useMemo(() => {
+    const q = userSearch.trim().toLowerCase();
+    if (!q) return users;
+    return users.filter((u) => {
+      const hay = `${u.display_name ?? ""} ${u.email ?? ""} ${u.id}`.toLowerCase();
+      return hay.includes(q);
+    });
+  }, [userSearch, users]);
+
+  const activeBanKeys = useMemo(() => {
+    const s = new Set<string>();
+    for (const b of invitesBlocklist) {
+      if (b.is_active) s.add(b.pattern_normalized);
+    }
+    return s;
+  }, [invitesBlocklist]);
+
+  const termNameById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const t of terms) {
+      m.set(t.id, t.name);
+    }
+    return m;
+  }, [terms]);
+
+  const bootstrapGrantsByEmail = useMemo(() => {
+    const m = new Map<string, BootstrapRoleGrantRow[]>();
+    for (const g of bootstrapRoleGrants) {
+      if (!g.is_active) continue;
+      if (g.consumed_at) continue;
+      const key = g.email_normalized;
+      if (!key) continue;
+      const arr = m.get(key);
+      if (arr) arr.push(g);
+      else m.set(key, [g]);
+    }
+
+    for (const arr of m.values()) {
+      arr.sort((a, b) => {
+        const ak = String(a.role_key ?? "");
+        const bk = String(b.role_key ?? "");
+        if (ak !== bk) return ak.localeCompare(bk);
+        const at = a.term_id ?? "";
+        const bt = b.term_id ?? "";
+        return at.localeCompare(bt);
+      });
+    }
+
+    return m;
+  }, [bootstrapRoleGrants]);
+
+  const filteredInvites = useMemo(() => {
+    const q = inviteSearch.trim().toLowerCase();
+    return invitesAllowlist.filter((inv) => {
+      if (!showInactiveInvites && !inv.is_active) return false;
+      if (!q) return true;
+      const hay = `${inv.email} ${inv.notes ?? ""}`.toLowerCase();
+      return hay.includes(q);
+    });
+  }, [invitesAllowlist, inviteSearch, showInactiveInvites]);
+
+  const selectedInvites = useMemo(
+    () => invitesAllowlist.filter((inv) => Boolean(selectedInviteIds[inv.id])),
+    [invitesAllowlist, selectedInviteIds],
+  );
+
+  const allFilteredInvitesSelected = useMemo(
+    () => filteredInvites.length > 0 && filteredInvites.every((inv) => Boolean(selectedInviteIds[inv.id])),
+    [filteredInvites, selectedInviteIds],
+  );
+
+  function isInviteBlocked(inv: InviteAllowlistRow): boolean {
+    const normalized = inv.email_normalized;
+    if (!normalized) return false;
+    if (normalized.startsWith("@")) return activeBanKeys.has(normalized);
+    const keys = allowlistKeysForNormalizedEmail(normalized);
+    return keys.some((k) => activeBanKeys.has(k));
+  }
+
   const selectedRole = useMemo(
     () => ROLE_OPTIONS.find((r) => r.key === selectedRoleKey) ?? ROLE_OPTIONS[0],
     [selectedRoleKey],
   );
 
+  const exportWeekStartResolved = useMemo(
+    () => startOfWeekMondayDateOnly(exportWeekStart) ?? startOfWeekMondayDateOnly(todayDateString()),
+    [exportWeekStart],
+  );
+
   function downloadWeeklyHoursCsv() {
-    const qs = exportWeekStart.trim() ? `?weekStart=${encodeURIComponent(exportWeekStart.trim())}` : "";
+    const weekStart = startOfWeekMondayDateOnly(exportWeekStart) ?? startOfWeekMondayDateOnly(todayDateString());
+    const qs = weekStart ? `?weekStart=${encodeURIComponent(weekStart)}` : "";
     window.location.href = `/api/admin/office-hours/export-week${qs}`;
+  }
+
+  function openWeeklyHoursCsvInline() {
+    const weekStart = startOfWeekMondayDateOnly(exportWeekStart) ?? startOfWeekMondayDateOnly(todayDateString());
+    const qs = weekStart
+      ? `?weekStart=${encodeURIComponent(weekStart)}&disposition=inline`
+      : "?disposition=inline";
+    window.open(`/api/admin/office-hours/export-week${qs}`, "_blank", "noopener,noreferrer");
+  }
+
+  function openWeeklyHoursPreviewPage() {
+    const weekStart = startOfWeekMondayDateOnly(exportWeekStart) ?? startOfWeekMondayDateOnly(todayDateString());
+    const qs = weekStart ? `?weekStart=${encodeURIComponent(weekStart)}` : "";
+    window.location.assign(`/admin/office-hours/export${qs}`);
+  }
+
+  async function previewWeeklyHours() {
+    setStatus("Loading preview...");
+    try {
+      const weekStart = startOfWeekMondayDateOnly(exportWeekStart) ?? startOfWeekMondayDateOnly(todayDateString());
+      const qs = weekStart ? `?weekStart=${encodeURIComponent(weekStart)}&format=json` : "?format=json";
+
+      const data = await fetchJson<{ weekStart: string; rows: AdminWeeklyHoursPreviewRow[] }>(
+        `/api/admin/office-hours/export-week${qs}`,
+      );
+
+      setExportPreviewRows(data.rows ?? []);
+      setStatus("");
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : "Failed to load preview");
+    }
+  }
+
+  function clearWeeklyHoursPreview() {
+    setExportPreviewRows(null);
   }
 
   async function onCreateShift() {
@@ -407,9 +661,95 @@ export function AdminPanel({
     try {
       const data = await fetchJson<{ invites: InviteAllowlistRow[] }>("/api/admin/invites-allowlist");
       setInvitesAllowlist(data.invites ?? []);
+      setInviteNotesDraftById({});
+      setSelectedInviteIds({});
       setStatus("");
     } catch (e) {
       setStatus(e instanceof Error ? e.message : "Failed to load invites allowlist");
+    }
+  }
+
+  async function loadInvitesBlocklist() {
+    setStatus("Loading invite bans...");
+    try {
+      const data = await fetchJson<{ bans: InviteBlocklistRow[] }>("/api/admin/invites-blocklist");
+      setInvitesBlocklist(data.bans ?? []);
+      setStatus("");
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : "Failed to load invite bans");
+    }
+  }
+
+  async function loadBootstrapRoleGrants() {
+    setStatus("Loading role grants...");
+    try {
+      const data = await fetchJson<{ grants: BootstrapRoleGrantRow[] }>("/api/admin/bootstrap-role-grants?limit=1000");
+      setBootstrapRoleGrants(data.grants ?? []);
+      setStatus("");
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : "Failed to load role grants");
+    }
+  }
+
+  function openRoleGrantModal(invite: InviteAllowlistRow) {
+    if (!invite.email_normalized || invite.email_normalized.startsWith("@")) return;
+    setRoleGrantInviteId(invite.id);
+    setRoleGrantRoleKey("volunteer");
+    setRoleGrantTermId(selectedTermId);
+  }
+
+  function closeRoleGrantModal() {
+    setRoleGrantInviteId(null);
+  }
+
+  async function onGrantRoleForInvite(invite: InviteAllowlistRow) {
+    const normalized = invite.email_normalized;
+    if (!normalized || normalized.startsWith("@")) {
+      setStatus("Role grants require an exact email (not a domain).");
+      return;
+    }
+
+    const roleKey = roleGrantRoleKey;
+    const scope = ROLE_OPTIONS.find((r) => r.key === roleKey)?.scope ?? "term";
+    const termId = scope === "term" ? (roleGrantTermId || selectedTermId) : null;
+
+    if (scope === "term" && !termId) {
+      setStatus("Select a term to grant this role.");
+      return;
+    }
+
+    setStatus("Granting role...");
+    try {
+      const data = await fetchJson<{ grant: BootstrapRoleGrantRow }>("/api/admin/bootstrap-role-grants", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: normalized,
+          roleKey,
+          termId: scope === "term" ? termId : null,
+        }),
+      });
+
+      setBootstrapRoleGrants((prev) => [data.grant, ...prev.filter((g) => g.id !== data.grant.id)]);
+      setStatus("");
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : "Failed to grant role");
+    }
+  }
+
+  async function onRevokeRoleGrant(grant: BootstrapRoleGrantRow) {
+    setStatus("Revoking role grant...");
+    try {
+      await fetchJson<{ grant: BootstrapRoleGrantRow }>("/api/admin/bootstrap-role-grants", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: grant.id, is_active: false }),
+      });
+
+      setBootstrapRoleGrants((prev) => prev.filter((g) => g.id !== grant.id));
+      setStatus("");
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : "Failed to revoke role grant");
     }
   }
 
@@ -429,11 +769,73 @@ export function AdminPanel({
       });
 
       setInvitesAllowlist((prev) => [data.invite, ...prev.filter((r) => r.id !== data.invite.id)]);
+      setInviteNotesDraftById({});
       setNewInviteEmail("");
       setNewInviteNotes("");
       setStatus("Invite added.");
     } catch (e) {
       setStatus(e instanceof Error ? e.message : "Failed to add invite");
+    }
+  }
+
+  async function onDeleteInvite(invite: InviteAllowlistRow) {
+    const ok = window.confirm(`Delete allowlist entry for "${invite.email}"?\n\nThis permanently removes it.`);
+    if (!ok) return;
+
+    setStatus("Deleting allowlist entry...");
+    try {
+      await fetchJson<{ ok: true }>("/api/admin/invites-allowlist", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: invite.id }),
+      });
+
+      setInvitesAllowlist((prev) => prev.filter((r) => r.id !== invite.id));
+      setInviteNotesDraftById((prev) => {
+        if (!(invite.id in prev)) return prev;
+        const next = { ...prev };
+        delete next[invite.id];
+        return next;
+      });
+      setStatus("");
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : "Failed to delete allowlist entry");
+    }
+  }
+
+  async function onMoveInvite(invite: InviteAllowlistRow, direction: "up" | "down") {
+    setStatus(direction === "up" ? "Moving up..." : "Moving down...");
+    try {
+      await fetchJson<{ ok: true }>("/api/admin/invites-allowlist/reorder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: invite.id, direction, activeOnly: !showInactiveInvites }),
+      });
+      await loadInvitesAllowlist();
+      setStatus("");
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : "Failed to reorder allowlist");
+    }
+  }
+
+  async function onBanInvite(invite: InviteAllowlistRow) {
+    const ok = window.confirm(
+      `Ban "${invite.email}"?\n\nThis overrides any allowlist domain entry and blocks sign-in for this pattern.`,
+    );
+    if (!ok) return;
+
+    setStatus("Creating ban...");
+    try {
+      const data = await fetchJson<{ ban: InviteBlocklistRow }>("/api/admin/invites-blocklist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pattern: invite.email }),
+      });
+
+      setInvitesBlocklist((prev) => [data.ban, ...prev.filter((r) => r.id !== data.ban.id)]);
+      setStatus("");
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : "Failed to ban pattern");
     }
   }
 
@@ -447,10 +849,278 @@ export function AdminPanel({
       });
 
       setInvitesAllowlist((prev) => prev.map((r) => (r.id === invite.id ? data.invite : r)));
-      setStatus("");
+      setInviteNotesDraftById((prev) => {
+        if (!(invite.id in prev)) return prev;
+        const next = { ...prev };
+        delete next[invite.id];
+        return next;
+      });
+      if (!isActive && !showInactiveInvites) {
+        setStatus("Revoked. Turn on “Show inactive” to view revoked entries.");
+      } else {
+        setStatus("");
+      }
     } catch (e) {
       setStatus(e instanceof Error ? e.message : "Failed to update invite");
     }
+  }
+
+  async function onUpdateInviteNotes(invite: InviteAllowlistRow) {
+    const draft = inviteNotesDraftById[invite.id] ?? invite.notes ?? "";
+    const normalized = draft.trim().length > 0 ? draft.trim() : null;
+
+    setStatus("Saving name...");
+    try {
+      const data = await fetchJson<{ invite: InviteAllowlistRow }>("/api/admin/invites-allowlist", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: invite.id, is_active: invite.is_active, notes: normalized }),
+      });
+
+      setInvitesAllowlist((prev) => prev.map((r) => (r.id === invite.id ? data.invite : r)));
+      setInviteNotesDraftById((prev) => {
+        const next = { ...prev };
+        delete next[invite.id];
+        return next;
+      });
+      setStatus("");
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : "Failed to save name");
+    }
+  }
+
+  function setInviteSelected(inviteId: string, isSelected: boolean) {
+    setSelectedInviteIds((prev) => {
+      const next = { ...prev };
+      if (isSelected) next[inviteId] = true;
+      else delete next[inviteId];
+      return next;
+    });
+  }
+
+  function setAllFilteredInvitesSelected(isSelected: boolean) {
+    setSelectedInviteIds((prev) => {
+      const next = { ...prev };
+      for (const inv of filteredInvites) {
+        if (isSelected) next[inv.id] = true;
+        else delete next[inv.id];
+      }
+      return next;
+    });
+  }
+
+  async function onCopySelectedInviteEmails() {
+    if (selectedInvites.length === 0) return;
+    try {
+      await navigator.clipboard.writeText(selectedInvites.map((inv) => inv.email).join("\n"));
+      setStatus(`Copied ${selectedInvites.length} email${selectedInvites.length === 1 ? "" : "s"} to clipboard.`);
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : "Failed to copy to clipboard");
+    }
+  }
+
+  async function onBulkSetInviteActive(isActive: boolean) {
+    if (selectedInvites.length === 0) return;
+
+    const verb = isActive ? "Reactivate" : "Revoke";
+    const ok = window.confirm(`${verb} ${selectedInvites.length} allowlist entr${selectedInvites.length === 1 ? "y" : "ies"}?`);
+    if (!ok) return;
+
+    setStatus(`${verb} in progress...`);
+    try {
+      const updated: InviteAllowlistRow[] = [];
+      for (let i = 0; i < selectedInvites.length; i += 1) {
+        const inv = selectedInvites[i];
+        setStatus(`${verb} ${i + 1}/${selectedInvites.length}...`);
+        const data = await fetchJson<{ invite: InviteAllowlistRow }>("/api/admin/invites-allowlist", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: inv.id, is_active: isActive }),
+        });
+        updated.push(data.invite);
+      }
+
+      const byId = new Map(updated.map((x) => [x.id, x]));
+      setInvitesAllowlist((prev) => prev.map((r) => byId.get(r.id) ?? r));
+      setInviteNotesDraftById((prev) => {
+        const next = { ...prev };
+        for (const inv of selectedInvites) delete next[inv.id];
+        return next;
+      });
+      setSelectedInviteIds({});
+
+      if (!isActive && !showInactiveInvites) {
+        setStatus(`Revoked ${updated.length}. Turn on “Show inactive” to view revoked entries.`);
+      } else {
+        setStatus(`${verb}d ${updated.length}.`);
+      }
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : `Failed to ${verb.toLowerCase()} invites`);
+    }
+  }
+
+  async function onBulkBanInvites() {
+    if (selectedInvites.length === 0) return;
+    const ok = window.confirm(
+      `Ban ${selectedInvites.length} pattern${selectedInvites.length === 1 ? "" : "s"}?\n\nThis overrides any allowlist entries and blocks sign-in for these patterns.`,
+    );
+    if (!ok) return;
+
+    setStatus("Banning...");
+    try {
+      const created: InviteBlocklistRow[] = [];
+      for (let i = 0; i < selectedInvites.length; i += 1) {
+        const inv = selectedInvites[i];
+        setStatus(`Banning ${i + 1}/${selectedInvites.length}...`);
+        const data = await fetchJson<{ ban: InviteBlocklistRow }>("/api/admin/invites-blocklist", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pattern: inv.email }),
+        });
+        created.push(data.ban);
+      }
+
+      setInvitesBlocklist((prev) => {
+        const seen = new Set(prev.map((b) => b.id));
+        const next = [...prev];
+        for (const b of created) {
+          if (seen.has(b.id)) continue;
+          seen.add(b.id);
+          next.unshift(b);
+        }
+        return next;
+      });
+      setStatus(`Banned ${created.length}.`);
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : "Failed to ban patterns");
+    }
+  }
+
+  async function onBulkDeleteInvites() {
+    if (selectedInvites.length === 0) return;
+    const ok = window.confirm(
+      `Delete ${selectedInvites.length} allowlist entr${selectedInvites.length === 1 ? "y" : "ies"}?\n\nThis permanently removes them.`,
+    );
+    if (!ok) return;
+
+    setStatus("Deleting...");
+    try {
+      for (let i = 0; i < selectedInvites.length; i += 1) {
+        const inv = selectedInvites[i];
+        setStatus(`Deleting ${i + 1}/${selectedInvites.length}...`);
+        await fetchJson<{ ok: true }>("/api/admin/invites-allowlist", {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: inv.id }),
+        });
+      }
+
+      const deletedIds = new Set(selectedInvites.map((x) => x.id));
+      setInvitesAllowlist((prev) => prev.filter((r) => !deletedIds.has(r.id)));
+      setInviteNotesDraftById((prev) => {
+        const next = { ...prev };
+        for (const inv of selectedInvites) delete next[inv.id];
+        return next;
+      });
+      setSelectedInviteIds({});
+      setStatus(`Deleted ${deletedIds.size}.`);
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : "Failed to delete allowlist entries");
+    }
+  }
+
+  async function onAddBan() {
+    const pattern = newBanPattern.trim();
+    if (!pattern) return;
+
+    setStatus("Adding ban...");
+    try {
+      const data = await fetchJson<{ ban: InviteBlocklistRow }>("/api/admin/invites-blocklist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pattern,
+          notes: newBanNotes.trim().length > 0 ? newBanNotes.trim() : undefined,
+        }),
+      });
+
+      setInvitesBlocklist((prev) => [data.ban, ...prev.filter((r) => r.id !== data.ban.id)]);
+      setNewBanPattern("");
+      setNewBanNotes("");
+      setStatus("");
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : "Failed to add ban");
+    }
+  }
+
+  async function onSetBanActive(ban: InviteBlocklistRow, isActive: boolean) {
+    setStatus(isActive ? "Re-activating ban..." : "Disabling ban...");
+    try {
+      const data = await fetchJson<{ ban: InviteBlocklistRow }>("/api/admin/invites-blocklist", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: ban.id, is_active: isActive }),
+      });
+
+      setInvitesBlocklist((prev) => prev.map((r) => (r.id === ban.id ? data.ban : r)));
+      setStatus("");
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : "Failed to update ban");
+    }
+  }
+
+  async function onDeleteBan(ban: InviteBlocklistRow) {
+    const ok = window.confirm(`Delete ban for "${ban.pattern}"?\n\nThis permanently removes the ban.`);
+    if (!ok) return;
+
+    setStatus("Deleting ban...");
+    try {
+      await fetchJson<{ ok: true }>("/api/admin/invites-blocklist", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: ban.id }),
+      });
+
+      setInvitesBlocklist((prev) => prev.filter((r) => r.id !== ban.id));
+      setStatus("");
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : "Failed to delete ban");
+    }
+  }
+
+  const bulkInvitesPreview = useMemo(() => parseBulkInvites(bulkInviteText), [bulkInviteText]);
+
+  async function onBulkAddInvites() {
+    const candidates = bulkInvitesPreview;
+    if (candidates.length === 0) {
+      setStatus("No emails found to add.");
+      return;
+    }
+
+    setStatus(`Adding ${candidates.length} allowlist entries...`);
+    let ok = 0;
+    let fail = 0;
+
+    for (let i = 0; i < candidates.length; i += 1) {
+      const c = candidates[i];
+      setStatus(`Adding ${i + 1}/${candidates.length}: ${c.email}`);
+      try {
+        const data = await fetchJson<{ invite: InviteAllowlistRow }>("/api/admin/invites-allowlist", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: c.email, notes: c.notes }),
+        });
+
+        ok += 1;
+        setInvitesAllowlist((prev) => [data.invite, ...prev.filter((r) => r.id !== data.invite.id)]);
+      } catch {
+        fail += 1;
+      }
+    }
+
+    setInviteNotesDraftById({});
+    setBulkInviteText("");
+    setStatus(`Bulk add complete: ${ok} added, ${fail} failed.`);
   }
 
   async function onCreateTerm() {
@@ -563,40 +1233,65 @@ export function AdminPanel({
   }, [officeHourRequirements, selectedTermId]);
 
   return (
-    <div className="space-y-10">
+    <div className="space-y-6">
       {status ? (
         <div className="rounded-md border px-3 py-2 text-sm text-foreground/80">
           {status}
         </div>
       ) : null}
 
+      <div className="rounded-md border p-3">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant={adminTab === "access" ? "default" : "outline"} onClick={() => onSelectAdminTab("access")}>
+              Access
+            </Button>
+            <Button
+              variant={adminTab === "office_hours" ? "default" : "outline"}
+              onClick={() => onSelectAdminTab("office_hours")}
+            >
+              Office Hours
+            </Button>
+            <Button variant={adminTab === "roles" ? "default" : "outline"} onClick={() => onSelectAdminTab("roles")}>
+              Roles
+            </Button>
+            <Button variant={adminTab === "meetings" ? "default" : "outline"} onClick={() => onSelectAdminTab("meetings")}>
+              Meetings
+            </Button>
+          </div>
+
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="space-y-1 text-sm">
+              <div className="text-foreground/70">Selected term</div>
+              <select
+                className="h-9 rounded-md border bg-transparent px-2 text-sm"
+                value={selectedTermId}
+                onChange={(e: ChangeEvent<HTMLSelectElement>) => void onSelectTerm(e.target.value)}
+              >
+                {terms.map((t: TermRow) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                    {t.is_current ? " (current)" : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <Button onClick={onSetCurrentTerm} disabled={!selectedTermId || selectedTermId === currentTermId}>
+              Set current
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      {adminTab === "roles" ? (
+        <>
       <section className="space-y-3">
         <div className="space-y-1">
           <h2 className="text-lg font-semibold">Terms</h2>
           <p className="text-sm text-foreground/70">
             Role assignments for term roles are term-scoped.
           </p>
-        </div>
-
-        <div className="flex flex-wrap items-end gap-3">
-          <label className="space-y-1 text-sm">
-            <div className="text-foreground/70">Selected term</div>
-            <select
-              className="h-9 rounded-md border bg-transparent px-2 text-sm"
-              value={selectedTermId}
-              onChange={(e: ChangeEvent<HTMLSelectElement>) => void onSelectTerm(e.target.value)}
-            >
-              {terms.map((t: TermRow) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}{t.is_current ? " (current)" : ""}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <Button onClick={onSetCurrentTerm} disabled={!selectedTermId || selectedTermId === currentTermId}>
-            Set as current
-          </Button>
         </div>
 
         <div className="grid gap-3 md:grid-cols-4">
@@ -637,13 +1332,20 @@ export function AdminPanel({
           </div>
         </div>
       </section>
+        </>
+      ) : null}
 
+      {adminTab === "access" ? (
       <section className="space-y-3">
         <div className="space-y-1">
           <h2 className="text-lg font-semibold">Invites / allowlist</h2>
           <p className="text-sm text-foreground/70">
             Add specific emails (e.g. <span className="font-mono">name@gcccd.edu</span>) or a domain entry (e.g.{" "}
             <span className="font-mono">@gcccd.edu</span> or <span className="font-mono">gcccd.edu</span>) to allow sign-in.
+            Notes are used as the member name for Office Hours exports and the quick Office Hours form.
+          </p>
+          <p className="text-sm text-foreground/70">
+            Pre-login role grants let you assign term roles (President, Executive, Director, etc.) to an invited email before they sign in; grants are consumed on first login.
           </p>
         </div>
 
@@ -659,12 +1361,12 @@ export function AdminPanel({
           </label>
 
           <label className="space-y-1 text-sm">
-            <div className="text-foreground/70">Notes (optional)</div>
+            <div className="text-foreground/70">Member name (optional)</div>
             <input
               className="h-9 w-72 rounded-md border bg-transparent px-2 text-sm"
               value={newInviteNotes}
               onChange={(e: ChangeEvent<HTMLInputElement>) => setNewInviteNotes(e.target.value)}
-              placeholder="e.g., Spring 2026 board"
+              placeholder="e.g., Jane Doe (ASGC VP Finance)"
             />
           </label>
 
@@ -675,53 +1377,433 @@ export function AdminPanel({
           <Button variant="ghost" onClick={() => void loadInvitesAllowlist()}>
             Reload
           </Button>
+
+          <Button variant="ghost" onClick={() => void loadBootstrapRoleGrants()}>
+            Reload roles
+          </Button>
+
+          <label className="space-y-1 text-sm">
+            <div className="text-foreground/70">Search</div>
+            <input
+              className="h-9 w-60 rounded-md border bg-transparent px-2 text-sm"
+              value={inviteSearch}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => setInviteSearch(e.target.value)}
+              placeholder="Filter by email or name…"
+            />
+          </label>
+
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={showInactiveInvites}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => setShowInactiveInvites(e.target.checked)}
+            />
+            <span className="text-foreground/70">Show inactive</span>
+          </label>
+        </div>
+
+        <div className="rounded-md border p-3">
+          <div className="text-sm font-medium">Bulk add members</div>
+          <div className="mt-1 text-xs text-foreground/70">
+            Paste an Outlook-style list like:{" "}
+            <span className="font-mono">&quot;ASGC President&quot; &lt;asgc.president@gcccd.edu&gt;; …</span>
+          </div>
+          <textarea
+            className="mt-2 min-h-28 w-full rounded-md border bg-transparent px-2 py-2 text-sm"
+            value={bulkInviteText}
+            onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setBulkInviteText(e.target.value)}
+            placeholder="Paste here…"
+          />
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <Button onClick={() => void onBulkAddInvites()} disabled={bulkInvitesPreview.length === 0}>
+              Bulk add ({bulkInvitesPreview.length})
+            </Button>
+            <Button variant="ghost" onClick={() => setBulkInviteText("")} disabled={!bulkInviteText.trim()}>
+              Clear
+            </Button>
+            {bulkInviteText.trim().length > 0 ? (
+              <span className="text-xs text-foreground/60">
+                Detected: {bulkInvitesPreview.length} unique email{bulkInvitesPreview.length === 1 ? "" : "s"}
+              </span>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border bg-foreground/5 px-3 py-2">
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={allFilteredInvitesSelected}
+              disabled={filteredInvites.length === 0}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => setAllFilteredInvitesSelected(e.target.checked)}
+            />
+            <span className="text-foreground/70">Select visible</span>
+          </label>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-foreground/60">Selected: {selectedInvites.length}</span>
+            <Button variant="outline" size="sm" onClick={() => void onCopySelectedInviteEmails()} disabled={selectedInvites.length === 0}>
+              Copy emails
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => void onBulkSetInviteActive(false)} disabled={selectedInvites.length === 0}>
+              Revoke
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => void onBulkSetInviteActive(true)} disabled={selectedInvites.length === 0}>
+              Reactivate
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => void onBulkBanInvites()} disabled={selectedInvites.length === 0}>
+              Ban
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => void onBulkDeleteInvites()}
+              disabled={selectedInvites.length === 0}
+              className="text-red-600 hover:bg-red-500/10"
+            >
+              Delete
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => setSelectedInviteIds({})} disabled={selectedInvites.length === 0}>
+              Clear selection
+            </Button>
+          </div>
         </div>
 
         <div className="rounded-md border">
-          {invitesAllowlist.length === 0 ? (
+          {filteredInvites.length === 0 ? (
             <div className="px-3 py-2 text-sm text-foreground/70">No allowlist entries found.</div>
           ) : (
             <div className="divide-y">
-              {invitesAllowlist.map((inv) => (
-                <div key={inv.id} className="flex flex-wrap items-center justify-between gap-3 px-3 py-2">
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-medium">
-                      {inv.email}{" "}
-                      {!inv.is_active ? <span className="text-xs text-foreground/60">(inactive)</span> : null}
-                    </div>
-                    <div className="mt-1 text-xs text-foreground/60">
-                      {inv.notes ? `${inv.notes} • ` : ""}
-                      Invited: {inv.invited_at}
-                      {inv.revoked_at ? ` • Revoked: ${inv.revoked_at}` : ""}
-                    </div>
-                  </div>
+              {filteredInvites.map((inv) => {
+                const isDomain = inv.email_normalized.startsWith("@");
+                const grants = !isDomain ? (bootstrapGrantsByEmail.get(inv.email_normalized) ?? []) : [];
+                const grantLabels = grants.map((g) => {
+                  const roleLabel = ROLE_LABEL_BY_KEY[g.role_key] ?? g.role_key;
+                  const termLabel = g.term_id ? (termNameById.get(g.term_id) ?? g.term_id) : null;
+                  return termLabel ? `${roleLabel} (${termLabel})` : roleLabel;
+                });
+                const rolesSummary = isDomain
+                  ? "Roles: — (domain entry)"
+                  : grantLabels.length > 0
+                    ? `Roles: ${grantLabels.join(", ")}`
+                    : "Roles: —";
 
-                  <div className="flex items-center gap-2">
-                    {inv.is_active ? (
+                return (
+                  <div
+                    key={inv.id}
+                    className="grid gap-2 px-3 py-3 md:grid-cols-[auto_minmax(0,1fr)_20rem_auto] md:items-start"
+                  >
+                    <div className="pt-1">
+                      <input
+                        type="checkbox"
+                        aria-label={`Select ${inv.email}`}
+                        checked={Boolean(selectedInviteIds[inv.id])}
+                        onChange={(e: ChangeEvent<HTMLInputElement>) => setInviteSelected(inv.id, e.target.checked)}
+                      />
+                    </div>
+
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-medium" title={inv.email}>
+                        {inv.email}{" "}
+                        {!inv.is_active ? <span className="text-xs text-foreground/60">(inactive)</span> : null}
+                        {isInviteBlocked(inv) ? (
+                          <span className="ml-2 text-xs text-foreground/60">(blocked)</span>
+                        ) : null}
+                      </div>
+                      <div className="mt-1 truncate text-xs text-foreground/60" title={inv.notes ?? ""}>
+                        {inv.notes ? `Name: ${inv.notes}` : "Name: —"} • Invited: {inv.invited_at.slice(0, 10)}
+                        {inv.revoked_at ? ` • Revoked: ${inv.revoked_at.slice(0, 10)}` : ""}
+                      </div>
+
+                      <div className="mt-1 truncate text-xs text-foreground/60" title={grantLabels.join(", ")}>
+                        {rolesSummary}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <input
+                        className="h-8 w-full rounded-md border bg-transparent px-2 text-sm"
+                        value={inviteNotesDraftById[inv.id] ?? inv.notes ?? ""}
+                        onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                          setInviteNotesDraftById((prev) => ({ ...prev, [inv.id]: e.target.value }))
+                        }
+                        placeholder="Set member name…"
+                      />
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => void onUpdateInviteNotes(inv)}
+                        disabled={(inviteNotesDraftById[inv.id] ?? inv.notes ?? "").trim() === (inv.notes ?? "").trim()}
+                      >
+                        Save
+                      </Button>
+                    </div>
+
+                    <div className="flex flex-wrap items-center justify-end gap-2 md:flex-nowrap">
                       <Button
                         variant="ghost"
-                        onClick={() => void onSetInviteActive(inv, false)}
-                        className="h-7 px-2 text-xs"
+                        size="sm"
+                        onClick={() => openRoleGrantModal(inv)}
+                        disabled={isDomain}
+                        title={isDomain ? "Role grants require an exact email (not a domain entry)" : "Manage pre-login roles"}
                       >
-                        Revoke
+                        Roles
                       </Button>
-                    ) : (
                       <Button
                         variant="ghost"
-                        onClick={() => void onSetInviteActive(inv, true)}
-                        className="h-7 px-2 text-xs"
+                        size="sm"
+                        onClick={() => void onMoveInvite(inv, "up")}
+                        disabled={inviteSearch.trim().length > 0}
+                        title={inviteSearch.trim().length > 0 ? "Clear search to reorder" : "Move up"}
                       >
-                        Reactivate
+                        ↑
                       </Button>
-                    )}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => void onMoveInvite(inv, "down")}
+                        disabled={inviteSearch.trim().length > 0}
+                        title={inviteSearch.trim().length > 0 ? "Clear search to reorder" : "Move down"}
+                      >
+                        ↓
+                      </Button>
+                      <Button variant="ghost" size="sm" onClick={() => void onBanInvite(inv)}>
+                        Ban
+                      </Button>
+                      {inv.is_active ? (
+                        <Button variant="ghost" size="sm" onClick={() => void onSetInviteActive(inv, false)}>
+                          Revoke
+                        </Button>
+                      ) : (
+                        <Button variant="ghost" size="sm" onClick={() => void onSetInviteActive(inv, true)}>
+                          Reactivate
+                        </Button>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => void onDeleteInvite(inv)}
+                        className="text-red-600 hover:bg-red-500/10"
+                      >
+                        Delete
+                      </Button>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
-      </section>
 
+        {roleGrantInviteId ? (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+            role="dialog"
+            aria-modal="true"
+            onMouseDown={() => closeRoleGrantModal()}
+          >
+            <div
+              className="w-full max-w-xl rounded-md border bg-background p-4 shadow-lg"
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              {(() => {
+                const invite = invitesAllowlist.find((x) => x.id === roleGrantInviteId) ?? null;
+                if (!invite) return null;
+
+                const normalized = invite.email_normalized;
+                const isDomain = normalized.startsWith("@");
+                const grants = !isDomain ? (bootstrapGrantsByEmail.get(normalized) ?? []) : [];
+                const scope = ROLE_OPTIONS.find((r) => r.key === roleGrantRoleKey)?.scope ?? "term";
+
+                return (
+                  <div className="space-y-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-lg font-semibold">Pre-login roles</div>
+                        <div className="truncate text-sm text-foreground/70">{invite.email}</div>
+                      </div>
+                      <Button variant="ghost" size="sm" onClick={() => closeRoleGrantModal()}>
+                        Close
+                      </Button>
+                    </div>
+
+                    <div className="text-sm text-foreground/70">
+                      These roles are applied automatically when the member signs in for the first time. If they already signed in,
+                      assign roles in the <span className="font-medium">Roles</span> tab instead.
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="text-sm font-medium">Current roles</div>
+                      {grants.length === 0 ? (
+                        <div className="text-sm text-foreground/70">No pre-login roles.</div>
+                      ) : (
+                        <div className="space-y-2">
+                          {grants.map((g) => {
+                            const roleLabel = ROLE_LABEL_BY_KEY[g.role_key] ?? g.role_key;
+                            const termLabel = g.term_id ? (termNameById.get(g.term_id) ?? g.term_id) : null;
+                            return (
+                              <div key={g.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2">
+                                <div className="min-w-0 text-sm">
+                                  <span className="font-medium">{roleLabel}</span>
+                                  {termLabel ? <span className="text-foreground/70">{` • ${termLabel}`}</span> : null}
+                                </div>
+                                <Button variant="ghost" size="sm" onClick={() => void onRevokeRoleGrant(g)}>
+                                  Revoke
+                                </Button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+
+                    {isDomain ? (
+                      <div className="rounded-md border px-3 py-2 text-sm text-foreground/70">
+                        Role grants require an exact email, not a domain entry.
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <div className="text-sm font-medium">Add role</div>
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <label className="space-y-1 text-sm">
+                            <div className="text-foreground/70">Role</div>
+                            <select
+                              className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                              value={roleGrantRoleKey}
+                              onChange={(e: ChangeEvent<HTMLSelectElement>) => setRoleGrantRoleKey(e.target.value as RoleKey)}
+                            >
+                              {ROLE_OPTIONS.map((r) => (
+                                <option key={r.key} value={r.key}>
+                                  {r.label}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+
+                          {scope === "term" ? (
+                            <label className="space-y-1 text-sm">
+                              <div className="text-foreground/70">Term</div>
+                              <select
+                                className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                                value={roleGrantTermId}
+                                onChange={(e: ChangeEvent<HTMLSelectElement>) => setRoleGrantTermId(e.target.value)}
+                              >
+                                {terms.map((t) => (
+                                  <option key={t.id} value={t.id}>
+                                    {t.name}
+                                    {t.is_current ? " (current)" : ""}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          ) : (
+                            <div className="hidden sm:block" />
+                          )}
+                        </div>
+
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <Button size="sm" onClick={() => void onGrantRoleForInvite(invite)}>
+                            Add role
+                          </Button>
+                          <Button variant="outline" size="sm" onClick={() => void loadBootstrapRoleGrants()}>
+                            Refresh
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+        ) : null}
+
+        <div className="rounded-md border p-3">
+          <div className="space-y-1">
+            <div className="text-sm font-medium">Bans / blocklist</div>
+            <div className="text-xs text-foreground/70">
+              Block specific emails or domains. Blocklist overrides allowlist (useful when a domain is allowlisted but a single email should be denied).
+            </div>
+          </div>
+
+          <div className="mt-3 flex flex-wrap items-end gap-3">
+            <label className="space-y-1 text-sm">
+              <div className="text-foreground/70">Email or domain</div>
+              <input
+                className="h-9 w-72 rounded-md border bg-transparent px-2 text-sm"
+                value={newBanPattern}
+                onChange={(e: ChangeEvent<HTMLInputElement>) => setNewBanPattern(e.target.value)}
+                placeholder="name@gcccd.edu or @gcccd.edu (or gcccd.edu)"
+              />
+            </label>
+
+            <label className="space-y-1 text-sm">
+              <div className="text-foreground/70">Notes (optional)</div>
+              <input
+                className="h-9 w-72 rounded-md border bg-transparent px-2 text-sm"
+                value={newBanNotes}
+                onChange={(e: ChangeEvent<HTMLInputElement>) => setNewBanNotes(e.target.value)}
+                placeholder="Reason / context…"
+              />
+            </label>
+
+            <Button onClick={() => void onAddBan()} disabled={!newBanPattern.trim()}>
+              Ban
+            </Button>
+
+            <Button variant="ghost" onClick={() => void loadInvitesBlocklist()}>
+              Reload bans
+            </Button>
+          </div>
+
+          <div className="mt-3 rounded-md border">
+            {invitesBlocklist.length === 0 ? (
+              <div className="px-3 py-2 text-sm text-foreground/70">No bans found.</div>
+            ) : (
+              <div className="divide-y">
+                {invitesBlocklist.map((ban) => (
+                  <div key={ban.id} className="grid gap-2 px-3 py-2 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-medium" title={ban.pattern}>
+                        {ban.pattern}{" "}
+                        {!ban.is_active ? <span className="text-xs text-foreground/60">(inactive)</span> : null}
+                      </div>
+                      <div className="mt-1 truncate text-xs text-foreground/60" title={ban.notes ?? ""}>
+                        {ban.notes ? `Notes: ${ban.notes}` : ""}{ban.notes ? " • " : ""}Banned: {ban.banned_at.slice(0, 10)}
+                        {ban.unbanned_at ? ` • Unbanned: ${ban.unbanned_at.slice(0, 10)}` : ""}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center justify-end gap-2">
+                      {ban.is_active ? (
+                        <Button variant="ghost" size="sm" onClick={() => void onSetBanActive(ban, false)}>
+                          Disable
+                        </Button>
+                      ) : (
+                        <Button variant="ghost" size="sm" onClick={() => void onSetBanActive(ban, true)}>
+                          Reactivate
+                        </Button>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => void onDeleteBan(ban)}
+                        className="text-red-600 hover:bg-red-500/10"
+                      >
+                        Delete
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </section>
+      ) : null}
+
+      {adminTab === "office_hours" ? (
+        <>
       <section className="space-y-3">
         <div className="space-y-1">
           <h2 className="text-lg font-semibold">Office Hours Export (CSV)</h2>
@@ -730,21 +1812,102 @@ export function AdminPanel({
           </p>
         </div>
 
-        <div className="grid gap-3 md:grid-cols-3">
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setExportWeekStart((prev) => addDaysDateOnly(prev, -7) ?? todayDateString())}
+            >
+              Prev
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => setExportWeekStart(todayDateString())}>
+              This week
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setExportWeekStart((prev) => addDaysDateOnly(prev, 7) ?? todayDateString())}
+            >
+              Next
+            </Button>
+          </div>
+
           <label className="space-y-1 text-sm">
-            <div className="text-foreground/70">Week start (YYYY-MM-DD)</div>
+            <div className="text-foreground/70">Week of (any date)</div>
             <input
-              className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+              type="date"
+              className="h-9 w-56 rounded-md border bg-transparent px-2 text-sm"
               value={exportWeekStart}
-              onChange={(e: ChangeEvent<HTMLInputElement>) => setExportWeekStart(e.target.value)}
-              placeholder="2025-12-15"
+              onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                setExportWeekStart(normalizeDateOnlyString(e.target.value) ?? todayDateString())
+              }
             />
           </label>
 
-          <div className="flex items-end">
-            <Button onClick={downloadWeeklyHoursCsv}>Download CSV</Button>
-          </div>
+          {exportWeekStartResolved ? (
+            <div className="text-xs text-foreground/60">
+              Week starts <span className="font-mono">{exportWeekStartResolved}</span>
+            </div>
+          ) : null}
         </div>
+
+        <div className="flex flex-wrap items-end gap-2">
+          <Button onClick={previewWeeklyHours}>Preview</Button>
+          <Button variant="outline" onClick={openWeeklyHoursPreviewPage}>
+            Open preview
+          </Button>
+          <Button variant="outline" onClick={openWeeklyHoursCsvInline}>
+            Open CSV
+          </Button>
+          <Button variant="outline" onClick={() => window.location.assign("/admin/office-hours")}>
+            Calendar view
+          </Button>
+          <Button variant="outline" onClick={downloadWeeklyHoursCsv}>
+            Download CSV
+          </Button>
+          {exportPreviewRows ? (
+            <Button variant="ghost" onClick={clearWeeklyHoursPreview}>
+              Clear
+            </Button>
+          ) : null}
+        </div>
+
+        {exportPreviewRows ? (
+          <div className="rounded-md border">
+            <div className="flex flex-wrap items-center justify-between gap-3 px-3 py-2 text-sm">
+              <div className="text-foreground/70">Preview rows: {exportPreviewRows.length}</div>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[920px] text-sm">
+                <thead className="border-t bg-foreground/5 text-left text-xs text-foreground/70">
+	                  <tr>
+	                    <th className="px-3 py-2">Name</th>
+	                    <th className="px-3 py-2">Email</th>
+	                    <th className="px-3 py-2 text-right">Total</th>
+	                    <th className="px-3 py-2 text-right">In office</th>
+	                    <th className="px-3 py-2 text-right">Deficit</th>
+	                    <th className="px-3 py-2 text-right">Deficit in-office</th>
+	                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {exportPreviewRows.map((r) => (
+                    <tr key={`${r.user_id}:${r.week_start}`}>
+                      <td className="px-3 py-2">{r.display_name || "—"}</td>
+                      <td className="px-3 py-2">{r.email || "—"}</td>
+	                      <td className="px-3 py-2 text-right font-mono">{formatMinutesValue(r.total_minutes)}</td>
+	                      <td className="px-3 py-2 text-right font-mono">{formatMinutesValue(r.in_office_minutes)}</td>
+	                      <td className="px-3 py-2 text-right font-mono">{formatMinutesValue(r.deficit_minutes)}</td>
+	                      <td className="px-3 py-2 text-right font-mono">
+                          {formatMinutesValue(r.deficit_in_office_minutes)}
+                        </td>
+	                    </tr>
+	                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ) : null}
       </section>
 
       <section className="space-y-3">
@@ -1068,7 +2231,11 @@ export function AdminPanel({
           </div>
         )}
       </section>
+        </>
+      ) : null}
 
+      {adminTab === "meetings" ? (
+        <>
       <section className="space-y-3">
         <div className="space-y-1">
           <h2 className="text-lg font-semibold">Notifications</h2>
@@ -1164,7 +2331,11 @@ export function AdminPanel({
           </label>
         </div>
       </section>
+        </>
+      ) : null}
 
+      {adminTab === "roles" ? (
+        <>
       <section className="space-y-3">
         <div className="space-y-1">
           <h2 className="text-lg font-semibold">Assign roles</h2>
@@ -1173,7 +2344,18 @@ export function AdminPanel({
           </p>
         </div>
 
-        <div className="grid gap-3 md:grid-cols-3">
+        <div className="grid gap-3 md:grid-cols-4">
+          <label className="space-y-1 text-sm">
+            <div className="text-foreground/70">Find user</div>
+            <input
+              type="text"
+              className="h-9 rounded-md border bg-transparent px-2 text-sm"
+              value={userSearch}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => setUserSearch(e.target.value)}
+              placeholder="Filter by name or email…"
+            />
+          </label>
+
           <label className="space-y-1 text-sm">
             <div className="text-foreground/70">User</div>
             <select
@@ -1182,7 +2364,7 @@ export function AdminPanel({
               onChange={(e: ChangeEvent<HTMLSelectElement>) => setSelectedUserId(e.target.value)}
             >
               <option value="">Select a user…</option>
-              {users.map((u) => (
+              {usersForRolePicker.map((u) => (
                 <option key={u.id} value={u.id}>
                   {formatUserLabel(u)}
                 </option>
@@ -1271,6 +2453,8 @@ export function AdminPanel({
           </div>
         </div>
       </section>
+        </>
+      ) : null}
     </div>
   );
 }

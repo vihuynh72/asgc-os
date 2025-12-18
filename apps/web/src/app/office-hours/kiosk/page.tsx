@@ -9,8 +9,6 @@ import { Button } from "@/components/ui/button";
 type KioskOpenSession = {
   id: string;
   checkin_at: string;
-  needs_review: boolean;
-  review_reason: string | null;
 };
 
 type KioskStatus = {
@@ -241,7 +239,6 @@ export default function OfficeHoursKioskPage() {
             ) : openSession ? (
               <span>
                 Checked in since {new Date(openSession.checkin_at).toLocaleString()}
-                {openSession.needs_review ? " (needs review)" : ""}
               </span>
             ) : (
               <span>Not checked in.</span>
@@ -266,9 +263,6 @@ export default function OfficeHoursKioskPage() {
             <Button variant="ghost" onClick={loadStatus} disabled={!emailValid || loading} className="h-8 px-2 text-xs">
               Refresh
             </Button>
-            {openSession?.review_reason ? (
-              <span className="text-xs text-foreground/60">Reason: {openSession.review_reason}</span>
-            ) : null}
           </div>
 
           {notice ? <div className="mt-3 text-sm text-foreground/80">{notice}</div> : null}
@@ -282,4 +276,3 @@ export default function OfficeHoursKioskPage() {
     </PageShell>
   );
 }
-

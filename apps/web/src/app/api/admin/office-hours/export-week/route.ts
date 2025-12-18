@@ -1,12 +1,10 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
-import { z } from "zod";
 
+import { normalizeDateOnlyString } from "@/lib/dateOnly";
 import { getPublicEnv } from "@/lib/env";
 
 export const runtime = "nodejs";
-
-const WeekStartSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
 function mitigateCsvFormulaInjection(raw: string): string {
   // Spreadsheet programs may interpret cells starting with these characters as formulas.
@@ -20,7 +18,17 @@ type AdminWeeklyHoursRow = {
   in_office_minutes: number;
   deficit_minutes: number;
   deficit_in_office_minutes: number;
-  needs_review_sessions: number;
+};
+
+type AdminWeeklyHoursPreviewRow = {
+  user_id: string;
+  week_start: string;
+  display_name: string;
+  email: string;
+  total_minutes: number;
+  in_office_minutes: number;
+  deficit_minutes: number;
+  deficit_in_office_minutes: number;
 };
 
 function csvEscape(value: unknown): string {
@@ -71,18 +79,22 @@ export async function GET(request: NextRequest) {
   const authz = await isAdminForRequest(request);
   if (!authz.ok) return authz.response;
 
-  const weekStart = request.nextUrl.searchParams.get("weekStart");
-  const weekStartParam =
-    weekStart && weekStart.length > 0
-      ? (() => {
-          const parsed = WeekStartSchema.safeParse(weekStart);
-          if (!parsed.success) return null;
-          return parsed.data;
-        })()
-      : null;
+  const formatParamRaw = request.nextUrl.searchParams.get("format");
+  const formatParam = formatParamRaw === null || formatParamRaw === "csv" || formatParamRaw === "json" ? formatParamRaw : null;
+  if (formatParamRaw !== null && !formatParam) {
+    return NextResponse.json({ error: "invalid format" }, { status: 400 });
+  }
 
-  if (weekStart && weekStart.length > 0 && !weekStartParam) {
-    return NextResponse.json({ error: "invalid weekStart" }, { status: 400 });
+  const dispositionRaw = request.nextUrl.searchParams.get("disposition");
+  const disposition = dispositionRaw === null || dispositionRaw === "attachment" || dispositionRaw === "inline" ? dispositionRaw : null;
+  if (dispositionRaw !== null && !disposition) {
+    return NextResponse.json({ error: "invalid disposition" }, { status: 400 });
+  }
+
+  const weekStartRaw = request.nextUrl.searchParams.get("weekStart");
+  const weekStartParam = weekStartRaw ? normalizeDateOnlyString(weekStartRaw) : null;
+  if (weekStartRaw && !weekStartParam) {
+    return NextResponse.json({ error: "invalid_weekStart" }, { status: 400 });
   }
 
   const { data: rows, error } = await authz.supabase.rpc("admin_weekly_hours", { _week_start: weekStartParam });
@@ -114,6 +126,23 @@ export async function GET(request: NextRequest) {
     emailById.set(row.id, row.email ?? "");
   }
 
+  const filenameWeek = (typedRows[0]?.week_start || weekStartParam || "week").replace(/[^0-9-]/g, "");
+
+  if (formatParam === "json") {
+    const previewRows: AdminWeeklyHoursPreviewRow[] = typedRows.map((r) => ({
+      user_id: r.user_id,
+      week_start: r.week_start,
+      display_name: displayNameById.get(r.user_id) ?? "",
+      email: emailById.get(r.user_id) ?? "",
+      total_minutes: r.total_minutes,
+      in_office_minutes: r.in_office_minutes,
+      deficit_minutes: r.deficit_minutes,
+      deficit_in_office_minutes: r.deficit_in_office_minutes,
+    }));
+
+    return NextResponse.json({ weekStart: filenameWeek, rows: previewRows }, { status: 200 });
+  }
+
   const header = [
     "week_start",
     "user_id",
@@ -123,7 +152,6 @@ export async function GET(request: NextRequest) {
     "in_office_minutes",
     "deficit_minutes",
     "deficit_in_office_minutes",
-    "needs_review_sessions",
   ];
 
   const lines: string[] = [];
@@ -140,7 +168,6 @@ export async function GET(request: NextRequest) {
         r.in_office_minutes,
         r.deficit_minutes,
         r.deficit_in_office_minutes,
-        r.needs_review_sessions,
       ]
         .map(csvEscape)
         .join(","),
@@ -148,13 +175,13 @@ export async function GET(request: NextRequest) {
   }
 
   const csv = lines.join("\n") + "\n";
-  const filenameWeek = (typedRows[0]?.week_start || weekStartParam || "week").replace(/[^0-9-]/g, "");
+  const contentDisposition = disposition === "inline" ? "inline" : "attachment";
 
   return new NextResponse(csv, {
     status: 200,
     headers: {
       "content-type": "text/csv; charset=utf-8",
-      "content-disposition": `attachment; filename=office-hours-${filenameWeek}.csv`,
+      "content-disposition": `${contentDisposition}; filename=office-hours-${filenameWeek}.csv`,
     },
   });
 }
