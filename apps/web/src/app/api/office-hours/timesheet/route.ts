@@ -1,14 +1,10 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
-import { z } from "zod";
 
+import { normalizeDateOnlyString } from "@/lib/dateOnly";
 import { getPublicEnv } from "@/lib/env";
 
 export const runtime = "nodejs";
-
-const WeekStartSchema = z
-  .string()
-  .regex(/^\d{4}-\d{2}-\d{2}$/);
 
 function getSupabaseForRequest(request: NextRequest) {
   const env = getPublicEnv();
@@ -36,23 +32,15 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
-  const weekStart = request.nextUrl.searchParams.get("weekStart");
-  const weekStartParam =
-    weekStart && weekStart.length > 0
-      ? (() => {
-          const parsed = WeekStartSchema.safeParse(weekStart);
-          if (!parsed.success) return null;
-          return parsed.data;
-        })()
-      : null;
-
-  if (weekStart && weekStart.length > 0 && !weekStartParam) {
-    return NextResponse.json({ error: "invalid weekStart" }, { status: 400 });
+  const weekStartRaw = request.nextUrl.searchParams.get("weekStart");
+  const weekStartParam = weekStartRaw ? normalizeDateOnlyString(weekStartRaw) : null;
+  if (weekStartRaw && !weekStartParam) {
+    return NextResponse.json({ error: "invalid_weekStart" }, { status: 400 });
   }
 
   const [{ data: weekly, error: weeklyErr }, { data: sessions, error: sessionsErr }, { data: exceptions, error: excErr }] =
     await Promise.all([
-      supabase.rpc("my_weekly_hours"),
+      supabase.rpc("my_weekly_hours", { _week_start: weekStartParam }),
       supabase.rpc("my_timesheet_sessions", { _week_start: weekStartParam }),
       supabase.rpc("my_timesheet_exceptions", { _week_start: weekStartParam }),
     ]);
@@ -63,5 +51,10 @@ export async function GET(request: NextRequest) {
 
   const weeklyRow = Array.isArray(weekly) ? weekly[0] : weekly;
 
-  return NextResponse.json({ weekly: weeklyRow ?? null, sessions: sessions ?? [], exceptions: exceptions ?? [] });
+  return NextResponse.json({
+    week_start: (weeklyRow as { week_start?: string } | null)?.week_start ?? weekStartParam ?? null,
+    weekly: weeklyRow ?? null,
+    sessions: sessions ?? [],
+    exceptions: exceptions ?? [],
+  });
 }

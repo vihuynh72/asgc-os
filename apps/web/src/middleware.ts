@@ -17,6 +17,7 @@ const PROTECTED_PREFIXES = [
 ];
 
 const UNPROTECTED_PREFIXES = ["/office-hours/kiosk"];
+const KIOSK_FALLBACK_PREFIXES = ["/office-hours/check-in", "/office-hours/check-out"];
 
 export async function middleware(request: NextRequest) {
   if (!hasPublicSupabaseEnv()) {
@@ -53,8 +54,20 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next({ request });
   }
 
+  const shouldFallbackToKiosk = KIOSK_FALLBACK_PREFIXES.some(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+  );
+
   const hasSupabaseAuthCookie = request.cookies.getAll().some((c) => c.name.startsWith("sb-"));
   if (!hasSupabaseAuthCookie) {
+    if (shouldFallbackToKiosk) {
+      const redirectUrl = request.nextUrl.clone();
+      redirectUrl.pathname = "/office-hours/kiosk";
+      redirectUrl.search = "";
+      redirectUrl.searchParams.set("redirectTo", requestedPath);
+      return NextResponse.redirect(redirectUrl);
+    }
+
     if (!isProtected) {
       return NextResponse.next({ request });
     }
@@ -97,7 +110,13 @@ export async function middleware(request: NextRequest) {
   let response = NextResponse.next({ request });
 
   if (!user) {
-    if (isProtected) {
+    if (shouldFallbackToKiosk) {
+      const redirectUrl = request.nextUrl.clone();
+      redirectUrl.pathname = "/office-hours/kiosk";
+      redirectUrl.search = "";
+      redirectUrl.searchParams.set("redirectTo", requestedPath);
+      response = NextResponse.redirect(redirectUrl);
+    } else if (isProtected) {
       const redirectUrl = request.nextUrl.clone();
       redirectUrl.pathname = "/login";
       redirectUrl.searchParams.set("redirectTo", requestedPath);

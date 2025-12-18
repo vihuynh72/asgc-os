@@ -45,10 +45,29 @@ export async function isEmailAllowlisted(admin: SupabaseClient, email: string): 
   return !!data;
 }
 
+export async function getAllowlistNotesForExactEmail(admin: SupabaseClient, email: string): Promise<string | null> {
+  const { data, error } = await admin
+    .from("invites_allowlist")
+    .select("notes")
+    .eq("email_normalized", email)
+    .eq("is_active", true)
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(error.message || "allowlist_lookup_failed");
+  const notes = typeof data?.notes === "string" ? data.notes.trim() : "";
+  return notes.length > 0 ? notes : null;
+}
+
 export async function getUserIdByEmail(admin: SupabaseClient, email: string): Promise<string | null> {
-  const { data, error } = await admin.from("profiles").select("id").eq("email", email).limit(1).maybeSingle();
+  const { data, error } = await admin.from("profile_private").select("id").eq("email", email).limit(1).maybeSingle();
   if (error) throw new Error(error.message || "profile_lookup_failed");
   return data?.id ?? null;
+}
+
+export async function setProfileDisplayName(admin: SupabaseClient, userId: string, displayName: string | null) {
+  const name = (displayName ?? "").trim();
+  if (!name) return;
+  await admin.from("profiles").update({ display_name: name }).eq("id", userId);
 }
 
 export async function getOrCreateUserIdByEmail(admin: SupabaseClient, email: string): Promise<string> {
@@ -61,8 +80,11 @@ export async function getOrCreateUserIdByEmail(admin: SupabaseClient, email: str
   if (!id) throw new Error("create_user_failed");
 
   // Best-effort: ensure profile exists (FK requirement for office_hour_sessions.user_id).
-  const { error: upsertErr } = await admin.from("profiles").upsert({ id, email }, { onConflict: "id" });
-  if (upsertErr) throw new Error(upsertErr.message || "create_profile_failed");
+  const [{ error: profilesErr }, { error: privateErr }] = await Promise.all([
+    admin.from("profiles").upsert({ id, email: null }, { onConflict: "id" }),
+    admin.from("profile_private").upsert({ id, email }, { onConflict: "id" }),
+  ]);
+  if (profilesErr || privateErr) throw new Error(profilesErr?.message || privateErr?.message || "create_profile_failed");
 
   return id;
 }

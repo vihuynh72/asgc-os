@@ -49,10 +49,34 @@ type InviteAllowlistRow = {
   id: string;
   email: string;
   email_normalized: string;
+  sort_order: number;
   is_active: boolean;
   invited_by: string | null;
   invited_at: string;
   revoked_at: string | null;
+  notes: string | null;
+};
+
+type InviteBlocklistRow = {
+  id: string;
+  pattern: string;
+  pattern_normalized: string;
+  is_active: boolean;
+  banned_by: string | null;
+  banned_at: string;
+  unbanned_at: string | null;
+  notes: string | null;
+};
+
+type BootstrapRoleGrantRow = {
+  id: string;
+  email: string;
+  email_normalized: string;
+  role_key: "advisor" | "president" | "executive" | "director" | "board_member" | "volunteer";
+  term_id: string | null;
+  is_active: boolean;
+  consumed_at: string | null;
+  created_at: string;
   notes: string | null;
 };
 
@@ -149,12 +173,40 @@ export default async function AdminPage() {
   try {
     const { data: invites } = await admin
       .from("invites_allowlist")
-      .select("id,email,email_normalized,is_active,invited_by,invited_at,revoked_at,notes")
+      .select("id,email,email_normalized,sort_order,is_active,invited_by,invited_at,revoked_at,notes")
+      .order("sort_order", { ascending: false })
       .order("invited_at", { ascending: false })
       .limit(200);
     initialInvitesAllowlist = (invites ?? []) as InviteAllowlistRow[];
   } catch {
     initialInvitesAllowlist = [];
+  }
+
+  let initialInvitesBlocklist: InviteBlocklistRow[] = [];
+  try {
+    const { data: bans } = await admin
+      .from("invites_blocklist")
+      .select("id,pattern,pattern_normalized,is_active,banned_by,banned_at,unbanned_at,notes")
+      .order("is_active", { ascending: false })
+      .order("banned_at", { ascending: false })
+      .limit(200);
+    initialInvitesBlocklist = (bans ?? []) as InviteBlocklistRow[];
+  } catch {
+    initialInvitesBlocklist = [];
+  }
+
+  let initialBootstrapRoleGrants: BootstrapRoleGrantRow[] = [];
+  try {
+    const { data: grants } = await admin
+      .from("bootstrap_role_grants")
+      .select("id,email,email_normalized,role_key,term_id,is_active,consumed_at,created_at,notes")
+      .eq("is_active", true)
+      .is("consumed_at", null)
+      .order("created_at", { ascending: false })
+      .limit(500);
+    initialBootstrapRoleGrants = (grants ?? []) as BootstrapRoleGrantRow[];
+  } catch {
+    initialBootstrapRoleGrants = [];
   }
 
   // Phase 11: office config + quiet hours (best-effort; requires Phase 11 migration applied)
@@ -209,6 +261,8 @@ export default async function AdminPage() {
         initialGlobalAdvisorAssignments={(globalAdvisorAssignments ?? []) as AssignmentRow[]}
         initialTermAssignments={(termAssignments ?? []) as AssignmentRow[]}
         initialInvitesAllowlist={initialInvitesAllowlist}
+        initialInvitesBlocklist={initialInvitesBlocklist}
+        initialBootstrapRoleGrants={initialBootstrapRoleGrants}
         initialOfficeConfig={initialOfficeConfig}
         initialOfficeLocation={initialOfficeLocation}
         initialOfficeHourRequirements={initialOfficeHourRequirements}

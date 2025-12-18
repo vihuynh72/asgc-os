@@ -3,7 +3,15 @@ import { z } from "zod";
 
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 
-import { getOfficeGeo, getOrCreateUserIdByEmail, haversineMeters, isEmailAllowlisted, normalizeKioskEmail } from "../_kiosk";
+import {
+  getAllowlistNotesForExactEmail,
+  getOfficeGeo,
+  getOrCreateUserIdByEmail,
+  haversineMeters,
+  isEmailAllowlisted,
+  normalizeKioskEmail,
+  setProfileDisplayName,
+} from "../_kiosk";
 
 export const runtime = "nodejs";
 
@@ -54,6 +62,8 @@ export async function POST(request: NextRequest) {
     }
 
     const userId = await getOrCreateUserIdByEmail(admin, email);
+    const allowlistNotes = await getAllowlistNotesForExactEmail(admin, email);
+    await setProfileDisplayName(admin, userId, allowlistNotes);
 
     const { data: existing } = await admin
       .from("office_hour_sessions")
@@ -77,8 +87,6 @@ export async function POST(request: NextRequest) {
 
     const withinRadius = dist <= geo.radiusM;
     const withinGrace = dist > geo.radiusM && dist <= geo.graceRadiusM;
-    const needsReview = withinGrace;
-    const reviewReason = withinGrace ? "checkin_within_grace" : null;
 
     const checkinAt = new Date().toISOString();
     const { data: session, error: insertErr } = await admin
@@ -91,10 +99,10 @@ export async function POST(request: NextRequest) {
         within_radius: withinRadius,
         within_grace: withinGrace,
         distance_m_at_checkin: dist,
-        needs_review: needsReview,
-        review_reason: reviewReason,
+        needs_review: false,
+        review_reason: null,
       })
-      .select("id,checkin_at,office_location_id,needs_review,review_reason,within_radius,within_grace,distance_m_at_checkin")
+      .select("id,checkin_at,office_location_id,within_radius,within_grace,distance_m_at_checkin")
       .single();
 
     if (insertErr) {
@@ -114,7 +122,7 @@ export async function POST(request: NextRequest) {
         distance_m: dist,
         within_radius: withinRadius,
         within_grace: withinGrace,
-        needs_review: needsReview,
+        needs_review: false,
       },
     });
 
@@ -124,4 +132,3 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: msg }, { status: mapErrorStatus(msg) });
   }
 }
-

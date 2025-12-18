@@ -32,7 +32,7 @@ export async function GET(request: NextRequest) {
 
     const { data: openSession, error } = await admin
       .from("office_hour_sessions")
-      .select("id,checkin_at,needs_review,review_reason")
+      .select("id,checkin_at")
       .eq("user_id", userId)
       .eq("status", "open")
       .is("checkout_at", null)
@@ -50,4 +50,3 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
-

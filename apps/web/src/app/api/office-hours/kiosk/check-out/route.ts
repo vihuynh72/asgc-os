@@ -4,12 +4,13 @@ import { z } from "zod";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 
 import {
-  appendReviewReason,
+  getAllowlistNotesForExactEmail,
   getOfficeGeo,
   getOrCreateUserIdByEmail,
   haversineMeters,
   isEmailAllowlisted,
   normalizeKioskEmail,
+  setProfileDisplayName,
 } from "../_kiosk";
 
 export const runtime = "nodejs";
@@ -65,10 +66,12 @@ export async function POST(request: NextRequest) {
     }
 
     const userId = await getOrCreateUserIdByEmail(admin, email);
+    const allowlistNotes = await getAllowlistNotesForExactEmail(admin, email);
+    await setProfileDisplayName(admin, userId, allowlistNotes);
 
     const { data: openSession, error: readErr } = await admin
       .from("office_hour_sessions")
-      .select("id,checkin_at,needs_review,review_reason,office_location_id")
+      .select("id,checkin_at,office_location_id")
       .eq("user_id", userId)
       .eq("status", "open")
       .is("checkout_at", null)
@@ -86,29 +89,13 @@ export async function POST(request: NextRequest) {
 
     const checkoutAt = new Date().toISOString();
     let dist: number | null = null;
-    let reason: string | null = null;
-    let shouldReview = false;
     let resolvedOfficeId: string | null = (openSession.office_location_id as string | null) ?? null;
 
     if (typeof lat === "number" && typeof lon === "number") {
       const geo = await getOfficeGeo(admin, resolvedOfficeId);
       resolvedOfficeId = geo.officeLocationId;
       dist = haversineMeters(lat, lon, geo.lat, geo.lon);
-
-      if (dist > geo.graceRadiusM) {
-        reason = "checkout_outside_grace";
-        shouldReview = true;
-      } else if (dist > geo.radiusM) {
-        reason = "checkout_within_grace";
-        shouldReview = true;
-      }
-    } else {
-      reason = "checkout_no_location";
-      shouldReview = true;
     }
-
-    const newNeedsReview = (openSession.needs_review ?? false) || shouldReview;
-    const newReviewReason = appendReviewReason(openSession.review_reason as string | null, reason);
 
     const { data: updated, error: updateErr } = await admin
       .from("office_hour_sessions")
@@ -116,13 +103,13 @@ export async function POST(request: NextRequest) {
         checkout_at: checkoutAt,
         status: "closed",
         distance_m_at_checkout: dist,
-        needs_review: newNeedsReview,
-        review_reason: newReviewReason,
+        needs_review: false,
+        review_reason: null,
       })
       .eq("id", openSession.id)
       .eq("status", "open")
       .is("checkout_at", null)
-      .select("id,checkin_at,checkout_at,office_location_id,needs_review,review_reason,distance_m_at_checkout")
+      .select("id,checkin_at,checkout_at,office_location_id,distance_m_at_checkout")
       .maybeSingle();
 
     if (updateErr) {
@@ -149,8 +136,7 @@ export async function POST(request: NextRequest) {
         office_location_id: resolvedOfficeId ?? updated.office_location_id,
         distance_m_at_checkout: dist,
         duration_minutes: durationMinutes,
-        needs_review: updated.needs_review,
-        review_reason: updated.review_reason,
+        needs_review: false,
       },
     });
 
@@ -160,4 +146,3 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: msg }, { status: mapErrorStatus(msg) });
   }
 }
-

@@ -1,14 +1,10 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
-import { z } from "zod";
 
+import { normalizeDateOnlyString } from "@/lib/dateOnly";
 import { getPublicEnv } from "@/lib/env";
 
 export const runtime = "nodejs";
-
-const WeekStartSchema = z
-  .string()
-  .regex(/^\d{4}-\d{2}-\d{2}$/);
 
 function getSupabaseForRequest(request: NextRequest) {
   const env = getPublicEnv();
@@ -36,18 +32,10 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
-  const weekStart = request.nextUrl.searchParams.get("weekStart");
-  const weekStartParam =
-    weekStart && weekStart.length > 0
-      ? (() => {
-          const parsed = WeekStartSchema.safeParse(weekStart);
-          if (!parsed.success) return null;
-          return parsed.data;
-        })()
-      : null;
-
-  if (weekStart && weekStart.length > 0 && !weekStartParam) {
-    return NextResponse.json({ error: "invalid weekStart" }, { status: 400 });
+  const weekStartRaw = request.nextUrl.searchParams.get("weekStart");
+  const weekStartParam = weekStartRaw ? normalizeDateOnlyString(weekStartRaw) : null;
+  if (weekStartRaw && !weekStartParam) {
+    return NextResponse.json({ error: "invalid_weekStart" }, { status: 400 });
   }
 
   const { data, error } = await supabase.rpc("my_office_hour_shifts_week", { _week_start: weekStartParam });

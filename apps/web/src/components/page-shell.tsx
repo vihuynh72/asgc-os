@@ -1,16 +1,20 @@
 import type { ReactNode } from "react";
 
+import { cn } from "@/lib/utils";
+
 export function PageShell({
   title,
   description,
   children,
+  containerClassName,
 }: {
   title: string;
   description?: string;
   children?: ReactNode;
+  containerClassName?: string;
 }) {
   return (
-    <main className="mx-auto w-full max-w-5xl px-4 py-8">
+    <main className={cn("mx-auto w-full px-4 py-8", containerClassName ?? "max-w-5xl")}>
       <div className="space-y-2">
         <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
         {description ? (

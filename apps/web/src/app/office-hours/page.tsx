@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 
 import { PageShell } from "@/components/page-shell";
 import { Button } from "@/components/ui/button";
+import { normalizeDateOnlyString } from "@/lib/dateOnly";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 
 type WeeklyHours = {
@@ -23,8 +24,8 @@ type TimesheetSession = {
   duration_minutes: number | null;
   within_radius: boolean;
   within_grace: boolean;
-  needs_review: boolean;
-  review_reason: string | null;
+  distance_m_at_checkin?: number | null;
+  distance_m_at_checkout?: number | null;
 };
 
 type TimesheetException = {
@@ -59,8 +60,6 @@ type OpenSession = {
   id: string;
   checkin_at: string;
   office_location_id: string | null;
-  needs_review: boolean;
-  review_reason: string | null;
 };
 
 function formatMinutes(totalMinutes: number): string {
@@ -118,6 +117,58 @@ function haversineMeters(lat1: number, lon1: number, lat2: number, lon2: number)
   return Math.round(r * c);
 }
 
+function todayDateString(): string {
+  const d = new Date();
+  const y = String(d.getFullYear());
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function parseDateUtcNoon(dateStr: string): Date | null {
+  const iso = normalizeDateOnlyString(dateStr);
+  if (!iso) return null;
+  const d = new Date(`${iso}T12:00:00Z`);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function formatDateUtc(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+function addDays(dateStr: string, days: number): string | null {
+  const d = parseDateUtcNoon(dateStr);
+  if (!d) return null;
+  d.setUTCDate(d.getUTCDate() + days);
+  return formatDateUtc(d);
+}
+
+function startOfWeekMonday(dateStr: string): string | null {
+  const d = parseDateUtcNoon(dateStr);
+  if (!d) return null;
+  const day = d.getUTCDay(); // 0=Sun
+  const daysSinceMonday = (day + 6) % 7;
+  d.setUTCDate(d.getUTCDate() - daysSinceMonday);
+  return formatDateUtc(d);
+}
+
+function dateKeyInTz(iso: string, timeZone: string | null): string {
+  const d = new Date(iso);
+  if (!timeZone) return iso.slice(0, 10);
+
+  const parts = new Intl.DateTimeFormat("en", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(d);
+
+  const year = parts.find((p) => p.type === "year")?.value ?? "0000";
+  const month = parts.find((p) => p.type === "month")?.value ?? "01";
+  const day = parts.find((p) => p.type === "day")?.value ?? "01";
+  return `${year}-${month}-${day}`;
+}
+
 export default function OfficeHoursPage() {
   const router = useRouter();
   const supabase = useMemo(() => getSupabaseBrowserClient(), []);
@@ -134,6 +185,7 @@ export default function OfficeHoursPage() {
   const [openCoverageRequests, setOpenCoverageRequests] = useState<CoverageRequest[]>([]);
   const [officeTz, setOfficeTz] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
+  const [weekAnchorDate, setWeekAnchorDate] = useState<string>(() => todayDateString());
 
   const [officeGeo, setOfficeGeo] = useState<{
     lat: number;
@@ -170,6 +222,31 @@ export default function OfficeHoursPage() {
     [officeTz],
   );
 
+  const selectedWeekStart = useMemo(() => startOfWeekMonday(weekAnchorDate) ?? startOfWeekMonday(todayDateString()), [weekAnchorDate]);
+  const selectedWeekDays = useMemo(() => {
+    if (!selectedWeekStart) return [];
+    const out: string[] = [];
+    for (let i = 0; i < 7; i += 1) {
+      const d = addDays(selectedWeekStart, i);
+      if (d) out.push(d);
+    }
+    return out;
+  }, [selectedWeekStart]);
+
+  const sessionsByDay = useMemo(() => {
+    const m = new Map<string, TimesheetSession[]>();
+    for (const s of sessions) {
+      const key = dateKeyInTz(s.checkin_at, officeTz);
+      const arr = m.get(key);
+      if (arr) arr.push(s);
+      else m.set(key, [s]);
+    }
+    for (const arr of m.values()) {
+      arr.sort((a, b) => Date.parse(a.checkin_at) - Date.parse(b.checkin_at));
+    }
+    return m;
+  }, [officeTz, sessions]);
+
   const refresh = useCallback(async () => {
     setError(null);
     setNotice(null);
@@ -182,17 +259,29 @@ export default function OfficeHoursPage() {
       setOfficeTz(tzData);
     }
 
-    const { data: weeklyData, error: weeklyError } = await supabase.rpc("my_weekly_hours");
-    if (weeklyError) {
-      setError(weeklyError.message);
-    } else {
-      const row = Array.isArray(weeklyData) ? weeklyData[0] : weeklyData;
-      if (row) setWeekly(row as WeeklyHours);
+    const weekStart = selectedWeekStart || undefined;
+
+    try {
+      const qs = weekStart ? `?weekStart=${encodeURIComponent(weekStart)}` : "";
+      const res = await fetch(`/api/office-hours/timesheet${qs}`);
+      const json = (await res.json().catch(() => null)) as
+        | { error?: string; weekly?: WeeklyHours | null; sessions?: TimesheetSession[]; exceptions?: TimesheetException[] }
+        | null;
+
+      if (!res.ok) {
+        setError(json?.error ?? "Failed to load timesheet");
+      } else {
+        setWeekly((json?.weekly as WeeklyHours | null) ?? null);
+        setSessions(((json?.sessions ?? []) as TimesheetSession[]) || []);
+        setExceptions(((json?.exceptions ?? []) as TimesheetException[]) || []);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load timesheet");
     }
 
     const { data: sessionRow, error: sessionError } = await supabase
       .from("office_hour_sessions")
-      .select("id,checkin_at,office_location_id,needs_review,review_reason")
+      .select("id,checkin_at,office_location_id")
       .eq("status", "open")
       .is("checkout_at", null)
       .order("checkin_at", { ascending: false })
@@ -205,21 +294,18 @@ export default function OfficeHoursPage() {
       setOpenSession((sessionRow as OpenSession | null) ?? null);
     }
 
-    const [{ data: sessionsData, error: sessionsErr }, { data: excData, error: excErr }, { data: shiftsData, error: shiftsErr }] =
-      await Promise.all([
-        supabase.rpc("my_timesheet_sessions"),
-        supabase.rpc("my_timesheet_exceptions"),
-        supabase.rpc("my_office_hour_shifts_week"),
-      ]);
-
-    if (sessionsErr) setError(sessionsErr.message);
-    else setSessions(((sessionsData ?? []) as TimesheetSession[]) || []);
-
-    if (excErr) setError(excErr.message);
-    else setExceptions(((excData ?? []) as TimesheetException[]) || []);
-
-    if (shiftsErr) setError(shiftsErr.message);
-    else setShifts(((shiftsData ?? []) as OfficeHourShift[]) || []);
+    try {
+      const qs = weekStart ? `?weekStart=${encodeURIComponent(weekStart)}` : "";
+      const shiftsRes = await fetch(`/api/office-hours/shifts${qs}`);
+      const shiftsJson = (await shiftsRes.json().catch(() => null)) as { error?: string; shifts?: OfficeHourShift[] } | null;
+      if (shiftsRes.ok) {
+        setShifts(((shiftsJson?.shifts ?? []) as OfficeHourShift[]) || []);
+      } else {
+        setError(shiftsJson?.error ?? "Failed to load shifts");
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load shifts");
+    }
 
     // Fetch open coverage requests
     const coverageRes = await fetch("/api/office-hours/coverage");
@@ -227,7 +313,7 @@ export default function OfficeHoursPage() {
       const coverageJson = (await coverageRes.json().catch(() => null)) as { requests?: CoverageRequest[] } | null;
       setOpenCoverageRequests((coverageJson?.requests ?? []) as CoverageRequest[]);
     }
-  }, [supabase]);
+  }, [selectedWeekStart, supabase]);
 
   useEffect(() => {
     void refresh();
@@ -462,6 +548,8 @@ export default function OfficeHoursPage() {
     ? Math.max(0, Math.round((clock - new Date(openSession.checkin_at).getTime()) / 60_000))
     : null;
 
+  const selectedWeekLabel = selectedWeekStart ? `Week of ${selectedWeekStart}` : "Week";
+
   return (
     <PageShell title="Office Hours" description="Check in/out with location.">
       <div className="space-y-6">
@@ -472,18 +560,12 @@ export default function OfficeHoursPage() {
               {openSession ? (
                 <div className="text-sm text-foreground/80">
                   Checked in at {formatInOfficeTz(openSession.checkin_at)}
-                  {openSession.needs_review ? (
-                    <span className="ml-2 text-foreground/70">(needs review)</span>
-                  ) : null}
                 </div>
               ) : (
                 <div className="text-sm text-foreground/80">Not checked in</div>
               )}
               {openSession && elapsedMinutes !== null ? (
                 <div className="text-xs text-foreground/70">Elapsed: {formatMinutes(elapsedMinutes)}</div>
-              ) : null}
-              {openSession?.review_reason ? (
-                <div className="text-xs text-foreground/70">Reason: {openSession.review_reason}</div>
               ) : null}
               {openSession ? (
                 <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-foreground/70">
@@ -548,7 +630,37 @@ export default function OfficeHoursPage() {
         </div>
 
         <div className="rounded-lg border border-foreground/10 p-4">
-          <div className="text-sm font-medium">This Week</div>
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div className="space-y-1">
+              <div className="text-sm font-medium">{selectedWeekLabel}</div>
+              {officeTz ? <div className="text-xs text-foreground/60">Times shown in {officeTz}</div> : null}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                variant="outline"
+                onClick={() => setWeekAnchorDate((prev) => addDays(prev, -7) ?? todayDateString())}
+              >
+                Prev
+              </Button>
+              <Button variant="outline" onClick={() => setWeekAnchorDate(todayDateString())}>
+                This week
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => setWeekAnchorDate((prev) => addDays(prev, 7) ?? todayDateString())}
+              >
+                Next
+              </Button>
+              <input
+                type="date"
+                className="h-9 rounded-md border bg-transparent px-2 text-sm"
+                value={weekAnchorDate}
+                onChange={(e) => setWeekAnchorDate(normalizeDateOnlyString(e.target.value) ?? todayDateString())}
+              />
+            </div>
+          </div>
+
           {weekly ? (
             <div className="mt-2 grid gap-2 sm:grid-cols-2">
               <div className="text-sm text-foreground/80">
@@ -564,137 +676,195 @@ export default function OfficeHoursPage() {
                 In-office deficit: {formatMinutes(weekly.deficit_in_office_minutes)}
               </div>
             </div>
-          ) : (
-            <div className="mt-2 text-sm text-foreground/70">Loading…</div>
-          )}
-        </div>
+	          ) : (
+	            <div className="mt-2 text-sm text-foreground/70">Loading…</div>
+	          )}
+	        </div>
 
-        <div className="rounded-lg border border-foreground/10 p-4">
-          <div className="text-sm font-medium">Shifts (this week)</div>
-          {shifts.length === 0 ? (
-            <div className="mt-2 text-sm text-foreground/70">No shifts scheduled.</div>
-          ) : (
-            <div className="mt-2 space-y-2">
-              {shifts.map((s) => {
-                const isFuture = new Date(s.starts_at) > new Date();
-                const canRequest = isFuture && s.status === "scheduled" && !s.covered_by_user_id;
-                const hasPendingRequest = openCoverageRequests.some((cr) => cr.shift_id === s.id);
-                return (
-                  <div key={s.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-foreground/10 px-3 py-2">
-                    <div className="text-sm text-foreground/80">
-                      {formatInOfficeTz(s.starts_at)} → {formatInOfficeTz(s.ends_at)}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {s.covered_by_user_id ? (
-                        <span className="text-xs text-foreground/70">coverage claimed</span>
-                      ) : hasPendingRequest ? (
-                        <span className="text-xs text-foreground/70">coverage requested</span>
-                      ) : null}
-                      {canRequest && !hasPendingRequest ? (
-                        <Button
-                          variant="ghost"
-                          onClick={() => onRequestCoverage(s.id)}
-                          disabled={loading}
-                          className="h-6 px-2 text-xs"
-                        >
-                          Request coverage
-                        </Button>
-                      ) : null}
-                      <span className="text-xs text-foreground/70">{s.status}</span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
+        <div className="grid gap-6 lg:grid-cols-3">
+          <div className="space-y-6 lg:col-span-2">
+	            <div className="rounded-lg border border-foreground/10 p-4">
+	              <div className="flex flex-wrap items-end justify-between gap-3">
+	                <div className="text-sm font-medium">Sessions</div>
+	                <div className="text-xs text-foreground/60">Showing sessions for the selected week.</div>
+	              </div>
 
-        <div className="rounded-lg border border-foreground/10 p-4">
-          <div className="text-sm font-medium">Open coverage requests</div>
-          {openCoverageRequests.length === 0 ? (
-            <div className="mt-2 text-sm text-foreground/70">No open coverage requests.</div>
-          ) : (
-            <div className="mt-2 space-y-2">
-              {openCoverageRequests.map((cr) => {
-                const isOwn = cr.requestor_user_id === userId;
-                return (
-                  <div key={cr.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-foreground/10 px-3 py-2">
-                    <div className="text-sm text-foreground/80">
-                      Shift: {cr.shift_id.slice(0, 8)}…
-                      {cr.notes ? ` • ${cr.notes}` : ""}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {isOwn ? (
-                        <Button
-                          variant="ghost"
-                          onClick={() => onCancelCoverageRequest(cr.id)}
-                          disabled={loading}
-                          className="h-6 px-2 text-xs"
-                        >
-                          Cancel
-                        </Button>
-                      ) : (
-                        <Button
-                          variant="ghost"
-                          onClick={() => onClaimCoverage(cr.id)}
-                          disabled={loading}
-                          className="h-6 px-2 text-xs"
-                        >
-                          Claim
-                        </Button>
-                      )}
-                      <span className="text-xs text-foreground/70">{cr.status}</span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
+              {sessions.length === 0 ? (
+                <div className="mt-2 text-sm text-foreground/70">No sessions yet.</div>
+              ) : (
+                <div className="mt-3 space-y-3">
+	                  {selectedWeekDays.map((day) => {
+	                    const daySessions = sessionsByDay.get(day) ?? [];
+	                    const totalMinutes = daySessions.reduce(
+	                      (sum, s) => sum + (typeof s.duration_minutes === "number" ? s.duration_minutes : 0),
+	                      0,
+	                    );
+	                    const inOfficeMinutes = daySessions.reduce(
+	                      (sum, s) =>
+	                        sum + (s.within_radius && typeof s.duration_minutes === "number" ? s.duration_minutes : 0),
+	                      0,
+	                    );
 
-        <div className="rounded-lg border border-foreground/10 p-4">
-          <div className="text-sm font-medium">Sessions (this week)</div>
-          {sessions.length === 0 ? (
-            <div className="mt-2 text-sm text-foreground/70">No sessions yet.</div>
-          ) : (
-            <div className="mt-2 space-y-2">
-              {sessions.map((s) => (
-                <div key={s.id} className="rounded-md border border-foreground/10 px-3 py-2">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="text-sm text-foreground/80">
-                      {formatInOfficeTz(s.checkin_at)}
-                      {s.checkout_at ? ` → ${formatInOfficeTz(s.checkout_at)}` : ""}
-                    </div>
-                    <div className="text-xs text-foreground/70">{s.status}</div>
-                  </div>
-                  <div className="mt-1 text-xs text-foreground/70">
-                    Duration: {s.duration_minutes === null ? "—" : formatMinutes(s.duration_minutes)}
-                    {s.needs_review ? " • needs review" : ""}
-                    {s.review_reason ? ` • ${s.review_reason}` : ""}
-                  </div>
+	                    return (
+	                      <details key={day} className="rounded-md border border-foreground/10" open={daySessions.length > 0}>
+	                        <summary className="cursor-pointer select-none px-3 py-2 text-sm">
+	                          <span className="font-medium">{day}</span>
+	                          <span className="ml-2 text-xs text-foreground/60">
+	                            {daySessions.length} session{daySessions.length === 1 ? "" : "s"} • {formatMinutes(totalMinutes)}
+	                            {inOfficeMinutes > 0 ? ` • in-office ${formatMinutes(inOfficeMinutes)}` : ""}
+	                          </span>
+	                        </summary>
+	                        <div className="space-y-2 px-3 pb-3">
+                          {daySessions.length === 0 ? (
+                            <div className="text-sm text-foreground/70">No sessions.</div>
+                          ) : (
+	                            daySessions.map((s) => {
+	                              return (
+	                                <div key={s.id} className="rounded-md border border-foreground/10 px-3 py-2">
+	                                  <div className="flex flex-wrap items-center justify-between gap-2">
+	                                    <div className="text-sm text-foreground/80">
+	                                      {formatInOfficeTz(s.checkin_at)}
+	                                      {s.checkout_at ? ` → ${formatInOfficeTz(s.checkout_at)}` : ""}
+	                                    </div>
+	                                    <div className="flex items-center gap-2 text-xs text-foreground/70">
+	                                      <span className="font-mono">{s.status}</span>
+	                                    </div>
+	                                  </div>
+	                                  <div className="mt-1 text-xs text-foreground/70">
+	                                    Duration: {s.duration_minutes === null ? "—" : formatMinutes(s.duration_minutes)}
+	                                    {s.within_radius ? " • in office" : s.within_grace ? " • in grace" : " • outside"}
+                                    {typeof s.distance_m_at_checkin === "number"
+                                      ? ` • check-in ~${s.distance_m_at_checkin}m`
+                                      : ""}
+	                                    {typeof s.distance_m_at_checkout === "number"
+	                                      ? ` • check-out ~${s.distance_m_at_checkout}m`
+	                                      : ""}
+	                                  </div>
+	                                </div>
+	                              );
+	                            })
+	                          )}
+                        </div>
+                      </details>
+                    );
+                  })}
                 </div>
-              ))}
+              )}
             </div>
-          )}
-        </div>
 
-        <div className="rounded-lg border border-foreground/10 p-4">
-          <div className="text-sm font-medium">Approved exceptions (this week)</div>
-          {exceptions.length === 0 ? (
-            <div className="mt-2 text-sm text-foreground/70">No exceptions.</div>
-          ) : (
-            <div className="mt-2 space-y-2">
-              {exceptions.map((e) => (
-                <div key={e.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-foreground/10 px-3 py-2">
-                  <div className="text-sm text-foreground/80">
-                    {e.kind}: {formatMinutes(e.minutes)}
-                    {e.reason ? ` • ${e.reason}` : ""}
-                  </div>
-                  <div className="text-xs text-foreground/70">{formatInOfficeTz(e.created_at)}</div>
+            <div className="rounded-lg border border-foreground/10 p-4">
+              <div className="text-sm font-medium">Approved exceptions</div>
+              {exceptions.length === 0 ? (
+                <div className="mt-2 text-sm text-foreground/70">No exceptions.</div>
+              ) : (
+                <div className="mt-2 space-y-2">
+                  {exceptions.map((e) => (
+                    <div
+                      key={e.id}
+                      className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-foreground/10 px-3 py-2"
+                    >
+                      <div className="text-sm text-foreground/80">
+                        {e.kind}: {formatMinutes(e.minutes)}
+                        {e.reason ? ` • ${e.reason}` : ""}
+                      </div>
+                      <div className="text-xs text-foreground/70">{formatInOfficeTz(e.created_at)}</div>
+                    </div>
+                  ))}
                 </div>
-              ))}
+              )}
             </div>
-          )}
+          </div>
+
+          <div className="space-y-6">
+            <div className="rounded-lg border border-foreground/10 p-4">
+              <div className="text-sm font-medium">Shifts</div>
+              {shifts.length === 0 ? (
+                <div className="mt-2 text-sm text-foreground/70">No shifts scheduled.</div>
+              ) : (
+                <div className="mt-2 space-y-2">
+                  {shifts.map((s) => {
+                    const isFuture = new Date(s.starts_at) > new Date();
+                    const canRequest = isFuture && s.status === "scheduled" && !s.covered_by_user_id;
+                    const hasPendingRequest = openCoverageRequests.some((cr) => cr.shift_id === s.id);
+                    return (
+                      <div
+                        key={s.id}
+                        className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-foreground/10 px-3 py-2"
+                      >
+                        <div className="text-sm text-foreground/80">
+                          {formatInOfficeTz(s.starts_at)} → {formatInOfficeTz(s.ends_at)}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {s.covered_by_user_id ? (
+                            <span className="text-xs text-foreground/70">coverage claimed</span>
+                          ) : hasPendingRequest ? (
+                            <span className="text-xs text-foreground/70">coverage requested</span>
+                          ) : null}
+                          {canRequest && !hasPendingRequest ? (
+                            <Button
+                              variant="ghost"
+                              onClick={() => onRequestCoverage(s.id)}
+                              disabled={loading}
+                              className="h-6 px-2 text-xs"
+                            >
+                              Request coverage
+                            </Button>
+                          ) : null}
+                          <span className="text-xs text-foreground/70">{s.status}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div className="rounded-lg border border-foreground/10 p-4">
+              <div className="text-sm font-medium">Open coverage requests</div>
+              {openCoverageRequests.length === 0 ? (
+                <div className="mt-2 text-sm text-foreground/70">No open coverage requests.</div>
+              ) : (
+                <div className="mt-2 space-y-2">
+                  {openCoverageRequests.map((cr) => {
+                    const isOwn = cr.requestor_user_id === userId;
+                    return (
+                      <div
+                        key={cr.id}
+                        className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-foreground/10 px-3 py-2"
+                      >
+                        <div className="text-sm text-foreground/80">
+                          Shift: {cr.shift_id.slice(0, 8)}…
+                          {cr.notes ? ` • ${cr.notes}` : ""}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {isOwn ? (
+                            <Button
+                              variant="ghost"
+                              onClick={() => onCancelCoverageRequest(cr.id)}
+                              disabled={loading}
+                              className="h-6 px-2 text-xs"
+                            >
+                              Cancel
+                            </Button>
+                          ) : (
+                            <Button
+                              variant="ghost"
+                              onClick={() => onClaimCoverage(cr.id)}
+                              disabled={loading}
+                              className="h-6 px-2 text-xs"
+                            >
+                              Claim
+                            </Button>
+                          )}
+                          <span className="text-xs text-foreground/70">{cr.status}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </div>
     </PageShell>

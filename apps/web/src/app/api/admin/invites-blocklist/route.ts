@@ -7,49 +7,16 @@ import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
 
-type InviteAllowlistRow = {
+type InviteBlocklistRow = {
   id: string;
-  email: string;
-  email_normalized: string;
-  sort_order: number;
+  pattern: string;
+  pattern_normalized: string;
   is_active: boolean;
-  invited_by: string | null;
-  invited_at: string;
-  revoked_at: string | null;
+  banned_by: string | null;
+  banned_at: string;
+  unbanned_at: string | null;
   notes: string | null;
 };
-
-async function syncProfileDisplayNameForAllowlistedEmail(
-  admin: ReturnType<typeof getSupabaseAdminClient>,
-  emailNormalized: string,
-  notes: string | null | undefined,
-) {
-  if (!emailNormalized || emailNormalized.startsWith("@")) return;
-  if (notes === undefined) return;
-
-  const { data: privateRow, error: privateErr } = await admin
-    .from("profile_private")
-    .select("id")
-    .eq("email", emailNormalized)
-    .limit(1)
-    .maybeSingle();
-
-  if (privateErr || !privateRow?.id) return;
-
-  const nextName = notes === null ? null : notes.trim();
-
-  const { error: profileErr } = await admin
-    .from("profiles")
-    .update({ display_name: nextName && nextName.length > 0 ? nextName : null })
-    .eq("id", privateRow.id);
-
-  if (profileErr) {
-    console.error("[admin] failed to sync profile display_name from allowlist notes", {
-      email: emailNormalized,
-      message: profileErr.message,
-    });
-  }
-}
 
 async function isAdminForRequest(
   request: NextRequest,
@@ -87,7 +54,7 @@ function normalizeEntry(raw: string): string {
   return raw.trim().toLowerCase();
 }
 
-function normalizeAllowlistEntry(raw: string): string {
+function normalizePattern(raw: string): string {
   const normalized = normalizeEntry(raw);
   if (z.string().email().safeParse(normalized).success) return normalized;
   if (normalized.startsWith("@")) return normalized;
@@ -103,18 +70,18 @@ function isValidDomain(domain: string): boolean {
   return /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(domain);
 }
 
-function isValidAllowlistEntry(value: string): boolean {
+function isValidPattern(value: string): boolean {
   if (z.string().email().safeParse(value).success) return true;
   if (value.startsWith("@")) return isValidDomain(value.slice(1));
   return false;
 }
 
 const CreateSchema = z.object({
-  email: z
+  pattern: z
     .string()
     .min(3)
-    .transform(normalizeAllowlistEntry)
-    .refine(isValidAllowlistEntry, { message: "invalid_email" }),
+    .transform(normalizePattern)
+    .refine(isValidPattern, { message: "invalid_pattern" }),
   notes: z.string().optional(),
 });
 
@@ -124,23 +91,27 @@ const UpdateSchema = z.object({
   notes: z.string().nullable().optional(),
 });
 
+const DeleteSchema = z.object({
+  id: z.string().uuid(),
+});
+
 export async function GET(request: NextRequest) {
   const authz = await isAdminForRequest(request);
   if (!authz.ok) return authz.response;
 
   const admin = getSupabaseAdminClient();
   const { data, error } = await admin
-    .from("invites_allowlist")
-    .select("id,email,email_normalized,sort_order,is_active,invited_by,invited_at,revoked_at,notes")
-    .order("sort_order", { ascending: false })
-    .order("invited_at", { ascending: false })
+    .from("invites_blocklist")
+    .select("id,pattern,pattern_normalized,is_active,banned_by,banned_at,unbanned_at,notes")
+    .order("is_active", { ascending: false })
+    .order("banned_at", { ascending: false })
     .limit(200);
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json({ invites: (data ?? []) as InviteAllowlistRow[] });
+  return NextResponse.json({ bans: (data ?? []) as InviteBlocklistRow[] });
 }
 
 export async function POST(request: NextRequest) {
@@ -154,19 +125,19 @@ export async function POST(request: NextRequest) {
   }
 
   const admin = getSupabaseAdminClient();
-  const { email, notes } = parsed.data;
+  const { pattern, notes } = parsed.data;
 
   const { error: upsertErr } = await admin
-    .from("invites_allowlist")
+    .from("invites_blocklist")
     .upsert(
       {
-        email,
+        pattern,
         is_active: true,
-        revoked_at: null,
-        invited_by: authz.userId,
+        unbanned_at: null,
+        banned_by: authz.userId,
         notes: typeof notes === "string" && notes.trim().length > 0 ? notes.trim() : null,
       },
-      { onConflict: "email_normalized" },
+      { onConflict: "pattern_normalized" },
     );
 
   if (upsertErr) {
@@ -174,19 +145,16 @@ export async function POST(request: NextRequest) {
   }
 
   const { data: row, error: readErr } = await admin
-    .from("invites_allowlist")
-    .select("id,email,email_normalized,sort_order,is_active,invited_by,invited_at,revoked_at,notes")
-    .eq("email_normalized", email)
+    .from("invites_blocklist")
+    .select("id,pattern,pattern_normalized,is_active,banned_by,banned_at,unbanned_at,notes")
+    .eq("pattern_normalized", pattern)
     .single();
 
   if (readErr) {
     return NextResponse.json({ error: readErr.message }, { status: 500 });
   }
 
-  const normalizedNotes = typeof notes === "string" ? (notes.trim().length > 0 ? notes.trim() : null) : undefined;
-  await syncProfileDisplayNameForAllowlistedEmail(admin, email, normalizedNotes);
-
-  return NextResponse.json({ invite: row as InviteAllowlistRow });
+  return NextResponse.json({ ban: row as InviteBlocklistRow });
 }
 
 export async function PATCH(request: NextRequest) {
@@ -203,29 +171,23 @@ export async function PATCH(request: NextRequest) {
 
   const patch: Record<string, unknown> = {
     is_active,
-    revoked_at: is_active ? null : new Date().toISOString(),
+    unbanned_at: is_active ? null : new Date().toISOString(),
   };
   if (notes !== undefined) patch.notes = notes;
 
   const { data: row, error: updateErr } = await admin
-    .from("invites_allowlist")
+    .from("invites_blocklist")
     .update(patch)
     .eq("id", id)
-    .select("id,email,email_normalized,sort_order,is_active,invited_by,invited_at,revoked_at,notes")
+    .select("id,pattern,pattern_normalized,is_active,banned_by,banned_at,unbanned_at,notes")
     .single();
 
   if (updateErr) {
     return NextResponse.json({ error: updateErr.message }, { status: 500 });
   }
 
-  await syncProfileDisplayNameForAllowlistedEmail(admin, (row as InviteAllowlistRow).email_normalized, notes);
-
-  return NextResponse.json({ invite: row as InviteAllowlistRow });
+  return NextResponse.json({ ban: row as InviteBlocklistRow });
 }
-
-const DeleteSchema = z.object({
-  id: z.string().uuid(),
-});
 
 export async function DELETE(request: NextRequest) {
   const authz = await isAdminForRequest(request);
@@ -237,7 +199,7 @@ export async function DELETE(request: NextRequest) {
   }
 
   const admin = getSupabaseAdminClient();
-  const { error } = await admin.from("invites_allowlist").delete().eq("id", parsed.data.id);
+  const { error } = await admin.from("invites_blocklist").delete().eq("id", parsed.data.id);
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
