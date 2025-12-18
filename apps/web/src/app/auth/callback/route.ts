@@ -2,13 +2,15 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
 import { getPublicEnv } from "@/lib/env";
+import { allowlistKeysForNormalizedEmail, normalizeEmail } from "@/lib/invitesAllowlist";
+import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
 
 export async function GET(request: NextRequest) {
   const url = request.nextUrl;
   const code = url.searchParams.get("code");
-  const tokenHash = url.searchParams.get("token_hash");
+  const tokenHash = url.searchParams.get("token_hash") || url.searchParams.get("token");
   const type = url.searchParams.get("type");
 
   const rawRedirectTo = url.searchParams.get("redirectTo") || "/dashboard";
@@ -36,8 +38,63 @@ export async function GET(request: NextRequest) {
     },
   });
 
-  if (code) {
-    const { error } = await supabase.auth.exchangeCodeForSession(code);
+  // Some providers prepend "pkce_" to the code even though it arrives as `token`.
+  // Treat a token that looks like a PKCE code the same as an explicit `code` param.
+  const pkceCode = code ?? (tokenHash?.startsWith("pkce_") ? tokenHash : null);
+
+  async function signOutAndRedirect(errorKey: "not_allowlisted" | "server_error") {
+    try {
+      await supabase.auth.signOut();
+    } catch {
+      // Ignore; we'll still redirect.
+    }
+
+    const errUrl = new URL("/login", url.origin);
+    errUrl.searchParams.set("error", errorKey);
+    errUrl.searchParams.set("redirectTo", redirectTo);
+    response.headers.set("location", errUrl.toString());
+  }
+
+  async function enforceInviteOnlyForSignedInUser() {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    const email = user?.email ? normalizeEmail(user.email) : null;
+    if (!email) {
+      await signOutAndRedirect("server_error");
+      return;
+    }
+
+    try {
+      const admin = getSupabaseAdminClient();
+      const allowlistKeys = allowlistKeysForNormalizedEmail(email);
+
+      const { data: allowlistedRows, error: allowlistError } = await admin
+        .from("invites_allowlist")
+        .select("id")
+        .in("email_normalized", allowlistKeys)
+        .eq("is_active", true)
+        .limit(1);
+
+      if (allowlistError) {
+        console.error("[auth] allowlist lookup failed", { message: allowlistError.message });
+        await signOutAndRedirect("server_error");
+        return;
+      }
+
+      const allowlisted = Array.isArray(allowlistedRows) && allowlistedRows.length > 0;
+      if (!allowlisted) {
+        await signOutAndRedirect("not_allowlisted");
+      }
+    } catch (e) {
+      console.error("[auth] allowlist lookup crashed", { message: e instanceof Error ? e.message : String(e) });
+      await signOutAndRedirect("server_error");
+    }
+  }
+
+  if (pkceCode) {
+    const { error } = await supabase.auth.exchangeCodeForSession(pkceCode);
     if (error) {
       console.error("[auth] exchangeCodeForSession failed", { message: error.message });
       const errUrl = new URL("/login", url.origin);
@@ -46,6 +103,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.redirect(errUrl);
     }
 
+    await enforceInviteOnlyForSignedInUser();
     return response;
   }
 
@@ -63,5 +121,6 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(errUrl);
   }
 
+  await enforceInviteOnlyForSignedInUser();
   return response;
 }

@@ -45,6 +45,17 @@ type OfficeHourRequirementRow = {
   effective_end: string | null;
 };
 
+type InviteAllowlistRow = {
+  id: string;
+  email: string;
+  email_normalized: string;
+  is_active: boolean;
+  invited_by: string | null;
+  invited_at: string;
+  revoked_at: string | null;
+  notes: string | null;
+};
+
 async function ensureOfficeConfigRow(admin: ReturnType<typeof getSupabaseAdminClient>) {
   const { data: existing, error: existingErr } = await admin
     .from("office_config")
@@ -134,6 +145,18 @@ export default async function AdminPage() {
         : Promise.resolve({ data: [] as AssignmentRow[] }),
     ]);
 
+  let initialInvitesAllowlist: InviteAllowlistRow[] = [];
+  try {
+    const { data: invites } = await admin
+      .from("invites_allowlist")
+      .select("id,email,email_normalized,is_active,invited_by,invited_at,revoked_at,notes")
+      .order("invited_at", { ascending: false })
+      .limit(200);
+    initialInvitesAllowlist = (invites ?? []) as InviteAllowlistRow[];
+  } catch {
+    initialInvitesAllowlist = [];
+  }
+
   // Phase 11: office config + quiet hours (best-effort; requires Phase 11 migration applied)
   let initialOfficeConfig: OfficeConfigRow | null = null;
   let initialOfficeLocation: OfficeLocationRow | null = null;
@@ -185,6 +208,7 @@ export default async function AdminPage() {
         initialSelectedTermId={selectedTermId}
         initialGlobalAdvisorAssignments={(globalAdvisorAssignments ?? []) as AssignmentRow[]}
         initialTermAssignments={(termAssignments ?? []) as AssignmentRow[]}
+        initialInvitesAllowlist={initialInvitesAllowlist}
         initialOfficeConfig={initialOfficeConfig}
         initialOfficeLocation={initialOfficeLocation}
         initialOfficeHourRequirements={initialOfficeHourRequirements}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { PageShell } from "@/components/page-shell";
 import { Button } from "@/components/ui/button";
@@ -109,12 +109,25 @@ async function getCurrentPosition(): Promise<{ lat: number; lon: number }> {
   });
 }
 
+function haversineMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const r = 6371000;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.asin(Math.sqrt(a));
+  return Math.round(r * c);
+}
+
 export default function OfficeHoursPage() {
   const supabase = useMemo(() => getSupabaseBrowserClient(), []);
 
   const [pin, setPin] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const [weekly, setWeekly] = useState<WeeklyHours | null>(null);
   const [openSession, setOpenSession] = useState<OpenSession | null>(null);
@@ -124,6 +137,24 @@ export default function OfficeHoursPage() {
   const [openCoverageRequests, setOpenCoverageRequests] = useState<CoverageRequest[]>([]);
   const [officeTz, setOfficeTz] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
+
+  const [officeGeo, setOfficeGeo] = useState<{
+    lat: number;
+    lon: number;
+    radiusM: number;
+    graceRadiusM: number;
+  } | null>(null);
+  const [officeGeoStatus, setOfficeGeoStatus] = useState<"loading" | "ready" | "not_configured">("loading");
+
+  const [autoPresenceEnabled, setAutoPresenceEnabled] = useState(true);
+  const [lastPresenceCheckAt, setLastPresenceCheckAt] = useState<string | null>(null);
+  const [lastDistanceM, setLastDistanceM] = useState<number | null>(null);
+  const [lastDistanceBand, setLastDistanceBand] = useState<"in_radius" | "in_grace" | "outside_grace" | null>(
+    null,
+  );
+
+  const presenceCheckLockRef = useRef(false);
+  const [clock, setClock] = useState(() => Date.now());
 
   const formatInOfficeTz = useCallback(
     (iso: string) => {
@@ -144,6 +175,7 @@ export default function OfficeHoursPage() {
 
   const refresh = useCallback(async () => {
     setError(null);
+    setNotice(null);
 
     const { data: userData } = await supabase.auth.getUser();
     if (userData?.user?.id) setUserId(userData.user.id);
@@ -204,11 +236,174 @@ export default function OfficeHoursPage() {
     void refresh();
   }, [refresh]);
 
+  useEffect(() => {
+    try {
+      const v = window.localStorage.getItem("officeHours.autoPresenceEnabled");
+      if (v === "0") setAutoPresenceEnabled(false);
+    } catch {
+      // Ignore storage errors (private mode, etc.)
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("officeHours.autoPresenceEnabled", autoPresenceEnabled ? "1" : "0");
+    } catch {
+      // Ignore
+    }
+  }, [autoPresenceEnabled]);
+
+  useEffect(() => {
+    if (officeGeo) {
+      setOfficeGeoStatus("ready");
+      return;
+    }
+
+    let cancelled = false;
+    async function load() {
+      setOfficeGeoStatus("loading");
+      const { data: config, error: cfgErr } = await supabase
+        .from("office_config")
+        .select("primary_office_location_id")
+        .eq("id", true)
+        .maybeSingle();
+
+      if (cancelled) return;
+      if (cfgErr || !config?.primary_office_location_id) {
+        setOfficeGeoStatus("not_configured");
+        return;
+      }
+
+      const { data: office, error: officeErr } = await supabase
+        .from("office_locations")
+        .select("lat,lon,radius_m,grace_radius_m")
+        .eq("id", config.primary_office_location_id)
+        .maybeSingle();
+
+      if (cancelled) return;
+      if (officeErr || !office) {
+        setOfficeGeoStatus("not_configured");
+        return;
+      }
+      if (office.lat === null || office.lon === null || office.radius_m === null || office.grace_radius_m === null) {
+        setOfficeGeoStatus("not_configured");
+        return;
+      }
+
+      setOfficeGeo({
+        lat: office.lat,
+        lon: office.lon,
+        radiusM: office.radius_m,
+        graceRadiusM: office.grace_radius_m,
+      });
+      setOfficeGeoStatus("ready");
+    }
+
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [officeGeo, supabase]);
+
+  const openCheckinAt = openSession?.checkin_at ?? null;
+
+  useEffect(() => {
+    if (!openCheckinAt) return;
+
+    setClock(Date.now());
+    const id = window.setInterval(() => setClock(Date.now()), 30_000);
+    return () => window.clearInterval(id);
+  }, [openCheckinAt]);
+
+  const runPresenceCheck = useCallback(
+    async (reason: "interval" | "manual" | "resume") => {
+      if (!openSession) return;
+      if (presenceCheckLockRef.current) return;
+
+      presenceCheckLockRef.current = true;
+      try {
+        const geo = officeGeo;
+        if (!geo) {
+          setLastPresenceCheckAt(new Date().toISOString());
+          setLastDistanceM(null);
+          setLastDistanceBand(null);
+          return;
+        }
+
+        const { lat, lon } = await getCurrentPosition();
+        const dist = haversineMeters(lat, lon, geo.lat, geo.lon);
+        const band: typeof lastDistanceBand =
+          dist <= geo.radiusM ? "in_radius" : dist <= geo.graceRadiusM ? "in_grace" : "outside_grace";
+
+        setLastPresenceCheckAt(new Date().toISOString());
+        setLastDistanceM(dist);
+        setLastDistanceBand(band);
+
+        if (band !== "outside_grace") return;
+
+        setNotice("You appear to be outside the office area. Checking you out…");
+
+        const res = await fetch("/api/office-hours/check-out", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ lat, lon, pin: pin.trim().length > 0 ? pin : undefined, reason }),
+        });
+
+        const json = (await res.json().catch(() => null)) as { error?: string } | null;
+        if (!res.ok) {
+          setError(friendlyError(json?.error ?? ""));
+          return;
+        }
+
+        setNotice("Checked out automatically because you left the office area.");
+        await refresh();
+      } catch {
+        setLastPresenceCheckAt(new Date().toISOString());
+      } finally {
+        presenceCheckLockRef.current = false;
+      }
+    },
+    [officeGeo, openSession, pin, refresh],
+  );
+
+  useEffect(() => {
+    if (!openSession || !autoPresenceEnabled) return;
+
+    void runPresenceCheck("resume");
+
+    const intervalMs = 30 * 60_000;
+    const id = window.setInterval(() => {
+      void runPresenceCheck("interval");
+    }, intervalMs);
+
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") {
+        void runPresenceCheck("resume");
+      }
+    };
+
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [autoPresenceEnabled, openSession, runPresenceCheck]);
+
   const onCheckIn = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setNotice(null);
     try {
       const { lat, lon } = await getCurrentPosition();
+      if (officeGeo) {
+        const dist = haversineMeters(lat, lon, officeGeo.lat, officeGeo.lon);
+        const band: typeof lastDistanceBand =
+          dist <= officeGeo.radiusM ? "in_radius" : dist <= officeGeo.graceRadiusM ? "in_grace" : "outside_grace";
+        setLastPresenceCheckAt(new Date().toISOString());
+        setLastDistanceM(dist);
+        setLastDistanceBand(band);
+      }
       const res = await fetch("/api/office-hours/check-in", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -227,13 +422,22 @@ export default function OfficeHoursPage() {
     } finally {
       setLoading(false);
     }
-  }, [pin, refresh]);
+  }, [officeGeo, pin, refresh]);
 
   const onCheckOut = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setNotice(null);
     try {
       const { lat, lon } = await getCurrentPosition();
+      if (officeGeo) {
+        const dist = haversineMeters(lat, lon, officeGeo.lat, officeGeo.lon);
+        const band: typeof lastDistanceBand =
+          dist <= officeGeo.radiusM ? "in_radius" : dist <= officeGeo.graceRadiusM ? "in_grace" : "outside_grace";
+        setLastPresenceCheckAt(new Date().toISOString());
+        setLastDistanceM(dist);
+        setLastDistanceBand(band);
+      }
       const res = await fetch("/api/office-hours/check-out", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -252,7 +456,7 @@ export default function OfficeHoursPage() {
     } finally {
       setLoading(false);
     }
-  }, [pin, refresh]);
+  }, [officeGeo, pin, refresh]);
 
   const onRequestCoverage = useCallback(
     async (shiftId: string) => {
@@ -325,6 +529,10 @@ export default function OfficeHoursPage() {
     [refresh],
   );
 
+  const elapsedMinutes = openSession
+    ? Math.max(0, Math.round((clock - new Date(openSession.checkin_at).getTime()) / 60_000))
+    : null;
+
   return (
     <PageShell title="Office Hours" description="Check in/out with location + rotating PIN.">
       <div className="space-y-6">
@@ -342,8 +550,53 @@ export default function OfficeHoursPage() {
               ) : (
                 <div className="text-sm text-foreground/80">Not checked in</div>
               )}
+              {openSession && elapsedMinutes !== null ? (
+                <div className="text-xs text-foreground/70">Elapsed: {formatMinutes(elapsedMinutes)}</div>
+              ) : null}
               {openSession?.review_reason ? (
                 <div className="text-xs text-foreground/70">Reason: {openSession.review_reason}</div>
+              ) : null}
+              {openSession ? (
+                <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-foreground/70">
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={autoPresenceEnabled}
+                      onChange={(e) => setAutoPresenceEnabled(e.target.checked)}
+                    />
+                    <span>Auto-check location (30m)</span>
+                  </label>
+                  <Button
+                    variant="ghost"
+                    onClick={() => void runPresenceCheck("manual")}
+                    disabled={loading}
+                    className="h-6 px-2 text-xs"
+                  >
+                    Check now
+                  </Button>
+                </div>
+              ) : null}
+              {openSession && lastPresenceCheckAt ? (
+                <div className="text-xs text-foreground/60">
+                  Last location check: {formatInOfficeTz(lastPresenceCheckAt)}
+                  {typeof lastDistanceM === "number"
+                    ? ` • ~${lastDistanceM}m`
+                    : officeGeo
+                      ? " • —"
+                      : " • (office not configured)"}
+                  {lastDistanceBand === "in_radius"
+                    ? " • in radius"
+                    : lastDistanceBand === "in_grace"
+                      ? " • in grace"
+                      : lastDistanceBand === "outside_grace"
+                        ? " • outside grace"
+                        : ""}
+                </div>
+              ) : null}
+              {officeGeoStatus === "not_configured" ? (
+                <div className="mt-2 text-xs text-foreground/70">
+                  Office geofence isn’t configured yet. Ask an admin to set it in <span className="font-mono">/admin</span> → Office Hours Config.
+                </div>
               ) : null}
             </div>
 
@@ -365,6 +618,7 @@ export default function OfficeHoursPage() {
             </div>
           </div>
 
+          {notice ? <div className="mt-3 text-sm text-foreground/80">{notice}</div> : null}
           {error ? <div className="mt-3 text-sm text-red-600">{error}</div> : null}
 
           <div className="mt-4 flex gap-2">
