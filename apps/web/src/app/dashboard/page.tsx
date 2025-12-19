@@ -20,6 +20,7 @@ type TaskRow = {
   title: string;
   status: "todo" | "doing" | "done";
   due_at: string | null;
+  assigned_to?: string | null;
 };
 
 type ShiftRow = {
@@ -73,20 +74,31 @@ export default async function DashboardPage() {
   }
 
   const nowIso = new Date().toISOString();
+  const nowMs = Date.parse(nowIso);
 
   const [
-    { data: weeklyRows },
+    weeklyRes,
     { data: tzData },
     { data: tasksRaw },
+    { data: delegatedTasksRaw },
     { data: shiftsRaw },
     { data: meetingsRaw },
+    { data: openSessionRaw },
   ] = await Promise.all([
-    supabase.rpc("my_weekly_hours"),
+    supabase.rpc("my_weekly_hours", { _week_start: null }),
     supabase.rpc("office_timezone"),
     supabase
       .from("tasks")
       .select("id,title,status,due_at")
       .eq("assigned_to", user.id)
+      .neq("status", "done")
+      .order("due_at", { ascending: true, nullsFirst: false })
+      .order("created_at", { ascending: false })
+      .limit(6),
+    supabase
+      .from("tasks")
+      .select("id,title,status,due_at,assigned_to")
+      .eq("created_by", user.id)
       .neq("status", "done")
       .order("due_at", { ascending: true, nullsFirst: false })
       .order("created_at", { ascending: false })
@@ -100,7 +112,23 @@ export default async function DashboardPage() {
       .order("starts_at", { ascending: true })
       .limit(6),
     supabase.rpc("my_upcoming_meetings", { _limit: 4 }),
+    supabase
+      .from("office_hour_sessions")
+      .select("checkin_at")
+      .eq("user_id", user.id)
+      .eq("status", "open")
+      .is("checkout_at", null)
+      .order("checkin_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
   ]);
+
+  let weeklyRows = weeklyRes.data;
+  if (weeklyRes.error) {
+    // Compatibility: older DBs may only have the no-arg version (or may not support overloads well).
+    const fallback = await supabase.rpc("my_weekly_hours");
+    weeklyRows = fallback.data;
+  }
 
   const weekly = (weeklyRows?.[0] as WeeklyHoursRow | undefined) ?? null;
   const officeTz = typeof tzData === "string" && tzData.length > 0 ? tzData : null;
@@ -119,8 +147,34 @@ export default async function DashboardPage() {
   };
 
   const tasks = (tasksRaw ?? []) as TaskRow[];
+  const delegatedTasks = ((delegatedTasksRaw ?? []) as TaskRow[]).filter((t) => t.assigned_to !== user.id);
   const shifts = (shiftsRaw ?? []) as ShiftRow[];
   const meetings = (meetingsRaw ?? []) as MeetingRow[];
+
+  const openSession = (openSessionRaw as { checkin_at?: string } | null) ?? null;
+  const openMinutes = openSession?.checkin_at
+    ? Math.max(0, Math.floor((nowMs - Date.parse(openSession.checkin_at)) / 60000))
+    : 0;
+
+  const delegatedAssigneeIds = Array.from(
+    new Set(
+      delegatedTasks
+        .map((t) => t.assigned_to)
+        .filter((x): x is string => typeof x === "string" && x.length > 0),
+    ),
+  );
+
+  const { data: delegatedAssigneesRaw } =
+    delegatedAssigneeIds.length === 0
+      ? { data: [] }
+      : await supabase.from("profiles").select("id,display_name").in("id", delegatedAssigneeIds);
+
+  const delegatedAssignees = new Map(
+    ((delegatedAssigneesRaw ?? []) as Array<{ id: string; display_name: string | null }>).map((p) => [
+      p.id,
+      p.display_name,
+    ]),
+  );
 
   return (
     <PageShell title="Dashboard" description="My tasks, my hours this week, and upcoming shifts.">
@@ -140,6 +194,14 @@ export default async function DashboardPage() {
                 {formatHours(weekly?.total_minutes ?? 0)}
               </div>
             </div>
+            {openSession?.checkin_at ? (
+              <div className="flex items-baseline justify-between gap-3">
+                <div className="text-sm text-foreground/70">In progress</div>
+                <div className="text-sm font-medium">
+                  {formatHours(openMinutes)} (since {formatInOfficeTz(openSession.checkin_at)})
+                </div>
+              </div>
+            ) : null}
             <div className="flex items-baseline justify-between gap-3">
               <div className="text-sm text-foreground/70">In-office</div>
               <div className="text-lg font-semibold">
@@ -188,6 +250,28 @@ export default async function DashboardPage() {
               ))}
             </div>
           )}
+
+          {delegatedTasks.length > 0 ? (
+            <div className="mt-5 border-t pt-4">
+              <div className="text-xs font-medium text-foreground/70">Delegated</div>
+              <div className="mt-2 space-y-2">
+                {delegatedTasks.map((t) => {
+                  const assignee = t.assigned_to ? (delegatedAssignees.get(t.assigned_to) ?? t.assigned_to) : "Unassigned";
+                  return (
+                    <div key={t.id} className="flex items-start justify-between gap-3 rounded-md border border-foreground/10 px-3 py-2">
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-medium">{t.title}</div>
+                        <div className="mt-1 text-xs text-foreground/70">
+                          {assignee}
+                          {t.due_at ? ` • due ${formatInOfficeTz(t.due_at)}` : ""}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
         </section>
 
         <section className="rounded-md border p-4">

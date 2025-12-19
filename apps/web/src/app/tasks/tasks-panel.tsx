@@ -42,6 +42,12 @@ type TaskAttachmentRow = {
   created_at: string;
 };
 
+type AssigneeRow = {
+  id: string;
+  display_name: string | null;
+  role_key: string;
+};
+
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init);
   const data = (await res.json().catch(() => ({}))) as T;
@@ -54,18 +60,16 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
 
 function formatDateInputValue(iso: string | null): string {
   if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
+  const trimmed = iso.trim();
+  if (trimmed.length >= 10) return trimmed.slice(0, 10);
+  return "";
 }
 
 function toIsoFromDateInput(value: string): string | null {
   const v = value.trim();
   if (!v) return null;
-  const d = new Date(`${v}T00:00:00.000Z`);
+  // Use noon UTC to avoid timezone-related "previous day" rendering issues.
+  const d = new Date(`${v}T12:00:00.000Z`);
   if (Number.isNaN(d.getTime())) return null;
   return d.toISOString();
 }
@@ -74,21 +78,25 @@ export function TasksPanel({
   initialTasks,
   initialCommittees,
   projectIdFilter,
+  viewerUserId,
 }: {
   initialTasks: TaskRow[];
   initialCommittees: CommitteeRow[];
   projectIdFilter: string;
+  viewerUserId: string;
 }) {
   const [tasks, setTasks] = useState<TaskRow[]>(initialTasks);
   const [committees, setCommittees] = useState<CommitteeRow[]>(initialCommittees);
+  const [assigneesByCommitteeId, setAssigneesByCommitteeId] = useState<Record<string, AssigneeRow[]>>({});
 
   const [status, setStatus] = useState<string>("");
 
   const [newCommitteeId, setNewCommitteeId] = useState<string>(initialCommittees[0]?.id ?? "");
   const [newTitle, setNewTitle] = useState<string>("");
+  const [newDescription, setNewDescription] = useState<string>("");
   const [newPriority, setNewPriority] = useState<TaskRow["priority"]>("medium");
   const [newDue, setNewDue] = useState<string>("");
-  const [assignToMe, setAssignToMe] = useState<boolean>(true);
+  const [newAssigneeId, setNewAssigneeId] = useState<string>(viewerUserId);
 
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   const [commentsByTaskId, setCommentsByTaskId] = useState<Record<string, TaskCommentRow[]>>({});
@@ -102,6 +110,15 @@ export function TasksPanel({
     for (const c of committees) m.set(c.id, c);
     return m;
   }, [committees]);
+
+  async function loadAssignees(committeeId: string) {
+    if (!committeeId) return;
+    if (assigneesByCommitteeId[committeeId]) return;
+
+    const qs = new URLSearchParams({ committeeId });
+    const { assignees } = await fetchJson<{ assignees: AssigneeRow[] }>(`/api/tasks/assignees?${qs.toString()}`);
+    setAssigneesByCommitteeId((prev) => ({ ...prev, [committeeId]: assignees ?? [] }));
+  }
 
   async function reload() {
     const qs = projectIdFilter ? `?projectId=${encodeURIComponent(projectIdFilter)}` : "";
@@ -121,13 +138,20 @@ export function TasksPanel({
     setAttachmentsByTaskId((prev) => ({ ...prev, [taskId]: attachmentsRes.attachments }));
   }
 
-  async function toggleExpanded(taskId: string) {
+  async function toggleExpanded(taskId: string, committeeId: string) {
     if (expandedTaskId === taskId) {
       setExpandedTaskId(null);
       return;
     }
 
     setExpandedTaskId(taskId);
+    if (committeeId) {
+      try {
+        await loadAssignees(committeeId);
+      } catch {
+        // Ignore (assignment UI will remain limited).
+      }
+    }
     if (!commentsByTaskId[taskId] || !attachmentsByTaskId[taskId]) {
       setStatus("Loading...");
       try {
@@ -221,6 +245,21 @@ export function TasksPanel({
     }
   }
 
+  function assigneeLabel(a: AssigneeRow): string {
+    const name = (a.display_name ?? "").trim();
+    if (name) return name;
+    return a.id;
+  }
+
+  function taskAssigneeLabel(task: TaskRow): string {
+    if (!task.assigned_to) return "Unassigned";
+    if (task.assigned_to === viewerUserId) return "Me";
+    const options = assigneesByCommitteeId[task.committee_id] ?? [];
+    const match = options.find((a) => a.id === task.assigned_to);
+    if (match) return assigneeLabel(match);
+    return task.assigned_to;
+  }
+
   async function onCreateTask(e: FormEvent) {
     e.preventDefault();
     if (!newCommitteeId) {
@@ -237,13 +276,15 @@ export function TasksPanel({
           committeeId: newCommitteeId,
           projectId: projectIdFilter ? projectIdFilter : null,
           title: newTitle,
+          description: newDescription.trim() ? newDescription.trim() : undefined,
           priority: newPriority,
           dueAt: toIsoFromDateInput(newDue),
-          assignToMe,
+          assignedTo: newAssigneeId ? newAssigneeId : null,
         }),
       });
 
       setNewTitle("");
+      setNewDescription("");
       setNewDue("");
       setStatus("");
       await reload();
@@ -297,7 +338,12 @@ export function TasksPanel({
               <select
                 className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
                 value={newCommitteeId}
-                onChange={(e: ChangeEvent<HTMLSelectElement>) => setNewCommitteeId(e.target.value)}
+                onChange={(e: ChangeEvent<HTMLSelectElement>) => {
+                  const next = e.target.value;
+                  setNewCommitteeId(next);
+                  setNewAssigneeId(viewerUserId);
+                  void loadAssignees(next);
+                }}
               >
                 {committees.map((c) => (
                   <option key={c.id} value={c.id}>
@@ -315,6 +361,33 @@ export function TasksPanel({
                 onChange={(e: ChangeEvent<HTMLInputElement>) => setNewTitle(e.target.value)}
                 placeholder="e.g., Draft agenda for next meeting"
               />
+            </label>
+
+            <label className="space-y-1 text-sm md:col-span-5">
+              <div className="text-foreground/70">Description</div>
+              <textarea
+                className="min-h-20 w-full rounded-md border bg-transparent px-2 py-2 text-sm"
+                value={newDescription}
+                onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setNewDescription(e.target.value)}
+                placeholder="Optional context, links, or acceptance criteria…"
+              />
+            </label>
+
+            <label className="space-y-1 text-sm md:col-span-2">
+              <div className="text-foreground/70">Assignee</div>
+              <select
+                className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                value={newAssigneeId}
+                onChange={(e: ChangeEvent<HTMLSelectElement>) => setNewAssigneeId(e.target.value)}
+                onFocus={() => void loadAssignees(newCommitteeId)}
+              >
+                <option value="">Unassigned</option>
+                {(assigneesByCommitteeId[newCommitteeId] ?? []).map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.id === viewerUserId ? "Me" : assigneeLabel(a)} ({a.role_key})
+                  </option>
+                ))}
+              </select>
             </label>
 
             <label className="space-y-1 text-sm">
@@ -338,15 +411,6 @@ export function TasksPanel({
                 value={newDue}
                 onChange={(e: ChangeEvent<HTMLInputElement>) => setNewDue(e.target.value)}
               />
-            </label>
-
-            <label className="flex items-end gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={assignToMe}
-                onChange={(e: ChangeEvent<HTMLInputElement>) => setAssignToMe(e.target.checked)}
-              />
-              <span className="text-foreground/70">Assign to me</span>
             </label>
 
             <div className="flex items-end md:col-span-5">
@@ -385,11 +449,12 @@ export function TasksPanel({
                         <div className="text-xs text-foreground/70">
                           {committee ? committee.name : t.committee_id}
                           {t.due_at ? ` • Due ${formatDateInputValue(t.due_at)}` : ""}
+                          {t.assigned_to ? ` • ${taskAssigneeLabel(t)}` : " • Unassigned"}
                         </div>
                       </div>
 
                       <div className="flex flex-wrap items-center gap-2">
-                        <Button variant="ghost" onClick={() => void toggleExpanded(t.id)}>
+                        <Button variant="ghost" onClick={() => void toggleExpanded(t.id, t.committee_id)}>
                           {isExpanded ? "Hide" : "Details"}
                         </Button>
 
@@ -413,6 +478,71 @@ export function TasksPanel({
 
                     {isExpanded ? (
                       <div className="mt-3 grid gap-3 rounded-md border bg-transparent p-3 md:grid-cols-2">
+                        <div className="space-y-2 md:col-span-2">
+                          <div className="text-sm font-medium">Task details</div>
+                          <div className="grid gap-3 md:grid-cols-3">
+                            <label className="space-y-1 text-sm">
+                              <div className="text-foreground/70">Assignee</div>
+                              <select
+                                className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                                value={t.assigned_to ?? ""}
+                                onChange={(e: ChangeEvent<HTMLSelectElement>) =>
+                                  void updateTask(t.id, { assignedTo: e.target.value || null })
+                                }
+                              >
+                                <option value="">Unassigned</option>
+                                {(assigneesByCommitteeId[t.committee_id] ?? []).map((a) => (
+                                  <option key={a.id} value={a.id}>
+                                    {a.id === viewerUserId ? "Me" : assigneeLabel(a)} ({a.role_key})
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+
+                            <label className="space-y-1 text-sm">
+                              <div className="text-foreground/70">Priority</div>
+                              <select
+                                className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                                value={t.priority}
+                                onChange={(e: ChangeEvent<HTMLSelectElement>) =>
+                                  void updateTask(t.id, { priority: e.target.value })
+                                }
+                              >
+                                <option value="low">Low</option>
+                                <option value="medium">Medium</option>
+                                <option value="high">High</option>
+                              </select>
+                            </label>
+
+                            <label className="space-y-1 text-sm">
+                              <div className="text-foreground/70">Due date</div>
+                              <input
+                                type="date"
+                                className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                                value={formatDateInputValue(t.due_at)}
+                                onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                                  void updateTask(t.id, { dueAt: toIsoFromDateInput(e.target.value) })
+                                }
+                              />
+                            </label>
+                          </div>
+
+                          <label className="block space-y-1 text-sm">
+                            <div className="text-foreground/70">Description</div>
+                            <textarea
+                              className="min-h-20 w-full rounded-md border bg-transparent px-2 py-2 text-sm"
+                              value={t.description ?? ""}
+                              onChange={(e: ChangeEvent<HTMLTextAreaElement>) =>
+                                setTasks((prev) =>
+                                  prev.map((row) => (row.id === t.id ? { ...row, description: e.target.value } : row)),
+                                )
+                              }
+                              onBlur={() => void updateTask(t.id, { description: (t.description ?? "").trim() || null })}
+                              placeholder="Optional context…"
+                            />
+                          </label>
+                        </div>
+
                         <div className="space-y-2">
                           <div className="text-sm font-medium">Comments</div>
                           {comments.length === 0 ? (

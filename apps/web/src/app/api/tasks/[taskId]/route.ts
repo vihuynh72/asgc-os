@@ -44,6 +44,7 @@ const PatchTaskSchema = z
     priority: z.enum(["low", "medium", "high"]).optional(),
     dueAt: z.string().datetime({ offset: true }).nullable().optional(),
     projectId: z.string().uuid().nullable().optional(),
+    assignedTo: z.string().uuid().nullable().optional(),
   })
   .refine((x) => Object.keys(x).length > 0, { message: "empty patch" });
 
@@ -75,6 +76,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   if (parsed.data.priority) patch.priority = parsed.data.priority;
   if (parsed.data.dueAt === null || typeof parsed.data.dueAt === "string") patch.due_at = parsed.data.dueAt;
   if (parsed.data.projectId === null || typeof parsed.data.projectId === "string") patch.project_id = parsed.data.projectId;
+  if (parsed.data.assignedTo === null || typeof parsed.data.assignedTo === "string") patch.assigned_to = parsed.data.assignedTo;
 
   const { data: task, error } = await supabase
     .from("tasks")

@@ -5,6 +5,8 @@ import { PageShell } from "@/components/page-shell";
 import { Button } from "@/components/ui/button";
 import { getSupabaseServerComponentClient } from "@/lib/supabaseServerComponent";
 
+import { ChangePasswordPanel } from "./change-password-panel";
+
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
@@ -88,6 +90,8 @@ export default async function AccountPage() {
           </p>
         </section>
 
+        <ChangePasswordPanel />
+
         <div className="flex flex-wrap items-center gap-3">
           <Link className="text-sm underline" href="/dashboard">
             Go to dashboard
@@ -102,4 +106,3 @@ export default async function AccountPage() {
     </PageShell>
   );
 }
-
