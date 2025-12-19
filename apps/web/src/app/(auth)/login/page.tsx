@@ -112,13 +112,18 @@ export default function LoginPage() {
   const [postAuthRedirectTo, setPostAuthRedirectTo] = useState<string>("/dashboard");
 
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [rememberEmail, setRememberEmail] = useState(true);
   const [rememberedEmails, setRememberedEmails] = useState<string[]>([]);
   const [token, setToken] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
+  const [isSigningIn, setIsSigningIn] = useState(false);
+  const [isResettingPassword, setIsResettingPassword] = useState(false);
   const [status, setStatus] = useState<"idle" | "sent" | "error">("idle");
   const [verifyStatus, setVerifyStatus] = useState<"idle" | "error">("idle");
+  const [passwordStatus, setPasswordStatus] = useState<"idle" | "error">("idle");
+  const [resetStatus, setResetStatus] = useState<"idle" | "sent" | "error">("idle");
 
   const normalizedEmail = useMemo(() => normalizeEmail(email), [email]);
 
@@ -178,6 +183,8 @@ export default function LoginPage() {
     setIsSubmitting(true);
     setStatus("idle");
     setVerifyStatus("idle");
+    setPasswordStatus("idle");
+    setResetStatus("idle");
 
     const redirectTo = getRedirectToForRequests();
 
@@ -206,11 +213,78 @@ export default function LoginPage() {
     }
   }
 
+  async function onPasswordSignIn(e: React.FormEvent) {
+    e.preventDefault();
+
+    setIsSigningIn(true);
+    setPasswordStatus("idle");
+    setStatus("idle");
+    setVerifyStatus("idle");
+    setResetStatus("idle");
+
+    const redirectTo = getRedirectToForRequests();
+
+    try {
+      if (rememberEmail) {
+        rememberEmailOnDevice(normalizedEmail);
+        setRememberedEmails(readRememberedEmails());
+      }
+
+      const res = await fetch("/api/auth/signin-password", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: normalizedEmail, password, redirectTo }),
+      });
+
+      if (!res.ok) {
+        setPasswordStatus("error");
+        return;
+      }
+
+      const json = (await res.json().catch(() => null)) as { redirectTo?: string } | null;
+      const next = typeof json?.redirectTo === "string" && json.redirectTo.startsWith("/") ? json.redirectTo : "/dashboard";
+      window.location.assign(next);
+    } catch {
+      setPasswordStatus("error");
+    } finally {
+      setIsSigningIn(false);
+    }
+  }
+
+  async function onRequestPasswordReset() {
+    setIsResettingPassword(true);
+    setResetStatus("idle");
+    setPasswordStatus("idle");
+
+    try {
+      const redirectTo = "/account";
+
+      const res = await fetch("/api/auth/request-password-reset", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: normalizedEmail, redirectTo }),
+      });
+
+      if (!res.ok) {
+        setResetStatus("error");
+        return;
+      }
+
+      setResetStatus("sent");
+    } catch {
+      setResetStatus("error");
+    } finally {
+      setIsResettingPassword(false);
+    }
+  }
+
   async function onVerify(e: React.FormEvent) {
     e.preventDefault();
 
     setIsVerifying(true);
     setVerifyStatus("idle");
+    setPasswordStatus("idle");
+    setResetStatus("idle");
 
     const redirectTo = getRedirectToForRequests();
 
@@ -270,7 +344,7 @@ export default function LoginPage() {
       </Suspense>
       <SupabaseHashErrorBanner />
 
-      <form onSubmit={onSubmit} className="mt-6 max-w-md space-y-4">
+      <form onSubmit={onPasswordSignIn} className="mt-6 max-w-md space-y-4">
         <div className="space-y-1">
           <label htmlFor="email" className="text-sm font-medium">
             Email
@@ -285,6 +359,22 @@ export default function LoginPage() {
             onChange={(e) => setEmail(e.target.value)}
             className="h-9 w-full rounded-md border bg-background px-3 text-sm"
             placeholder="you@example.com"
+          />
+        </div>
+
+        <div className="space-y-1">
+          <label htmlFor="password" className="text-sm font-medium">
+            Password
+          </label>
+          <input
+            id="password"
+            name="password"
+            type="password"
+            autoComplete="current-password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+            placeholder="••••••••"
           />
         </div>
 
@@ -325,8 +415,45 @@ export default function LoginPage() {
           Remember this email on this device
         </label>
 
+        <Button type="submit" disabled={isSigningIn || normalizedEmail.length === 0 || password.length === 0}>
+          {isSigningIn ? "Signing in..." : "Sign in"}
+        </Button>
+
+        <div className="flex flex-wrap items-center gap-3">
+          <Button
+            type="button"
+            variant="outline"
+            disabled={isResettingPassword || normalizedEmail.length === 0}
+            onClick={() => void onRequestPasswordReset()}
+          >
+            {isResettingPassword ? "Sending..." : "Forgot password"}
+          </Button>
+          {resetStatus === "sent" ? <span className="text-sm text-foreground/70">If invited, you’ll get a reset email shortly.</span> : null}
+        </div>
+
+        {passwordStatus === "error" ? (
+          <p className="text-sm text-foreground/70">
+            Sign-in failed. Check your email/password, or use email sign-in below.
+          </p>
+        ) : null}
+
+        {resetStatus === "error" ? (
+          <p className="text-sm text-foreground/70">
+            Could not send a reset email. Please try again.
+          </p>
+        ) : null}
+      </form>
+
+      <div className="mt-10 max-w-md border-t pt-6">
+        <h2 className="text-sm font-semibold">Email sign-in (first time / fallback)</h2>
+        <p className="mt-1 text-sm text-foreground/70">
+          If you don’t have a password yet, request a sign-in email. You can set a password from your Account page after you’re in.
+        </p>
+      </div>
+
+      <form onSubmit={onSubmit} className="mt-4 max-w-md space-y-4">
         <Button type="submit" disabled={isSubmitting || normalizedEmail.length === 0}>
-          {isSubmitting ? "Sending..." : "Send magic link"}
+          {isSubmitting ? "Sending..." : "Send sign-in email"}
         </Button>
 
         {status === "sent" ? (

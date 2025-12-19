@@ -81,6 +81,7 @@ export default async function TasksPage({
         initialTasks={(tasks ?? []) as TaskRow[]}
         initialCommittees={((committees ?? []) as CommitteeRow[])}
         projectIdFilter={projectIdFilter}
+        viewerUserId={user.id}
       />
     </PageShell>
   );

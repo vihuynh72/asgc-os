@@ -109,6 +109,7 @@ const CreateTaskSchema = z.object({
   description: z.string().trim().max(5000).optional(),
   priority: z.enum(["low", "medium", "high"]).optional(),
   dueAt: z.string().datetime({ offset: true }).nullable().optional(),
+  assignedTo: z.string().uuid().nullable().optional(),
   assignToMe: z.boolean().optional(),
 });
 
@@ -128,7 +129,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "invalid request" }, { status: 400 });
   }
 
-  const { committeeId, projectId, title, description, priority, dueAt, assignToMe } = parsed.data;
+  const { committeeId, projectId, title, description, priority, dueAt, assignedTo, assignToMe } = parsed.data;
+
+  const assignedToValue = assignedTo !== undefined ? assignedTo : assignToMe ? user.id : null;
 
   const insertRow: Record<string, unknown> = {
     committee_id: committeeId,
@@ -138,7 +141,7 @@ export async function POST(request: NextRequest) {
     priority: priority ?? "medium",
     due_at: dueAt ?? null,
     created_by: user.id,
-    assigned_to: assignToMe ? user.id : null,
+    assigned_to: assignedToValue,
     status: "todo",
   };
 
