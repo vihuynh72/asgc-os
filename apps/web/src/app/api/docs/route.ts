@@ -64,6 +64,8 @@ export async function POST(request: NextRequest) {
     meeting_id?: string;
     description?: string;
     checksum_sha256?: string;
+    version_of_doc_id?: string;
+    content_text?: string;
   };
 
   try {
@@ -80,14 +82,39 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "doc_type_required" }, { status: 400 });
   }
 
-  if (!body.storage_path || typeof body.storage_path !== "string") {
+  const docType = body.doc_type;
+  const isCommitteeNote = docType === "committee_notes";
+
+  if (!isCommitteeNote && (!body.storage_path || typeof body.storage_path !== "string")) {
     return NextResponse.json({ error: "storage_path_required" }, { status: 400 });
+  }
+
+  if (isCommitteeNote && (!body.content_text || typeof body.content_text !== "string")) {
+    return NextResponse.json({ error: "content_text_required" }, { status: 400 });
+  }
+
+  if (
+    isCommitteeNote &&
+    (!body.committee_id || typeof body.committee_id !== "string")
+  ) {
+    return NextResponse.json({ error: "committee_id_required" }, { status: 400 });
+  }
+
+  if (
+    (docType === "minutes" || docType === "agenda") &&
+    (!body.meeting_id || typeof body.meeting_id !== "string")
+  ) {
+    return NextResponse.json({ error: "meeting_id_required" }, { status: 400 });
+  }
+
+  if (body.version_of_doc_id && typeof body.version_of_doc_id !== "string") {
+    return NextResponse.json({ error: "invalid_version_of_doc_id" }, { status: 400 });
   }
 
   const { data, error } = await supabase.rpc("create_doc", {
     _title: body.title,
-    _doc_type: body.doc_type,
-    _storage_path: body.storage_path,
+    _doc_type: docType,
+    _storage_path: body.storage_path ?? null,
     _storage_bucket: body.storage_bucket ?? "documents",
     _mime_type: body.mime_type ?? null,
     _size_bytes: body.size_bytes ?? null,
@@ -96,6 +123,8 @@ export async function POST(request: NextRequest) {
     _meeting_id: body.meeting_id ?? null,
     _description: body.description ?? null,
     _checksum_sha256: body.checksum_sha256 ?? null,
+    _version_of_doc_id: body.version_of_doc_id ?? null,
+    _content_text: body.content_text ?? null,
   });
 
   if (error) {

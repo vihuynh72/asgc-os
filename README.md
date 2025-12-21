@@ -184,6 +184,10 @@ Phase 25 (Budget & Funding v1) should:
 - Agenda Items: Submit a draft agenda item for a meeting, then finalize it.
 - Admin: Review (accept/reject) submitted agenda items.
 - Docs: Upload a document to the library and verify visibility filters.
+- Minutes: Upload meeting minutes from a meeting detail page, then download them.
+- Committee Notes: Create a committee-only note, generate a summary, and extract suggested tasks.
+- Suggested Tasks: Approve a suggested task and confirm it appears in Tasks.
+- Agenda PDF: Generate an agenda PDF from accepted agenda items and download it.
 - Tasks: create a task, add a comment, add a URL attachment.
 
 Next up (per the phase list):
