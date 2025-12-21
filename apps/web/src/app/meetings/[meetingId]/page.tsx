@@ -4,6 +4,7 @@ import { PageShell } from "@/components/page-shell";
 import { getSupabaseServerComponentClient } from "@/lib/supabaseServerComponent";
 
 import { AgendaItemsPanel } from "./agenda-items-panel";
+import { MeetingDocsPanel } from "./meeting-docs-panel";
 
 type Meeting = {
   id: string;
@@ -40,6 +41,25 @@ type DeadlineInfo = {
   posting_deadline: string;
   is_submission_open: boolean;
   is_special: boolean;
+};
+
+type DocRow = {
+  id: string;
+  doc_type: string;
+  title: string;
+  description: string | null;
+  content_text: string | null;
+  storage_path: string | null;
+  storage_bucket: string;
+  mime_type: string | null;
+  size_bytes: number | null;
+  visibility: string;
+  committee_id: string | null;
+  meeting_id: string | null;
+  version_of_doc_id: string | null;
+  uploaded_by: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
 type Params = Promise<{ meetingId: string }>;
@@ -85,6 +105,16 @@ export default async function MeetingDetailPage({ params }: { params: Params }) 
   const typedMeeting = meeting as Meeting;
   const typedItems = (agendaItems ?? []) as AgendaItem[];
   const typedDeadline = deadline as DeadlineInfo | null;
+
+  const { data: meetingDocs } = await supabase.rpc("list_docs", {
+    _doc_type: null,
+    _committee_id: null,
+    _meeting_id: meetingId,
+    _visibility: null,
+    _limit: 100,
+    _offset: 0,
+  });
+  const typedDocs = (meetingDocs ?? []) as DocRow[];
 
   function formatMeetingType(type: string): string {
     switch (type) {
@@ -145,6 +175,16 @@ export default async function MeetingDetailPage({ params }: { params: Params }) 
             initialDeadline={typedDeadline}
             isAdmin={isAdminUser}
             userId={user.id}
+          />
+        </div>
+
+        <div>
+          <h2 className="mb-4 text-lg font-medium">Meeting Documents</h2>
+          <MeetingDocsPanel
+            meetingId={meetingId}
+            committeeId={typedMeeting.committee_id}
+            isAdmin={isAdminUser}
+            initialDocs={typedDocs}
           />
         </div>
       </div>

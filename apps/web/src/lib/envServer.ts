@@ -20,6 +20,28 @@ export function getServerEnv(): ServerEnv {
   return parsed.data;
 }
 
+const AiEnvSchema = z.object({
+  OPENAI_API_KEY: z.string().min(1),
+  OPENAI_MODEL: z.string().min(1).optional(),
+});
+
+export type AiEnv = z.infer<typeof AiEnvSchema>;
+
+export function getAiEnv(): AiEnv {
+  const parsed = AiEnvSchema.safeParse({
+    OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+    OPENAI_MODEL: process.env.OPENAI_MODEL,
+  });
+
+  if (!parsed.success) {
+    throw new Error(
+      "Missing AI env. Set OPENAI_API_KEY (and optional OPENAI_MODEL) in .env.local (server-only).",
+    );
+  }
+
+  return parsed.data;
+}
+
 const EmailEnvSchema = z.object({
   EMAIL_PROVIDER: z.enum(["resend"]),
   EMAIL_FROM: z.string().min(1),
