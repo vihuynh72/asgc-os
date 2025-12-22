@@ -15,7 +15,7 @@ This repo is driven by the build packet files (treat these as the product + arch
 - App: Next.js App Router under [apps/web](apps/web)
 - DB: Supabase Postgres + RLS. Schema is managed via migrations under [supabase/migrations](supabase/migrations)
 - Workflow: use Supabase CLI to push migrations (dry-run first). Avoid manual SQL editor except for emergencies.
-- Status: phases 01–24 are implemented and have been pushed to Supabase.
+- Status: phases 01–40 are implemented (migrations + API + UI).
 
 ## Phase progress (Build Packet)
 
@@ -157,6 +157,68 @@ This repo is built strictly phase-by-phase per [01_stack_and_architecture.md](01
 	- API: [apps/web/src/app/api/docs/route.ts](apps/web/src/app/api/docs/route.ts)
 	- UI: [apps/web/src/app/docs/page.tsx](apps/web/src/app/docs/page.tsx)
 
+- PHASE 25/26 — Minutes upload + committee notes: ✅ complete
+	- Migration: [supabase/migrations/202512190002_phase25_26_minutes_notes.sql](supabase/migrations/202512190002_phase25_26_minutes_notes.sql)
+	- UI: [apps/web/src/app/meetings/[meetingId]/meeting-docs-panel.tsx](apps/web/src/app/meetings/[meetingId]/meeting-docs-panel.tsx)
+
+- PHASE 27 — AI summarize (single doc type): ✅ complete
+	- Migration: [supabase/migrations/202512190003_phase27_doc_summaries.sql](supabase/migrations/202512190003_phase27_doc_summaries.sql)
+
+- PHASE 28/29 — Suggested tasks + review workflow: ✅ complete
+	- Migration: [supabase/migrations/202512190004_phase28_29_suggested_tasks_review.sql](supabase/migrations/202512190004_phase28_29_suggested_tasks_review.sql)
+	- UI: [apps/web/src/app/tasks/page.tsx](apps/web/src/app/tasks/page.tsx)
+
+- PHASE 30 — Agenda builder v1: ✅ complete
+	- API: [apps/web/src/app/api/meetings/[meetingId]/agenda-pdf/route.ts](apps/web/src/app/api/meetings/[meetingId]/agenda-pdf/route.ts)
+	- UI: [apps/web/src/app/meetings/[meetingId]/meeting-docs-panel.tsx](apps/web/src/app/meetings/[meetingId]/meeting-docs-panel.tsx)
+
+- PHASE 31 — Budget lines v1: ✅ complete
+	- Migration: [supabase/migrations/202512190006_phase31_budget_lines_v1.sql](supabase/migrations/202512190006_phase31_budget_lines_v1.sql)
+	- API: [apps/web/src/app/api/finance/budget-lines/route.ts](apps/web/src/app/api/finance/budget-lines/route.ts)
+	- UI: [apps/web/src/app/finance/page.tsx](apps/web/src/app/finance/page.tsx)
+
+- PHASE 32 — Funding request intake: ✅ complete
+	- Migration: [supabase/migrations/202512190007_phase32_funding_requests_v1.sql](supabase/migrations/202512190007_phase32_funding_requests_v1.sql)
+	- API: [apps/web/src/app/api/finance/funding-requests/route.ts](apps/web/src/app/api/finance/funding-requests/route.ts)
+	- UI: [apps/web/src/app/finance/page.tsx](apps/web/src/app/finance/page.tsx)
+
+- PHASE 33 — Threshold routing + state machine: ✅ complete
+	- Migration: [supabase/migrations/202512190008_phase33_finance_config_and_state.sql](supabase/migrations/202512190008_phase33_finance_config_and_state.sql)
+	- API: [apps/web/src/app/api/finance/funding-requests/[requestId]/transition/route.ts](apps/web/src/app/api/finance/funding-requests/[requestId]/transition/route.ts)
+
+- PHASE 34 — Vote capture v1: ✅ complete
+	- Migration: [supabase/migrations/202512190009_phase34_board_votes_v1.sql](supabase/migrations/202512190009_phase34_board_votes_v1.sql)
+	- API: [apps/web/src/app/api/finance/board-votes/route.ts](apps/web/src/app/api/finance/board-votes/route.ts)
+	- UI: [apps/web/src/app/finance/page.tsx](apps/web/src/app/finance/page.tsx)
+
+- PHASE 35 — Expense logging v1: ✅ complete
+	- Migration: [supabase/migrations/202512190010_phase35_expenses_v1.sql](supabase/migrations/202512190010_phase35_expenses_v1.sql)
+	- API: [apps/web/src/app/api/finance/expenses/route.ts](apps/web/src/app/api/finance/expenses/route.ts)
+	- UI: [apps/web/src/app/finance/page.tsx](apps/web/src/app/finance/page.tsx)
+
+- PHASE 36 — Budget burn-down: ✅ complete
+	- Migration: [supabase/migrations/202512190011_phase36_budget_burndown.sql](supabase/migrations/202512190011_phase36_budget_burndown.sql)
+	- API: [apps/web/src/app/api/finance/budget-burndown/route.ts](apps/web/src/app/api/finance/budget-burndown/route.ts)
+	- UI: [apps/web/src/app/finance/page.tsx](apps/web/src/app/finance/page.tsx)
+
+- PHASE 37 — Grant cycle v1: ✅ complete
+	- Migration: [supabase/migrations/202512190012_phase37_grant_cycles_v1.sql](supabase/migrations/202512190012_phase37_grant_cycles_v1.sql)
+	- API: [apps/web/src/app/api/finance/grant-cycles/route.ts](apps/web/src/app/api/finance/grant-cycles/route.ts)
+	- UI: [apps/web/src/app/finance/page.tsx](apps/web/src/app/finance/page.tsx)
+
+- PHASE 38 — Grant intake: ✅ complete
+	- Migration: [supabase/migrations/202512190013_phase38_grant_applications_v1.sql](supabase/migrations/202512190013_phase38_grant_applications_v1.sql)
+	- API: [apps/web/src/app/api/finance/grant-applications/route.ts](apps/web/src/app/api/finance/grant-applications/route.ts)
+	- UI: [apps/web/src/app/finance/page.tsx](apps/web/src/app/finance/page.tsx)
+
+- PHASE 39 — Service contract lead-time warnings: ✅ complete
+	- Migration: [supabase/migrations/202512190014_phase39_contract_lead_time.sql](supabase/migrations/202512190014_phase39_contract_lead_time.sql)
+	- UI: [apps/web/src/app/finance/page.tsx](apps/web/src/app/finance/page.tsx)
+
+- PHASE 40 — Finance dashboard exports: ✅ complete
+	- API: [apps/web/src/app/api/finance/exports/route.ts](apps/web/src/app/api/finance/exports/route.ts)
+	- UI: [apps/web/src/app/finance/page.tsx](apps/web/src/app/finance/page.tsx)
+
 ## Handoff notes (for the next AI/dev)
 
 ### Patterns to follow (do not deviate)
@@ -166,14 +228,13 @@ This repo is built strictly phase-by-phase per [01_stack_and_architecture.md](01
 - User/session auth in Route Handlers uses `@supabase/ssr` `createServerClient(...)` + `supabase.auth.getUser()` (cookie-based).
 - Audit logging under RLS should be done via `SECURITY DEFINER` triggers/functions with pinned `search_path` and execution revoked.
 
-### Where to start next (Phase 25)
+### Where to start next (Phase 41)
 
-Phase 25 (Budget & Funding v1) should:
+Phase 41 (Clubs registry v1) should:
 
-- Implement `budget_lines` table to track allocations.
-- Implement `funding_requests` table for student organizations/committees to request funds.
-- Add workflow for funding request review (submitted -> committee_review -> board_review -> approved/rejected).
-- Link funding requests to agenda items for meeting discussion.
+- Implement `clubs` table (advisor, constitution doc, membership count).
+- Wire ICC module pages under `/clubs` and `/icc`.
+- Add admin CRUD for club records and constitution uploads.
 
 ### Quick verification checklist
 
@@ -188,11 +249,12 @@ Phase 25 (Budget & Funding v1) should:
 - Committee Notes: Create a committee-only note, generate a summary, and extract suggested tasks.
 - Suggested Tasks: Approve a suggested task and confirm it appears in Tasks.
 - Agenda PDF: Generate an agenda PDF from accepted agenda items and download it.
+- Finance: Create a budget line, submit a funding request with breakdown, transition status, record a vote, log an expense, view burn-down, and generate an export.
 - Tasks: create a task, add a comment, add a URL attachment.
 
 Next up (per the phase list):
 
-- PHASE 25 — Budget & Funding v1 (not started)
+- PHASE 41 — Clubs registry v1 (not started)
 
 ## Local dev (web)
 

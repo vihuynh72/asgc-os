@@ -38,8 +38,8 @@ type SuggestedTaskRow = {
   created_at: string;
   reviewed_at: string | null;
   published_task_id: string | null;
-  docs?: { id: string; title: string } | null;
-  committees?: { id: string; name: string } | null;
+  docs?: { id: string; title: string }[] | null;
+  committees?: { id: string; name: string }[] | null;
 };
 
 export default async function TasksPage({

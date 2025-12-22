@@ -76,8 +76,12 @@ function formatDocType(type: string): string {
       return "Attachment";
     case "receipt":
       return "Receipt";
+    case "grant_application":
+      return "Grant Application";
     case "report":
       return "Report";
+    case "finance_export":
+      return "Finance Export";
     case "constitution":
       return "Constitution";
     case "policy":
@@ -412,9 +416,11 @@ export function DocsPanel({
           <option value="committee_notes">Committee Notes</option>
           <option value="attachment">Attachment</option>
           <option value="receipt">Receipt</option>
+          <option value="grant_application">Grant Application</option>
           <option value="report">Report</option>
           <option value="constitution">Constitution</option>
           <option value="policy">Policy</option>
+          <option value="finance_export">Finance Export</option>
           <option value="other">Other</option>
         </select>
 
@@ -504,6 +510,7 @@ export function DocsPanel({
                 <option value="committee_notes">Committee Notes</option>
                 <option value="attachment">Attachment</option>
                 <option value="receipt">Receipt</option>
+                <option value="grant_application">Grant Application</option>
                 <option value="report">Report</option>
                 <option value="constitution">Constitution</option>
                 <option value="policy">Policy</option>

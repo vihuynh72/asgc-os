@@ -21,8 +21,8 @@ type SuggestedTask = {
   created_at: string;
   reviewed_at: string | null;
   published_task_id: string | null;
-  docs?: { id: string; title: string } | null;
-  committees?: { id: string; name: string } | null;
+  docs?: { id: string; title: string }[] | null;
+  committees?: { id: string; name: string }[] | null;
 };
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -186,14 +186,14 @@ export function SuggestedTasksPanel({
                     </div>
                   ) : null}
                   <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-foreground/70">
-                    {task.committees?.name ? (
+                    {task.committees?.[0]?.name ? (
                       <span className="rounded bg-foreground/5 px-1.5 py-0.5">
-                        {task.committees.name}
+                        {task.committees[0].name}
                       </span>
                     ) : null}
-                    {task.docs?.title ? (
+                    {task.docs?.[0]?.title ? (
                       <span className="rounded bg-foreground/5 px-1.5 py-0.5">
-                        {task.docs.title}
+                        {task.docs[0].title}
                       </span>
                     ) : null}
                     <span className={`rounded px-1.5 py-0.5 ${statusClass(task.status)}`}>
