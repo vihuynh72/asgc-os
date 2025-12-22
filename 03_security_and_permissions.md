@@ -36,12 +36,12 @@ Tasks/projects:
 Docs:
 - internal: readable by members
 - restricted: only exec/President/Advisor
-- finance receipts/contracts: VP Finance + President + Advisor only
+- finance receipts/contracts: Executives (VP Finance) + President + Advisor
 - delete: soft-delete only, with audit log
 
 Finance:
-- funding_requests: requestor drafts/submits; VP Finance manages; Board records votes
-- expenses: VP Finance creates/updates; Advisor approves if needed
+- funding_requests: requestor drafts/submits; executives manage; Board records votes
+- expenses: executives create/update; Advisor approves if needed
 - grants: intake + advisor approval flags
 
 Clubs/ICC:
@@ -55,7 +55,7 @@ Clubs/ICC:
   - UPDATE: only edge functions can close sessions (preferred), or user can close own open session
 - funding_requests:
   - requestor can read/write own drafts
-  - VP Finance can read/write all
+  - executives can read/write all
   - President/Advisor read all
 
 ## 4) Audit requirements (must log)
