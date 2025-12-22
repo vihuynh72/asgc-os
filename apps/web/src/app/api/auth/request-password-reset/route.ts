@@ -1,8 +1,7 @@
-import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
-import { getPublicEnv } from "@/lib/env";
+import { sendEmail } from "@/lib/emailSender";
 import { normalizeEmail } from "@/lib/invitesAllowlist";
 import { safePostAuthRedirectPath, safeRedirectPathOrNull } from "@/lib/redirects";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
@@ -47,23 +46,33 @@ export async function POST(request: NextRequest) {
   const callbackUrl = new URL("/auth/callback", origin);
   if (postAuthRedirectTo) callbackUrl.searchParams.set("redirectTo", postAuthRedirectTo);
 
-  const env = getPublicEnv();
-  const supabase = createServerClient(env.NEXT_PUBLIC_SUPABASE_URL, env.NEXT_PUBLIC_SUPABASE_ANON_KEY, {
-    cookies: {
-      getAll() {
-        return request.cookies.getAll();
-      },
-      setAll() {
-        // No-op.
-      },
-    },
+  const { data, error } = await admin.auth.admin.generateLink({
+    type: "recovery",
+    email,
+    options: { redirectTo: callbackUrl.toString() },
   });
 
-  const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: callbackUrl.toString() });
-  if (error) {
-    console.error("[auth] resetPasswordForEmail failed", { message: error.message });
+  if (error || !data?.properties?.hashed_token || !data?.properties?.verification_type) {
+    console.error("[auth] generateLink recovery failed", { message: error?.message ?? "missing_link_data" });
+    return NextResponse.json({ ok: false }, { status: 500 });
+  }
+
+  const resetLink = new URL(callbackUrl.toString());
+  resetLink.searchParams.set("token_hash", data.properties.hashed_token);
+  resetLink.searchParams.set("type", data.properties.verification_type);
+
+  const subject = "ASGC OS password reset";
+  const text =
+    `Reset your ASGC OS password.\n\n` +
+    `Open this link to continue:\n${resetLink.toString()}\n\n` +
+    `If you did not request this email, you can ignore it.`;
+
+  try {
+    await sendEmail({ to: email, subject, text });
+  } catch (err) {
+    console.error("[auth] sendEmail failed", { message: err instanceof Error ? err.message : "unknown_error" });
+    return NextResponse.json({ ok: false }, { status: 500 });
   }
 
   return response;
 }
-

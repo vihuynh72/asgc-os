@@ -449,6 +449,11 @@ export default function LoginPage() {
         <p className="mt-1 text-sm text-foreground/70">
           If you don’t have a password yet, request a sign-in email. You can set a password from your Account page after you’re in.
         </p>
+        {process.env.NODE_ENV !== "production" ? (
+          <p className="mt-2 text-xs text-foreground/60">
+            Local dev emails are captured in Supabase Inbucket at http://localhost:54324.
+          </p>
+        ) : null}
       </div>
 
       <form onSubmit={onSubmit} className="mt-4 max-w-md space-y-4">
