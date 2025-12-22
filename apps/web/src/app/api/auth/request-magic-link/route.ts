@@ -1,8 +1,7 @@
-import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
-import { getPublicEnv } from "@/lib/env";
+import { sendEmail } from "@/lib/emailSender";
 import { normalizeEmail } from "@/lib/invitesAllowlist";
 import { POST_AUTH_REDIRECT_COOKIE, safePostAuthRedirectPath, safeRedirectPathOrNull } from "@/lib/redirects";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
@@ -58,34 +57,32 @@ export async function POST(request: NextRequest) {
     return response;
   }
 
-  // Send a PKCE magic link (creates user if absent). Using PKCE ensures Supabase emails include
-  // a `code` query param instead of hash fragments so /auth/callback can exchange it server-side.
-  const env = getPublicEnv();
-
-  const anon = createServerClient(env.NEXT_PUBLIC_SUPABASE_URL, env.NEXT_PUBLIC_SUPABASE_ANON_KEY, {
-    cookies: {
-      getAll() {
-        return request.cookies.getAll();
-      },
-      setAll(cookiesToSet) {
-        for (const { name, value, options } of cookiesToSet) {
-          response.cookies.set(name, value, options);
-        }
-      },
-    },
-  });
-
-  const otpRes = await anon.auth.signInWithOtp({
+  const { data, error } = await admin.auth.admin.generateLink({
+    type: "magiclink",
     email,
-    options: {
-      emailRedirectTo: emailRedirectTo,
-      // Allow creation for allowlisted users; invite-only posture enforced above.
-      shouldCreateUser: true,
-    },
+    options: { redirectTo: emailRedirectTo },
   });
 
-  if (otpRes.error) {
-    console.error("[auth] signInWithOtp failed", { message: otpRes.error.message });
+  if (error || !data?.properties?.hashed_token || !data?.properties?.verification_type) {
+    console.error("[auth] generateLink failed", { message: error?.message ?? "missing_link_data" });
+    return NextResponse.json({ ok: false }, { status: 500 });
+  }
+
+  const callbackLink = new URL(emailRedirectTo);
+  callbackLink.searchParams.set("token_hash", data.properties.hashed_token);
+  callbackLink.searchParams.set("type", data.properties.verification_type);
+
+  const subject = "ASGC OS sign-in link";
+  const otpLine = data.properties.email_otp
+    ? `\nOr use this one-time code:\n${data.properties.email_otp}\n`
+    : "";
+  const text = `Sign in to ASGC OS.\n\nOpen this link to continue:\n${callbackLink.toString()}\n${otpLine}\nIf you did not request this email, you can ignore it.`;
+
+  try {
+    await sendEmail({ to: email, subject, text });
+  } catch (err) {
+    console.error("[auth] sendEmail failed", { message: err instanceof Error ? err.message : "unknown_error" });
+    return NextResponse.json({ ok: false }, { status: 500 });
   }
 
   return response;
