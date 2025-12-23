@@ -4,6 +4,46 @@ import { getSupabaseRouteHandlerClient } from "@/lib/supabaseServer";
 
 export const runtime = "nodejs";
 
+// GET: List meetings (admin only)
+export async function GET(request: NextRequest) {
+  const supabase = await getSupabaseRouteHandlerClient();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+
+  // Check admin
+  const { data: isAdmin, error: adminErr } = await supabase.rpc("is_admin", { _uid: user.id });
+  if (adminErr || !isAdmin) {
+    return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  }
+
+  const { searchParams } = new URL(request.url);
+  const status = searchParams.get("status");
+
+  let query = supabase
+    .from("meetings")
+    .select("id,committee_id,meeting_type,title,description,location,starts_at,ends_at,status,created_at,updated_at")
+    .order("starts_at", { ascending: false })
+    .limit(200);
+
+  if (status) {
+    query = query.eq("status", status);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  return NextResponse.json({ meetings: data ?? [] });
+}
+
 // POST: Create a meeting (admin only)
 export async function POST(request: NextRequest) {
   const supabase = await getSupabaseRouteHandlerClient();

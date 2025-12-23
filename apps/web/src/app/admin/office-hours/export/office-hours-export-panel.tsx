@@ -136,7 +136,11 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
         </div>
       </div>
 
-      {status ? <div className="rounded-md border px-3 py-2 text-sm text-foreground/80">{status}</div> : null}
+      {status ? (
+        <div className="rounded-md border px-3 py-2 text-sm text-foreground/80" role="status" aria-live="polite">
+          {status}
+        </div>
+      ) : null}
 
       {rows ? (
         <div className="rounded-md border">
@@ -181,4 +185,3 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
     </div>
   );
 }
-

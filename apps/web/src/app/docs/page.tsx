@@ -84,7 +84,9 @@ export default async function DocsPage() {
       description="Browse and upload documents, minutes, and reports."
     >
       {docsError ? (
-        <div className="text-sm text-red-600">Error: {docsError.message}</div>
+        <div className="text-sm text-red-600" role="alert">
+          Error: {docsError.message}
+        </div>
       ) : (
         <DocsPanel initialDocs={docs} committees={committees} meetings={meetings} canUseRestricted={canUseRestricted} />
       )}

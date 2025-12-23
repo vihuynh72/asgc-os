@@ -299,7 +299,7 @@ export default async function DashboardPage() {
 
         <section className="rounded-md border p-4">
           <h2 className="text-sm font-semibold">Finance</h2>
-          <p className="mt-1 text-sm text-foreground/70">Placeholder widget (later phase).</p>
+          <p className="mt-1 text-sm text-foreground/70">Finance summary will appear here.</p>
         </section>
 
         <section className="rounded-md border p-4">

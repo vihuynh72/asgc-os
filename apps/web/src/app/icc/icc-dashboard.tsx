@@ -240,7 +240,11 @@ export function IccDashboard({
 
   return (
     <div className="space-y-8">
-      {status ? <div className="text-sm text-foreground/70">{status}</div> : null}
+      {status ? (
+        <div className="text-sm text-foreground/70" role="status" aria-live="polite">
+          {status}
+        </div>
+      ) : null}
 
       {isAdmin ? (
         <form onSubmit={onCreateMeeting} className="rounded-lg border p-4">
@@ -249,12 +253,14 @@ export function IccDashboard({
             <input
               className="rounded border px-3 py-2 text-sm"
               type="datetime-local"
+              aria-label="Meeting start time"
               value={newMeetingStartsAt}
               onChange={(event: ChangeEvent<HTMLInputElement>) => setNewMeetingStartsAt(event.target.value)}
             />
             <input
               className="rounded border px-3 py-2 text-sm"
               placeholder="Location"
+              aria-label="Meeting location"
               value={newMeetingLocation}
               onChange={(event: ChangeEvent<HTMLInputElement>) => setNewMeetingLocation(event.target.value)}
             />
@@ -312,12 +318,14 @@ export function IccDashboard({
                   <input
                     className="rounded border px-3 py-2 text-sm"
                     placeholder="Location"
+                    aria-label="Meeting location"
                     value={draft.location}
                     onChange={(event) => updateMeetingDraft(meeting.id, { location: event.target.value })}
                     disabled={!isAdmin}
                   />
                   <select
                     className="rounded border px-3 py-2 text-sm"
+                    aria-label="Meeting status"
                     value={draft.status}
                     onChange={(event) =>
                       updateMeetingDraft(meeting.id, { status: event.target.value as IccMeeting["status"] })
@@ -331,6 +339,7 @@ export function IccDashboard({
                   <input
                     className="rounded border px-3 py-2 text-sm"
                     type="datetime-local"
+                    aria-label="Called to order time"
                     value={draft.called_to_order_at}
                     onChange={(event) => updateMeetingDraft(meeting.id, { called_to_order_at: event.target.value })}
                     disabled={!isAdmin}
@@ -360,6 +369,7 @@ export function IccDashboard({
           <div className="flex items-center gap-2">
             <select
               className="rounded border px-3 py-2 text-sm"
+              aria-label="Select meeting"
               value={selectedMeetingId}
               onChange={(event) => {
                 setSelectedMeetingId(event.target.value);
@@ -413,6 +423,7 @@ export function IccDashboard({
                   <div className="mt-2 grid gap-2 md:grid-cols-3">
                     <select
                       className="rounded border px-2 py-1 text-sm"
+                      aria-label={`${club.name} attendance status`}
                       value={draft.status}
                       onChange={(event) =>
                         updateAttendanceDraft(club.id, { status: event.target.value as AttendanceRow["status"] })
@@ -426,6 +437,7 @@ export function IccDashboard({
                     <input
                       className="rounded border px-2 py-1 text-sm"
                       placeholder="Excused reason"
+                      aria-label={`${club.name} excused reason`}
                       value={draft.excused_reason}
                       onChange={(event) => updateAttendanceDraft(club.id, { excused_reason: event.target.value })}
                       disabled={!isAdmin || draft.status !== "excused"}
@@ -433,6 +445,7 @@ export function IccDashboard({
                     <input
                       className="rounded border px-2 py-1 text-sm"
                       placeholder="Notes"
+                      aria-label={`${club.name} attendance notes`}
                       value={draft.notes}
                       onChange={(event) => updateAttendanceDraft(club.id, { notes: event.target.value })}
                       disabled={!isAdmin}

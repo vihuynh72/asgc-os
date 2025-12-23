@@ -43,6 +43,7 @@ export default function MeetingsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [officeTz, setOfficeTz] = useState<string | null>(null);
+  const [showPast, setShowPast] = useState(false);
 
   const formatInOfficeTz = useCallback(
     (iso: string) => {
@@ -66,12 +67,14 @@ export default function MeetingsPage() {
     let cancelled = false;
 
     async function load() {
+      setLoading(true);
+      setError(null);
       const { data: tzData, error: tzErr } = await supabase.rpc("office_timezone");
       if (!cancelled && !tzErr && typeof tzData === "string" && tzData.length > 0) {
         setOfficeTz(tzData);
       }
 
-      const res = await fetch("/api/meetings");
+      const res = await fetch(showPast ? "/api/meetings?includePast=1" : "/api/meetings");
       if (cancelled) return;
 
       if (!res.ok) {
@@ -91,17 +94,34 @@ export default function MeetingsPage() {
     return () => {
       cancelled = true;
     };
-  }, [supabase]);
+  }, [showPast, supabase]);
 
   return (
     <PageShell title="Meetings" description="View your upcoming meetings.">
       <div className="space-y-4">
-        {error ? <div className="text-sm text-red-600">{error}</div> : null}
+        {error ? (
+          <div className="text-sm text-red-600" role="alert">
+            {error}
+          </div>
+        ) : null}
+
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <label className="flex items-center gap-2 text-sm text-foreground/70">
+            <input
+              type="checkbox"
+              checked={showPast}
+              onChange={(event) => setShowPast(event.target.checked)}
+            />
+            Show past meetings
+          </label>
+        </div>
 
         {loading ? (
           <div className="text-sm text-foreground/70">Loading…</div>
         ) : meetings.length === 0 ? (
-          <div className="text-sm text-foreground/70">No upcoming meetings.</div>
+          <div className="text-sm text-foreground/70">
+            {showPast ? "No meetings found." : "No upcoming meetings."}
+          </div>
         ) : (
           <div className="space-y-3">
             {meetings.map((m) => (

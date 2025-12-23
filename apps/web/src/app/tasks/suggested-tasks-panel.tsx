@@ -131,7 +131,11 @@ export function SuggestedTasksPanel({
         </Button>
       </div>
 
-      {status ? <div className="text-sm text-foreground/70">{status}</div> : null}
+      {status ? (
+        <div className="text-sm text-foreground/70" role="status" aria-live="polite">
+          {status}
+        </div>
+      ) : null}
 
       <div className="flex flex-wrap items-center gap-3">
         <select

@@ -14,7 +14,11 @@ export function PageShell({
   containerClassName?: string;
 }) {
   return (
-    <main className={cn("mx-auto w-full px-4 py-8", containerClassName ?? "max-w-5xl")}>
+    <main
+      id="main-content"
+      tabIndex={-1}
+      className={cn("mx-auto w-full px-4 py-8", containerClassName ?? "max-w-5xl")}
+    >
       <div className="space-y-2">
         <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
         {description ? (

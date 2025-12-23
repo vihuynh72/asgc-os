@@ -23,6 +23,12 @@ type UserRow = {
   created_at: string;
 };
 
+type CommitteeRow = {
+  id: string;
+  name: string;
+  committee_key: string;
+};
+
 type RoleKey = "advisor" | "president" | "executive" | "director" | "board_member" | "volunteer";
 
 type OfficeLocationRow = {
@@ -109,6 +115,29 @@ type AdminWeeklyHoursPreviewRow = {
   deficit_in_office_minutes: number | string;
 };
 
+type AdminMeetingRow = {
+  id: string;
+  committee_id: string | null;
+  meeting_type: string;
+  title: string;
+  description: string | null;
+  location: string | null;
+  starts_at: string;
+  ends_at: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+};
+
+type AdminMeetingDraft = {
+  title: string;
+  description: string;
+  location: string;
+  starts_at_local: string;
+  ends_at_local: string;
+  status: string;
+};
+
 const ROLE_OPTIONS: Array<{ key: RoleKey; label: string; scope: "global" | "term" }> = [
   { key: "advisor", label: "Advisor (global)", scope: "global" },
   { key: "president", label: "President (term)", scope: "term" },
@@ -117,6 +146,8 @@ const ROLE_OPTIONS: Array<{ key: RoleKey; label: string; scope: "global" | "term
   { key: "board_member", label: "Board member (term)", scope: "term" },
   { key: "volunteer", label: "Volunteer (term)", scope: "term" },
 ];
+
+const MEETING_STATUS_OPTIONS = ["scheduled", "cancelled", "completed"] as const;
 
 const ROLE_LABEL_BY_KEY: Record<RoleKey, string> = {
   advisor: "Advisor",
@@ -131,6 +162,36 @@ function formatUserLabel(u: UserRow) {
   const primary = u.display_name?.trim() || u.email?.trim() || u.id;
   const secondary = u.display_name?.trim() && u.email?.trim() ? ` (${u.email})` : "";
   return `${primary}${secondary}`;
+}
+
+function formatMeetingTypeLabel(type: string): string {
+  switch (type) {
+    case "board":
+      return "Board";
+    case "committee":
+      return "Committee";
+    case "icc":
+      return "ICC";
+    case "special":
+      return "Special";
+    default:
+      return type;
+  }
+}
+
+function datetimeLocalFromIso(iso: string | null): string {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  const offset = date.getTimezoneOffset() * 60000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+}
+
+function toIsoFromDatetimeLocal(value: string): string | null {
+  if (!value.trim()) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString();
 }
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -265,6 +326,12 @@ export function AdminPanel({
   function onSelectAdminTab(nextTab: typeof adminTab) {
     if (nextTab !== "access") setRoleGrantInviteId(null);
     setAdminTab(nextTab);
+    if (nextTab === "meetings") {
+      void loadMeetings();
+      if (committees.length === 0) {
+        void loadCommittees();
+      }
+    }
   }
 
   const [newBanPattern, setNewBanPattern] = useState<string>("");
@@ -273,6 +340,7 @@ export function AdminPanel({
   const [selectedUserId, setSelectedUserId] = useState<string>("");
   const [selectedRoleKey, setSelectedRoleKey] = useState<RoleKey>("volunteer");
   const [userSearch, setUserSearch] = useState<string>("");
+  const [committees, setCommittees] = useState<CommitteeRow[]>([]);
 
   const [newTermName, setNewTermName] = useState<string>("");
   const [newTermStart, setNewTermStart] = useState<string>("");
@@ -303,6 +371,7 @@ export function AdminPanel({
   const [exportPreviewRows, setExportPreviewRows] = useState<AdminWeeklyHoursPreviewRow[] | null>(null);
 
   const [shiftUserId, setShiftUserId] = useState<string>("");
+  const [shiftUserSearch, setShiftUserSearch] = useState<string>("");
   const [shiftStartsAtLocal, setShiftStartsAtLocal] = useState<string>("");
   const [shiftEndsAtLocal, setShiftEndsAtLocal] = useState<string>("");
   const [shiftOfficeLocationId, setShiftOfficeLocationId] = useState<string>("");
@@ -310,11 +379,15 @@ export function AdminPanel({
 
   // Meeting form state (Phase 21)
   const [meetingType, setMeetingType] = useState<string>("board");
+  const [meetingCommitteeId, setMeetingCommitteeId] = useState<string>("");
   const [meetingTitle, setMeetingTitle] = useState<string>("");
   const [meetingDescription, setMeetingDescription] = useState<string>("");
   const [meetingLocation, setMeetingLocation] = useState<string>("");
   const [meetingStartsAtLocal, setMeetingStartsAtLocal] = useState<string>("");
   const [meetingEndsAtLocal, setMeetingEndsAtLocal] = useState<string>("");
+  const [meetingSearch, setMeetingSearch] = useState<string>("");
+  const [adminMeetings, setAdminMeetings] = useState<AdminMeetingRow[]>([]);
+  const [meetingDrafts, setMeetingDrafts] = useState<Record<string, AdminMeetingDraft>>({});
 
   const [status, setStatus] = useState<string>("");
 
@@ -596,6 +669,10 @@ export function AdminPanel({
         setStatus("Meeting title is required.");
         return;
       }
+      if (meetingType === "committee" && !meetingCommitteeId) {
+        setStatus("Select a committee for committee meetings.");
+        return;
+      }
       if (!meetingStartsAtLocal || !meetingEndsAtLocal) {
         setStatus("Start and end times are required.");
         return;
@@ -612,6 +689,7 @@ export function AdminPanel({
           title: meetingTitle,
           starts_at: startsAtIso,
           ends_at: endsAtIso,
+          committee_id: meetingType === "committee" && meetingCommitteeId ? meetingCommitteeId : undefined,
           description: meetingDescription.trim() || undefined,
           location: meetingLocation.trim() || undefined,
         }),
@@ -623,8 +701,102 @@ export function AdminPanel({
       setMeetingLocation("");
       setMeetingStartsAtLocal("");
       setMeetingEndsAtLocal("");
+      setMeetingCommitteeId("");
+      await loadMeetings();
     } catch (e) {
       setStatus(e instanceof Error ? e.message : "Failed to create meeting");
+    }
+  }
+
+  async function loadCommittees() {
+    try {
+      const { committees: rows } = await fetchJson<{ committees: CommitteeRow[] }>("/api/admin/committees");
+      setCommittees(rows ?? []);
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : "Failed to load committees");
+    }
+  }
+
+  async function loadMeetings() {
+    setStatus("Loading meetings...");
+    try {
+      const { meetings } = await fetchJson<{ meetings: AdminMeetingRow[] }>("/api/admin/meetings");
+      setAdminMeetings(meetings ?? []);
+      setMeetingDrafts({});
+      setStatus("");
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : "Failed to load meetings");
+    }
+  }
+
+  function updateMeetingDraft(meetingId: string, patch: Partial<AdminMeetingDraft>) {
+    const meeting = adminMeetings.find((m) => m.id === meetingId);
+    if (!meeting) return;
+    const base: AdminMeetingDraft = {
+      title: meeting.title,
+      description: meeting.description ?? "",
+      location: meeting.location ?? "",
+      starts_at_local: datetimeLocalFromIso(meeting.starts_at),
+      ends_at_local: datetimeLocalFromIso(meeting.ends_at),
+      status: meeting.status,
+    };
+
+    setMeetingDrafts((prev) => ({
+      ...prev,
+      [meetingId]: {
+        ...(prev[meetingId] ?? base),
+        ...patch,
+      },
+    }));
+  }
+
+  async function saveMeeting(meeting: AdminMeetingRow) {
+    const draft = meetingDrafts[meeting.id] ?? {
+      title: meeting.title,
+      description: meeting.description ?? "",
+      location: meeting.location ?? "",
+      starts_at_local: datetimeLocalFromIso(meeting.starts_at),
+      ends_at_local: datetimeLocalFromIso(meeting.ends_at),
+      status: meeting.status,
+    };
+
+    const startsAtIso = toIsoFromDatetimeLocal(draft.starts_at_local);
+    const endsAtIso = toIsoFromDatetimeLocal(draft.ends_at_local);
+    if (!startsAtIso || !endsAtIso) {
+      setStatus("Start and end times are required.");
+      return;
+    }
+
+    setStatus("Saving meeting...");
+    try {
+      await fetchJson(`/api/admin/meetings/${encodeURIComponent(meeting.id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: draft.title.trim(),
+          description: draft.description.trim() || null,
+          location: draft.location.trim() || null,
+          starts_at: startsAtIso,
+          ends_at: endsAtIso,
+          status: draft.status,
+        }),
+      });
+      await loadMeetings();
+      setStatus("Meeting saved.");
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : "Failed to save meeting");
+    }
+  }
+
+  async function cancelMeeting(meeting: AdminMeetingRow) {
+    if (!window.confirm(`Cancel meeting "${meeting.title}"?`)) return;
+    setStatus("Cancelling meeting...");
+    try {
+      await fetchJson(`/api/admin/meetings/${encodeURIComponent(meeting.id)}`, { method: "DELETE" });
+      await loadMeetings();
+      setStatus("Meeting cancelled.");
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : "Failed to cancel meeting");
     }
   }
 
@@ -746,6 +918,10 @@ export function AdminPanel({
   }
 
   async function onRevokeRoleGrant(grant: BootstrapRoleGrantRow) {
+    const roleLabel = ROLE_LABEL_BY_KEY[grant.role_key] ?? grant.role_key;
+    const ok = window.confirm(`Revoke ${roleLabel} role grant for "${grant.email}"?`);
+    if (!ok) return;
+
     setStatus("Revoking role grant...");
     try {
       await fetchJson<{ grant: BootstrapRoleGrantRow }>("/api/admin/bootstrap-role-grants", {
@@ -848,6 +1024,13 @@ export function AdminPanel({
   }
 
   async function onSetInviteActive(invite: InviteAllowlistRow, isActive: boolean) {
+    if (!isActive) {
+      const ok = window.confirm(
+        `Revoke invite for "${invite.email}"?\n\nThis will block sign-in for this entry unless reactivated.`,
+      );
+      if (!ok) return;
+    }
+
     setStatus(isActive ? "Re-activating invite..." : "Revoking invite...");
     try {
       const data = await fetchJson<{ invite: InviteAllowlistRow }>("/api/admin/invites-allowlist", {
@@ -1062,6 +1245,13 @@ export function AdminPanel({
   }
 
   async function onSetBanActive(ban: InviteBlocklistRow, isActive: boolean) {
+    if (!isActive) {
+      const ok = window.confirm(
+        `Disable ban for "${ban.pattern}"?\n\nThis will allow sign-in unless another rule blocks it.`,
+      );
+      if (!ok) return;
+    }
+
     setStatus(isActive ? "Re-activating ban..." : "Disabling ban...");
     try {
       const data = await fetchJson<{ ban: InviteBlocklistRow }>("/api/admin/invites-blocklist", {
@@ -1304,10 +1494,45 @@ export function AdminPanel({
     return byRole;
   }, [officeHourRequirements, selectedTermId]);
 
+  const committeeById = useMemo(() => {
+    const map = new Map<string, CommitteeRow>();
+    for (const committee of committees) {
+      map.set(committee.id, committee);
+    }
+    return map;
+  }, [committees]);
+
+  const shiftUsers = useMemo(() => {
+    const query = shiftUserSearch.trim().toLowerCase();
+    if (!query) return users;
+    return users.filter((u) => formatUserLabel(u).toLowerCase().includes(query));
+  }, [shiftUserSearch, users]);
+
+  const selectedShiftUser = useMemo(
+    () => users.find((u) => u.id === shiftUserId) ?? null,
+    [users, shiftUserId],
+  );
+
+  const filteredMeetings = useMemo(() => {
+    const query = meetingSearch.trim().toLowerCase();
+    if (!query) return adminMeetings;
+    return adminMeetings.filter((m) => {
+      const haystack = [
+        m.title,
+        m.location ?? "",
+        m.meeting_type,
+        committeeById.get(m.committee_id ?? "")?.name ?? "",
+      ]
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [adminMeetings, committeeById, meetingSearch]);
+
   return (
     <div className="space-y-6">
       {status ? (
-        <div className="rounded-md border px-3 py-2 text-sm text-foreground/80">
+        <div className="rounded-md border px-3 py-2 text-sm text-foreground/80" role="status" aria-live="polite">
           {status}
         </div>
       ) : null}
@@ -2006,7 +2231,7 @@ export function AdminPanel({
         <div className="space-y-1">
           <h2 className="text-lg font-semibold">Office Hours Export (CSV)</h2>
           <p className="text-sm text-foreground/70">
-            Phase 16. Exports weekly totals/deficits for all active users.
+            Exports weekly totals/deficits for all active users.
           </p>
         </div>
 
@@ -2112,13 +2337,27 @@ export function AdminPanel({
         <div className="space-y-1">
           <h2 className="text-lg font-semibold">Office Hour Shifts</h2>
           <p className="text-sm text-foreground/70">
-            Phase 17. Admin can schedule shifts; members can see their weekly shifts on the Office Hours page.
+            Admin can schedule shifts; members can see their weekly shifts on the Office Hours page.
           </p>
         </div>
 
-        {shiftStatus ? <div className="rounded-md border px-3 py-2 text-sm text-foreground/80">{shiftStatus}</div> : null}
+        {shiftStatus ? (
+          <div className="rounded-md border px-3 py-2 text-sm text-foreground/80" role="status" aria-live="polite">
+            {shiftStatus}
+          </div>
+        ) : null}
 
         <div className="grid gap-3 md:grid-cols-4">
+          <label className="space-y-1 text-sm md:col-span-2">
+            <div className="text-foreground/70">Search users</div>
+            <input
+              className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+              value={shiftUserSearch}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => setShiftUserSearch(e.target.value)}
+              placeholder="Filter by name or email…"
+            />
+          </label>
+
           <label className="space-y-1 text-sm md:col-span-2">
             <div className="text-foreground/70">User</div>
             <select
@@ -2127,12 +2366,15 @@ export function AdminPanel({
               onChange={(e: ChangeEvent<HTMLSelectElement>) => setShiftUserId(e.target.value)}
             >
               <option value="">Select a user…</option>
-              {users.map((u) => (
+              {shiftUsers.map((u) => (
                 <option key={u.id} value={u.id}>
                   {formatUserLabel(u)}
                 </option>
               ))}
             </select>
+            {selectedShiftUser ? (
+              <div className="text-xs text-foreground/60">Selected: {formatUserLabel(selectedShiftUser)}</div>
+            ) : null}
           </label>
 
           <label className="space-y-1 text-sm">
@@ -2244,7 +2486,7 @@ export function AdminPanel({
         <div className="space-y-1">
           <h2 className="text-lg font-semibold">Office Hours Config</h2>
           <p className="text-sm text-foreground/70">
-            Phase 11. Single office settings and quiet hours.
+            Single office settings and quiet hours (times are evaluated in the configured timezone).
           </p>
         </div>
 
@@ -2298,6 +2540,9 @@ export function AdminPanel({
             <label className="space-y-1 text-sm">
               <div className="text-foreground/70">Radius (m)</div>
               <input
+                type="number"
+                min={0}
+                step={1}
                 className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
                 value={officeLocation.radius_m ?? ""}
                 onChange={(e: ChangeEvent<HTMLInputElement>) => {
@@ -2311,6 +2556,9 @@ export function AdminPanel({
             <label className="space-y-1 text-sm">
               <div className="text-foreground/70">Grace radius (m)</div>
               <input
+                type="number"
+                min={0}
+                step={1}
                 className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
                 value={officeLocation.grace_radius_m ?? ""}
                 onChange={(e: ChangeEvent<HTMLInputElement>) => {
@@ -2380,6 +2628,16 @@ export function AdminPanel({
                     setStatus("Longitude must be a valid number.");
                     return;
                   }
+                  const radius = officeLocation.radius_m;
+                  if (radius !== null && (!Number.isFinite(radius) || radius <= 0)) {
+                    setStatus("Radius must be greater than 0.");
+                    return;
+                  }
+                  const graceRadius = officeLocation.grace_radius_m;
+                  if (graceRadius !== null && (!Number.isFinite(graceRadius) || graceRadius < 0)) {
+                    setStatus("Grace radius must be 0 or higher.");
+                    return;
+                  }
 
                   setStatus("Saving office config...");
                   try {
@@ -2438,7 +2696,7 @@ export function AdminPanel({
         <div className="space-y-1">
           <h2 className="text-lg font-semibold">Notifications</h2>
           <p className="text-sm text-foreground/70">
-            Phase 10 plumbing. Sends a test email to your own account.
+            Sends a test email to your own account.
           </p>
         </div>
 
@@ -2450,7 +2708,7 @@ export function AdminPanel({
       <section className="space-y-3">
         <div className="space-y-1">
           <h2 className="text-lg font-semibold">Meetings</h2>
-          <p className="text-sm text-foreground/70">Create a new meeting (Phase 21).</p>
+          <p className="text-sm text-foreground/70">Create a new meeting.</p>
         </div>
 
         <div className="grid gap-3 md:grid-cols-4">
@@ -2459,7 +2717,15 @@ export function AdminPanel({
             <select
               className="h-9 rounded-md border bg-transparent px-2 text-sm"
               value={meetingType}
-              onChange={(e: ChangeEvent<HTMLSelectElement>) => setMeetingType(e.target.value)}
+              onChange={(e: ChangeEvent<HTMLSelectElement>) => {
+                const next = e.target.value;
+                setMeetingType(next);
+                if (next !== "committee") {
+                  setMeetingCommitteeId("");
+                } else if (!meetingCommitteeId && committees[0]?.id) {
+                  setMeetingCommitteeId(committees[0].id);
+                }
+              }}
             >
               <option value="board">Board</option>
               <option value="committee">Committee</option>
@@ -2470,38 +2736,49 @@ export function AdminPanel({
           </label>
 
           <label className="space-y-1 text-sm">
+            <div className="text-foreground/70">Committee (optional)</div>
+            <select
+              className="h-9 rounded-md border bg-transparent px-2 text-sm"
+              value={meetingCommitteeId}
+              onChange={(e: ChangeEvent<HTMLSelectElement>) => setMeetingCommitteeId(e.target.value)}
+            >
+              <option value="">Select committee…</option>
+              {committees.map((committee) => (
+                <option key={committee.id} value={committee.id}>
+                  {committee.name}
+                </option>
+              ))}
+            </select>
+            <div className="text-xs text-foreground/60">Required for committee meetings.</div>
+          </label>
+
+          <label className="space-y-1 text-sm md:col-span-2">
             <div className="text-foreground/70">Title</div>
             <input
               type="text"
-              className="h-9 rounded-md border bg-transparent px-2 text-sm"
+              className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
               value={meetingTitle}
               onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingTitle(e.target.value)}
               placeholder="Meeting title"
             />
           </label>
 
-          <label className="space-y-1 text-sm">
+          <label className="space-y-1 text-sm md:col-span-2">
             <div className="text-foreground/70">Location</div>
             <input
               type="text"
-              className="h-9 rounded-md border bg-transparent px-2 text-sm"
+              className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
               value={meetingLocation}
               onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingLocation(e.target.value)}
               placeholder="e.g. Room 101"
             />
           </label>
 
-          <div className="flex items-end">
-            <Button onClick={() => void onCreateMeeting()} disabled={!meetingTitle || !meetingStartsAtLocal || !meetingEndsAtLocal}>
-              Create meeting
-            </Button>
-          </div>
-
           <label className="space-y-1 text-sm">
             <div className="text-foreground/70">Starts at (local)</div>
             <input
               type="datetime-local"
-              className="h-9 rounded-md border bg-transparent px-2 text-sm"
+              className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
               value={meetingStartsAtLocal}
               onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingStartsAtLocal(e.target.value)}
             />
@@ -2511,13 +2788,13 @@ export function AdminPanel({
             <div className="text-foreground/70">Ends at (local)</div>
             <input
               type="datetime-local"
-              className="h-9 rounded-md border bg-transparent px-2 text-sm"
+              className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
               value={meetingEndsAtLocal}
               onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingEndsAtLocal(e.target.value)}
             />
           </label>
 
-          <label className="space-y-1 text-sm md:col-span-2">
+          <label className="space-y-1 text-sm md:col-span-4">
             <div className="text-foreground/70">Description (optional)</div>
             <input
               type="text"
@@ -2527,6 +2804,162 @@ export function AdminPanel({
               placeholder="Optional description"
             />
           </label>
+
+          <div className="flex items-end md:col-span-4">
+            <Button onClick={() => void onCreateMeeting()} disabled={!meetingTitle || !meetingStartsAtLocal || !meetingEndsAtLocal}>
+              Create meeting
+            </Button>
+          </div>
+        </div>
+
+        <div className="mt-4 rounded-md border p-3">
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <div className="text-sm font-medium">Existing meetings</div>
+              <div className="text-xs text-foreground/60">Edit details, update status, or cancel meetings.</div>
+            </div>
+            <div className="flex flex-wrap items-end gap-2">
+              <label className="space-y-1 text-sm">
+                <div className="text-foreground/70">Search</div>
+                <input
+                  className="h-9 w-56 rounded-md border bg-transparent px-2 text-sm"
+                  value={meetingSearch}
+                  onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingSearch(e.target.value)}
+                  placeholder="Filter by title or location…"
+                />
+              </label>
+              <Button variant="ghost" onClick={() => void loadMeetings()}>
+                Refresh
+              </Button>
+            </div>
+          </div>
+
+          <div className="mt-3 space-y-3">
+            {filteredMeetings.length === 0 ? (
+              <div className="rounded-md border px-3 py-2 text-sm text-foreground/70">No meetings found.</div>
+            ) : (
+              filteredMeetings.map((meeting) => {
+                const draft = meetingDrafts[meeting.id] ?? {
+                  title: meeting.title,
+                  description: meeting.description ?? "",
+                  location: meeting.location ?? "",
+                  starts_at_local: datetimeLocalFromIso(meeting.starts_at),
+                  ends_at_local: datetimeLocalFromIso(meeting.ends_at),
+                  status: meeting.status,
+                };
+                const committeeLabel = meeting.committee_id
+                  ? committeeById.get(meeting.committee_id)?.name ?? meeting.committee_id
+                  : "—";
+
+                return (
+                  <div key={meeting.id} className="rounded-md border p-3">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium">{meeting.title}</div>
+                        <div className="text-xs text-foreground/60">
+                          {formatMeetingTypeLabel(meeting.meeting_type)}
+                          {meeting.committee_id ? ` • ${committeeLabel}` : ""}
+                          {meeting.location ? ` • ${meeting.location}` : ""}
+                        </div>
+                        <div className="text-xs text-foreground/60">
+                          {new Date(meeting.starts_at).toLocaleString()} → {new Date(meeting.ends_at).toLocaleString()}
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Button size="sm" variant="outline" onClick={() => void saveMeeting(meeting)}>
+                          Save
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => void cancelMeeting(meeting)}
+                          className="text-red-600 hover:bg-red-500/10"
+                        >
+                          Cancel
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="mt-3 grid gap-2 md:grid-cols-3">
+                      <label className="space-y-1 text-sm md:col-span-2">
+                        <div className="text-foreground/70">Title</div>
+                        <input
+                          className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                          value={draft.title}
+                          onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                            updateMeetingDraft(meeting.id, { title: e.target.value })
+                          }
+                        />
+                      </label>
+
+                      <label className="space-y-1 text-sm">
+                        <div className="text-foreground/70">Status</div>
+                        <select
+                          className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                          value={draft.status}
+                          onChange={(e: ChangeEvent<HTMLSelectElement>) =>
+                            updateMeetingDraft(meeting.id, { status: e.target.value })
+                          }
+                        >
+                          {MEETING_STATUS_OPTIONS.map((statusOption) => (
+                            <option key={statusOption} value={statusOption}>
+                              {statusOption}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+
+                      <label className="space-y-1 text-sm md:col-span-2">
+                        <div className="text-foreground/70">Location</div>
+                        <input
+                          className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                          value={draft.location}
+                          onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                            updateMeetingDraft(meeting.id, { location: e.target.value })
+                          }
+                        />
+                      </label>
+
+                      <label className="space-y-1 text-sm">
+                        <div className="text-foreground/70">Starts at (local)</div>
+                        <input
+                          type="datetime-local"
+                          className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                          value={draft.starts_at_local}
+                          onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                            updateMeetingDraft(meeting.id, { starts_at_local: e.target.value })
+                          }
+                        />
+                      </label>
+
+                      <label className="space-y-1 text-sm">
+                        <div className="text-foreground/70">Ends at (local)</div>
+                        <input
+                          type="datetime-local"
+                          className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                          value={draft.ends_at_local}
+                          onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                            updateMeetingDraft(meeting.id, { ends_at_local: e.target.value })
+                          }
+                        />
+                      </label>
+
+                      <label className="space-y-1 text-sm md:col-span-3">
+                        <div className="text-foreground/70">Description</div>
+                        <input
+                          className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                          value={draft.description}
+                          onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                            updateMeetingDraft(meeting.id, { description: e.target.value })
+                          }
+                        />
+                      </label>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
         </div>
       </section>
         </>

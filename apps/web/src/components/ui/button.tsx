@@ -19,14 +19,14 @@ export function Button({
       type={type}
       className={cn(
         "inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/20",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
         "disabled:pointer-events-none disabled:opacity-50",
         variant === "default" &&
-          "bg-foreground text-background hover:bg-foreground/90",
+          "bg-primary text-primary-foreground hover:bg-primary/90",
         variant === "ghost" &&
-          "bg-transparent hover:bg-foreground/5 text-foreground",
+          "bg-transparent text-foreground hover:bg-muted/60",
         variant === "outline" &&
-          "border border-foreground/20 bg-transparent text-foreground hover:bg-foreground/5",
+          "border border-border bg-transparent text-foreground hover:bg-muted/60",
         size === "default" && "h-9 px-3",
         size === "sm" && "h-8 px-2 text-xs",
         className,
