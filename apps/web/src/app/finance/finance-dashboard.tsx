@@ -526,7 +526,7 @@ function BudgetLinesPanel() {
         body: JSON.stringify({ is_active: !line.is_active }),
       });
       setLines((prev) => prev.map((item) => (item.id === line.id ? data.budgetLine : item)));
-      setStatus("");
+      setStatus(line.is_active ? "Archived." : "Restored.");
     } catch (err) {
       setStatus(err instanceof Error ? err.message : "Failed to update budget line");
     }
@@ -601,10 +601,18 @@ function BudgetLinesPanel() {
           <div className="text-sm text-foreground/70">No budget lines yet.</div>
         ) : (
           lines.map((line) => (
-            <div key={line.id} className="flex flex-wrap items-center justify-between gap-2 rounded border border-foreground/10 p-3 text-sm">
+            <div
+              key={line.id}
+              className={`flex flex-wrap items-center justify-between gap-2 rounded border p-3 text-sm ${
+                line.is_active
+                  ? "border-foreground/10"
+                  : "border-foreground/5 bg-muted/30 opacity-60"
+              }`}
+            >
               <div>
                 <div className="font-medium">
                   {line.name} ({line.fiscal_year})
+                  {!line.is_active && <span className="ml-2 text-xs text-foreground/50">(Archived)</span>}
                 </div>
                 <div className="text-xs text-foreground/70">
                   {line.category} • {formatCurrency(line.allocated_amount)}
@@ -643,13 +651,9 @@ function FundingRequestsPanel({
   const [breakdown, setBreakdown] = useState<{ description: string; amount: string }[]>([
     { description: "", amount: "" },
   ]);
-  const committeeListId = useId();
   const docListId = useId();
-  const committeeById = useMemo(() => new Map(committees.map((committee) => [committee.id, committee])), [committees]);
   const docsById = useMemo(() => new Map(docs.map((doc) => [doc.id, doc])), [docs]);
-  const selectedCommittee = form.committee_id.trim()
-    ? committeeById.get(form.committee_id.trim()) ?? null
-    : null;
+  const committeeById = useMemo(() => new Map(committees.map((c) => [c.id, c])), [committees]);
 
   useEffect(() => {
     let cancelled = false;
@@ -817,28 +821,24 @@ function FundingRequestsPanel({
 
       <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2">
         <label className="text-sm">
-          Committee ID (optional)
-          <input
-            type="text"
-            list={committeeListId}
+          Committee (optional)
+          <select
             value={form.committee_id}
             onChange={(event) => setForm((prev) => ({ ...prev, committee_id: event.target.value }))}
             className="mt-1 w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
-          />
-          <datalist id={committeeListId}>
+          >
+            <option value="">— None —</option>
             {committees.map((committee) => {
               const label = committee.committee_key
                 ? `${committee.name} (${committee.committee_key})`
                 : committee.name;
-              return <option key={committee.id} value={committee.id} label={label} />;
+              return (
+                <option key={committee.id} value={committee.id}>
+                  {label}
+                </option>
+              );
             })}
-          </datalist>
-          {selectedCommittee ? (
-            <div className="mt-1 text-xs text-foreground/60">
-              Selected: {selectedCommittee.name}
-              {selectedCommittee.committee_key ? ` (${selectedCommittee.committee_key})` : ""}
-            </div>
-          ) : null}
+          </select>
         </label>
         <label className="text-sm">
           Title
@@ -1180,19 +1180,8 @@ function BoardVotesPanel({
     result: "approved",
     notes: "",
   });
-  const meetingListId = useId();
-  const requestListId = useId();
   const userListId = useId();
-  const meetingsById = useMemo(() => new Map(meetings.map((meeting) => [meeting.id, meeting])), [meetings]);
-  const requestsById = useMemo(
-    () => new Map(fundingRequests.map((request) => [request.id, request])),
-    [fundingRequests],
-  );
   const usersById = useMemo(() => new Map(users.map((user) => [user.id, user])), [users]);
-  const selectedMeeting = form.meeting_id.trim() ? meetingsById.get(form.meeting_id.trim()) ?? null : null;
-  const selectedRequest = form.funding_request_id.trim()
-    ? requestsById.get(form.funding_request_id.trim()) ?? null
-    : null;
   const selectedMovedBy = form.moved_by.trim() ? usersById.get(form.moved_by.trim()) ?? null : null;
   const selectedSecondedBy = form.seconded_by.trim() ? usersById.get(form.seconded_by.trim()) ?? null : null;
 
@@ -1225,11 +1214,18 @@ function BoardVotesPanel({
 
     try {
       if (!form.meeting_id.trim()) {
-        setStatus("Meeting ID is required");
+        setStatus("Please select a meeting");
         return;
       }
       if (!form.motion_text.trim()) {
-        setStatus("Motion text is required");
+        setStatus("Please enter the motion text");
+        return;
+      }
+      const voteYes = Number(form.vote_yes || 0);
+      const voteNo = Number(form.vote_no || 0);
+      const voteAbstain = Number(form.vote_abstain || 0);
+      if (voteYes < 0 || voteNo < 0 || voteAbstain < 0) {
+        setStatus("Vote counts cannot be negative");
         return;
       }
       const payload = {
@@ -1238,9 +1234,9 @@ function BoardVotesPanel({
         motion_text: form.motion_text,
         moved_by: form.moved_by || null,
         seconded_by: form.seconded_by || null,
-        vote_yes: Number(form.vote_yes || 0),
-        vote_no: Number(form.vote_no || 0),
-        vote_abstain: Number(form.vote_abstain || 0),
+        vote_yes: voteYes,
+        vote_no: voteNo,
+        vote_abstain: voteAbstain,
         result: form.result,
         notes: form.notes || undefined,
       };
@@ -1279,52 +1275,34 @@ function BoardVotesPanel({
       ) : null}
       <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2">
         <label className="text-sm">
-          Meeting ID
-          <input
-            type="text"
-            list={meetingListId}
+          Meeting
+          <select
             value={form.meeting_id}
             onChange={(event) => setForm((prev) => ({ ...prev, meeting_id: event.target.value }))}
             className="mt-1 w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
-          />
-          <datalist id={meetingListId}>
+          >
+            <option value="">— Select meeting —</option>
             {meetings.map((meeting) => (
-              <option
-                key={meeting.id}
-                value={meeting.id}
-                label={`${formatDateTime(meeting.starts_at)} • ${meeting.title}`}
-              />
+              <option key={meeting.id} value={meeting.id}>
+                {formatDateTime(meeting.starts_at)} • {meeting.title}
+              </option>
             ))}
-          </datalist>
-          {selectedMeeting ? (
-            <div className="mt-1 text-xs text-foreground/60">
-              Selected: {formatDateTime(selectedMeeting.starts_at)} • {selectedMeeting.title}
-            </div>
-          ) : null}
+          </select>
         </label>
         <label className="text-sm">
-          Funding request ID (optional)
-          <input
-            type="text"
-            list={requestListId}
+          Funding request (optional)
+          <select
             value={form.funding_request_id}
             onChange={(event) => setForm((prev) => ({ ...prev, funding_request_id: event.target.value }))}
             className="mt-1 w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
-          />
-          <datalist id={requestListId}>
+          >
+            <option value="">— None —</option>
             {fundingRequests.map((request) => (
-              <option
-                key={request.id}
-                value={request.id}
-                label={`${request.title} • ${formatCurrency(request.amount_requested)} • ${request.state}`}
-              />
+              <option key={request.id} value={request.id}>
+                {request.title} • {formatCurrency(request.amount_requested)} • {request.state}
+              </option>
             ))}
-          </datalist>
-          {selectedRequest ? (
-            <div className="mt-1 text-xs text-foreground/60">
-              Selected: {selectedRequest.title} • {formatCurrency(selectedRequest.amount_requested)} • {selectedRequest.state}
-            </div>
-          ) : null}
+          </select>
         </label>
         <label className="text-sm sm:col-span-2">
           Motion text
@@ -1495,24 +1473,7 @@ function ExpensesPanel({
     receipt_doc_id: "",
     status: "pending",
   });
-  const budgetLineListId = useId();
-  const requestListId = useId();
-  const docListId = useId();
-  const budgetLinesById = useMemo(() => new Map(budgetLines.map((line) => [line.id, line])), [budgetLines]);
-  const requestsById = useMemo(
-    () => new Map(fundingRequests.map((request) => [request.id, request])),
-    [fundingRequests],
-  );
-  const docsById = useMemo(() => new Map(docs.map((doc) => [doc.id, doc])), [docs]);
-  const selectedBudgetLine = form.budget_line_id.trim()
-    ? budgetLinesById.get(form.budget_line_id.trim()) ?? null
-    : null;
-  const selectedRequest = form.funding_request_id.trim()
-    ? requestsById.get(form.funding_request_id.trim()) ?? null
-    : null;
-  const selectedReceiptDoc = form.receipt_doc_id.trim()
-    ? docsById.get(form.receipt_doc_id.trim()) ?? null
-    : null;
+
 
   useEffect(() => {
     let cancelled = false;
@@ -1543,11 +1504,11 @@ function ExpensesPanel({
 
     try {
       if (!form.budget_line_id.trim()) {
-        setStatus("Budget line ID is required");
+        setStatus("Please select a budget line");
         return;
       }
       if (!form.payee.trim()) {
-        setStatus("Payee is required");
+        setStatus("Please enter the payee name");
         return;
       }
       const amountValue = Number(form.amount);
@@ -1556,7 +1517,7 @@ function ExpensesPanel({
         return;
       }
       if (!form.purchased_at) {
-        setStatus("Purchased date/time is required");
+        setStatus("Please enter the purchase date/time");
         return;
       }
 
@@ -1603,52 +1564,34 @@ function ExpensesPanel({
       ) : null}
       <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2">
         <label className="text-sm">
-          Budget line ID
-          <input
-            type="text"
-            list={budgetLineListId}
+          Budget line
+          <select
             value={form.budget_line_id}
             onChange={(event) => setForm((prev) => ({ ...prev, budget_line_id: event.target.value }))}
             className="mt-1 w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
-          />
-          <datalist id={budgetLineListId}>
-            {budgetLines.map((line) => (
-              <option
-                key={line.id}
-                value={line.id}
-                label={`${line.name} (${line.fiscal_year})${line.is_active ? "" : " • archived"}`}
-              />
+          >
+            <option value="">— Select budget line —</option>
+            {budgetLines.filter((line) => line.is_active).map((line) => (
+              <option key={line.id} value={line.id}>
+                {line.name} ({line.fiscal_year}) — {line.category}
+              </option>
             ))}
-          </datalist>
-          {selectedBudgetLine ? (
-            <div className="mt-1 text-xs text-foreground/60">
-              Selected: {selectedBudgetLine.name} ({selectedBudgetLine.fiscal_year})
-            </div>
-          ) : null}
+          </select>
         </label>
         <label className="text-sm">
-          Funding request ID (optional)
-          <input
-            type="text"
-            list={requestListId}
+          Funding request (optional)
+          <select
             value={form.funding_request_id}
             onChange={(event) => setForm((prev) => ({ ...prev, funding_request_id: event.target.value }))}
             className="mt-1 w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
-          />
-          <datalist id={requestListId}>
+          >
+            <option value="">— None —</option>
             {fundingRequests.map((request) => (
-              <option
-                key={request.id}
-                value={request.id}
-                label={`${request.title} • ${formatCurrency(request.amount_requested)} • ${request.state}`}
-              />
+              <option key={request.id} value={request.id}>
+                {request.title} • {formatCurrency(request.amount_requested)} • {request.state}
+              </option>
             ))}
-          </datalist>
-          {selectedRequest ? (
-            <div className="mt-1 text-xs text-foreground/60">
-              Selected: {selectedRequest.title} • {formatCurrency(selectedRequest.amount_requested)} • {selectedRequest.state}
-            </div>
-          ) : null}
+          </select>
         </label>
         <label className="text-sm">
           Payee
@@ -1693,24 +1636,19 @@ function ExpensesPanel({
           </select>
         </label>
         <label className="text-sm sm:col-span-2">
-          Receipt doc ID (optional)
-          <input
-            type="text"
-            list={docListId}
+          Receipt document (optional)
+          <select
             value={form.receipt_doc_id}
             onChange={(event) => setForm((prev) => ({ ...prev, receipt_doc_id: event.target.value }))}
             className="mt-1 w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
-          />
-          <datalist id={docListId}>
-            {docs.map((doc) => (
-              <option key={doc.id} value={doc.id} label={`${doc.title} • ${doc.doc_type}`} />
+          >
+            <option value="">— None —</option>
+            {docs.filter((doc) => doc.doc_type === "receipt").map((doc) => (
+              <option key={doc.id} value={doc.id}>
+                {doc.title} • {formatDateTime(doc.created_at)}
+              </option>
             ))}
-          </datalist>
-          {selectedReceiptDoc ? (
-            <div className="mt-1 text-xs text-foreground/60">
-              Selected: {selectedReceiptDoc.title} • {selectedReceiptDoc.doc_type}
-            </div>
-          ) : null}
+          </select>
         </label>
         <label className="text-sm sm:col-span-2">
           Description
@@ -1846,11 +1784,6 @@ function GrantCyclesPanel({ meetings }: { meetings: MeetingLookup[] }) {
   const [cycles, setCycles] = useState<GrantCycle[]>([]);
   const [status, setStatus] = useState<string>("");
   const [form, setForm] = useState({ name: "", opens_at: "", closes_at: "", max_amount: "", board_meeting_target_id: "" });
-  const meetingListId = useId();
-  const meetingsById = useMemo(() => new Map(meetings.map((meeting) => [meeting.id, meeting])), [meetings]);
-  const selectedMeeting = form.board_meeting_target_id.trim()
-    ? meetingsById.get(form.board_meeting_target_id.trim()) ?? null
-    : null;
 
   useEffect(() => {
     let cancelled = false;
@@ -2058,15 +1991,6 @@ function GrantApplicationsPanel({
   const [breakdown, setBreakdown] = useState<{ description: string; amount: string }[]>([
     { description: "", amount: "" },
   ]);
-  const cycleListId = useId();
-  const clubListId = useId();
-  const docListId = useId();
-  const cyclesById = useMemo(() => new Map(grantCycles.map((cycle) => [cycle.id, cycle])), [grantCycles]);
-  const clubsById = useMemo(() => new Map(clubs.map((club) => [club.id, club])), [clubs]);
-  const docsById = useMemo(() => new Map(docs.map((doc) => [doc.id, doc])), [docs]);
-  const selectedCycle = form.cycle_id.trim() ? cyclesById.get(form.cycle_id.trim()) ?? null : null;
-  const selectedClub = form.club_id.trim() ? clubsById.get(form.club_id.trim()) ?? null : null;
-  const selectedDoc = form.doc_id.trim() ? docsById.get(form.doc_id.trim()) ?? null : null;
 
   useEffect(() => {
     let cancelled = false;
@@ -2100,19 +2024,19 @@ function GrantApplicationsPanel({
 
     try {
       if (!form.cycle_id.trim()) {
-        setStatus("Cycle ID is required");
+        setStatus("Please select a grant cycle");
         return;
       }
       if (!form.applicant_type.trim()) {
-        setStatus("Applicant type is required");
+        setStatus("Please select an applicant type");
         return;
       }
       if (!form.title.trim()) {
-        setStatus("Title is required");
+        setStatus("Please enter a title for your application");
         return;
       }
       if (!form.doc_id.trim()) {
-        setStatus("Doc ID is required");
+        setStatus("Please select the application document");
         return;
       }
       const amount = Number(form.amount_requested);
@@ -2234,58 +2158,46 @@ function GrantApplicationsPanel({
 
       <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2">
         <label className="text-sm">
-          Cycle ID
-          <input
-            type="text"
-            list={cycleListId}
+          Grant cycle
+          <select
             value={form.cycle_id}
             onChange={(event) => setForm((prev) => ({ ...prev, cycle_id: event.target.value }))}
             className="mt-1 w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
-          />
-          <datalist id={cycleListId}>
+          >
+            <option value="">— Select grant cycle —</option>
             {grantCycles.map((cycle) => (
-              <option
-                key={cycle.id}
-                value={cycle.id}
-                label={`${cycle.name} • ${formatDateTime(cycle.opens_at)} → ${formatDateTime(cycle.closes_at)}`}
-              />
+              <option key={cycle.id} value={cycle.id}>
+                {cycle.name} • Opens {formatDateTime(cycle.opens_at)}
+              </option>
             ))}
-          </datalist>
-          {selectedCycle ? (
-            <div className="mt-1 text-xs text-foreground/60">
-              Selected: {selectedCycle.name} • {formatDateTime(selectedCycle.opens_at)} →{" "}
-              {formatDateTime(selectedCycle.closes_at)}
-            </div>
-          ) : null}
+          </select>
         </label>
         <label className="text-sm">
           Applicant type
-          <input
-            type="text"
+          <select
             value={form.applicant_type}
             onChange={(event) => setForm((prev) => ({ ...prev, applicant_type: event.target.value }))}
             className="mt-1 w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
-          />
+          >
+            <option value="club">Club</option>
+            <option value="individual">Individual</option>
+            <option value="committee">Committee</option>
+          </select>
         </label>
         <label className="text-sm">
-          Club ID (optional)
-          <input
-            type="text"
-            list={clubListId}
+          Club (optional)
+          <select
             value={form.club_id}
             onChange={(event) => setForm((prev) => ({ ...prev, club_id: event.target.value }))}
             className="mt-1 w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
-          />
-          <datalist id={clubListId}>
-            {clubs.map((club) => (
-              <option key={club.id} value={club.id} label={`${club.name} (${club.status})`} />
+          >
+            <option value="">— None —</option>
+            {clubs.filter((club) => club.status === "chartered").map((club) => (
+              <option key={club.id} value={club.id}>
+                {club.name}
+              </option>
             ))}
-          </datalist>
-          {selectedClub ? (
-            <div className="mt-1 text-xs text-foreground/60">
-              Selected: {selectedClub.name} ({selectedClub.status})
-            </div>
-          ) : null}
+          </select>
         </label>
         <label className="text-sm">
           Title
@@ -2317,24 +2229,19 @@ function GrantApplicationsPanel({
           />
         </label>
         <label className="text-sm sm:col-span-2">
-          Doc ID (grant application file)
-          <input
-            type="text"
-            list={docListId}
+          Application document
+          <select
             value={form.doc_id}
             onChange={(event) => setForm((prev) => ({ ...prev, doc_id: event.target.value }))}
             className="mt-1 w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
-          />
-          <datalist id={docListId}>
+          >
+            <option value="">— Select document —</option>
             {docs.map((doc) => (
-              <option key={doc.id} value={doc.id} label={`${doc.title} • ${doc.doc_type}`} />
+              <option key={doc.id} value={doc.id}>
+                {doc.title} • {doc.doc_type}
+              </option>
             ))}
-          </datalist>
-          {selectedDoc ? (
-            <div className="mt-1 text-xs text-foreground/60">
-              Selected: {selectedDoc.title} • {selectedDoc.doc_type}
-            </div>
-          ) : null}
+          </select>
         </label>
         <div className="sm:col-span-2 space-y-2">
           <div className="text-sm font-medium">Breakdown</div>
