@@ -160,7 +160,7 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
 
     if (view === "week") {
       const wk = startOfWeekMonday(anchorDate);
-      return { startDate: wk, endDate: addDays(wk, 7) };
+      return { startDate: wk, endDate: addDays(wk, 5) };
     }
 
     const m = startOfMonth(anchorDate);
@@ -298,7 +298,7 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
   const weekDays = useMemo(() => {
     if (view !== "week") return [];
     const out: string[] = [];
-    for (let i = 0; i < 7; i += 1) out.push(addDays(startDate, i));
+    for (let i = 0; i < 5; i += 1) out.push(addDays(startDate, i));
     return out;
   }, [startDate, view]);
 
@@ -330,7 +330,9 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
-        <div className="text-sm text-foreground/70">{tz ? `Times shown in ${tz}.` : "Loading office timezone…"}</div>
+        <div className="text-sm text-foreground/70">
+          {tz ? `Times shown in ${tz}. Week view is Mon-Fri only.` : "Loading office timezone…"}
+        </div>
 
         <div className="flex flex-wrap items-center gap-2">
           <Button variant={view === "day" ? "default" : "outline"} onClick={() => setView("day")}>
@@ -360,7 +362,7 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
           </div>
 
           <label className="space-y-1 text-sm">
-            <div className="text-foreground/70">{view === "week" ? "Week of" : "Date"}</div>
+            <div className="text-foreground/70">{view === "week" ? "Work week of" : "Date"}</div>
             <input
               type="date"
               className="h-9 rounded-md border bg-transparent px-2 text-sm"
@@ -481,7 +483,7 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
 
       {view === "week" ? (
         <div className="overflow-x-auto pb-4">
-          <div className="grid min-w-[1800px] grid-cols-7 gap-4">
+          <div className="grid min-w-[1400px] grid-cols-5 gap-4">
             {weekDays.map((day) => {
               const daySessions = sessionsByDay.get(day) ?? [];
               const dayMinutes = daySessions.reduce((sum, s) => sum + (typeof s.duration_minutes === "number" ? s.duration_minutes : 0), 0);

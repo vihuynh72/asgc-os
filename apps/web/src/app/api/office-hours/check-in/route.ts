@@ -37,6 +37,7 @@ function mapErrorStatus(message: string): number {
     case "office_location_not_configured":
     case "office_location_missing":
     case "office_config_missing":
+    case "weekend_not_allowed":
       return 400;
     default:
       return 500;

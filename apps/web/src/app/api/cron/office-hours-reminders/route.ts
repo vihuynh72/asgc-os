@@ -24,6 +24,23 @@ function safeString(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
+function safeNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+function formatMinutes(totalMinutes: number | null): string {
+  if (totalMinutes === null) return "n/a";
+  const minutes = Math.max(0, Math.round(totalMinutes));
+  const hoursPart = Math.floor(minutes / 60);
+  const minutesPart = minutes % 60;
+  return `${hoursPart}h ${minutesPart}m`;
+}
+
 function renderEmailText(type: string, metadata: unknown, origin: string): { subject: string; text: string } {
   const m = (typeof metadata === "object" && metadata !== null ? (metadata as Record<string, unknown>) : {}) as Record<
     string,
@@ -35,6 +52,14 @@ function renderEmailText(type: string, metadata: unknown, origin: string): { sub
   const checkinLocal = safeString(m.checkin_at_local);
   const checkoutLocal = safeString(m.checkout_at_local);
   const tz = safeString(m.office_tz);
+  const weekStart = safeString(m.week_start);
+  const weekEnd = safeString(m.week_end);
+  const totalMinutes = safeNumber(m.total_minutes);
+  const inOfficeMinutes = safeNumber(m.in_office_minutes);
+  const deficitMinutes = safeNumber(m.deficit_minutes);
+  const deficitInOfficeMinutes = safeNumber(m.deficit_in_office_minutes);
+  const requiredTotalMinutes = safeNumber(m.required_total_minutes);
+  const requiredInOfficeMinutes = safeNumber(m.required_in_office_minutes);
 
   const link = `${origin}/office-hours`;
 
@@ -56,6 +81,23 @@ function renderEmailText(type: string, metadata: unknown, origin: string): { sub
     return {
       subject: "You missed your office hours shift",
       text: `You missed your office hours shift.\n\nStart: ${startsLocal}${tz ? ` (${tz})` : ""}\nEnd: ${endsLocal}${tz ? ` (${tz})` : ""}\n\nOpen Office Hours: ${link}\n`,
+    };
+  }
+
+  if (type === "office_hours.weekly_hours_reminder") {
+    const weekRange =
+      weekStart && weekEnd ? `Week of ${weekStart} through ${weekEnd}` : weekStart ? `Week of ${weekStart}` : "This week";
+    return {
+      subject: "Office hours reminder: hours remaining this week",
+      text:
+        `Office hours reminder.\n\n${weekRange}\n` +
+        `Required total: ${formatMinutes(requiredTotalMinutes)}\n` +
+        `Completed total: ${formatMinutes(totalMinutes)}\n` +
+        `Remaining total: ${formatMinutes(deficitMinutes)}\n` +
+        `Required in-office: ${formatMinutes(requiredInOfficeMinutes)}\n` +
+        `Completed in-office: ${formatMinutes(inOfficeMinutes)}\n` +
+        `Remaining in-office: ${formatMinutes(deficitInOfficeMinutes)}\n\n` +
+        `Open Office Hours: ${link}\n`,
     };
   }
 
@@ -136,6 +178,11 @@ async function handle(request: NextRequest) {
     return NextResponse.json({ error: missedErr.message }, { status: 500 });
   }
 
+  const { data: weeklyReminders, error: weeklyErr } = await supabase.rpc("enqueue_weekly_hours_reminders");
+  if (weeklyErr) {
+    return NextResponse.json({ error: weeklyErr.message }, { status: 500 });
+  }
+
   const lockId = `cron:${crypto.randomUUID()}`;
 
   // Claim all office_hours.* notifications (shifts, sessions, coverage)
@@ -207,6 +254,7 @@ async function handle(request: NextRequest) {
     auto_closed: autoClosed ?? 0,
     enqueue: enqueueRes ?? null,
     missed_marked: missedCount ?? 0,
+    weekly_reminders: weeklyReminders ?? null,
     claimed: rows.length,
     sent,
     failed,

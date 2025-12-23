@@ -8,6 +8,7 @@ export type OfficeGeo = {
   lon: number;
   radiusM: number;
   graceRadiusM: number;
+  timezone: string;
 };
 
 export function haversineMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {
@@ -108,7 +109,7 @@ export async function getOfficeGeo(admin: SupabaseClient, officeIdHint?: string 
 
   const { data: office, error: officeErr } = await admin
     .from("office_locations")
-    .select("lat,lon,radius_m,grace_radius_m,active")
+    .select("lat,lon,radius_m,grace_radius_m,active,timezone")
     .eq("id", officeLocationId)
     .maybeSingle();
 
@@ -125,5 +126,27 @@ export async function getOfficeGeo(admin: SupabaseClient, officeIdHint?: string 
     lon: office.lon,
     radiusM: office.radius_m,
     graceRadiusM: office.grace_radius_m,
+    timezone: typeof office.timezone === "string" && office.timezone.trim() ? office.timezone : "America/Los_Angeles",
   };
+}
+
+const WEEKDAY_MAP: Record<string, number> = {
+  Mon: 1,
+  Tue: 2,
+  Wed: 3,
+  Thu: 4,
+  Fri: 5,
+  Sat: 6,
+  Sun: 7,
+};
+
+export function isWeekendInTimeZone(date: Date, timeZone: string): boolean {
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", { timeZone, weekday: "short" }).formatToParts(date);
+    const weekday = parts.find((p) => p.type === "weekday")?.value ?? "";
+    const iso = WEEKDAY_MAP[weekday] ?? 0;
+    return iso >= 6;
+  } catch {
+    return false;
+  }
 }

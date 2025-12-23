@@ -22,6 +22,9 @@ type OfficeConfigRow = {
   quiet_hours_enabled: boolean;
   quiet_hours_start_local: string;
   quiet_hours_end_local: string;
+  weekly_hours_reminder_enabled: boolean;
+  weekly_hours_reminder_weekday: number;
+  weekly_hours_reminder_time_local: string;
 };
 
 async function isAdminForRequest(
@@ -66,7 +69,9 @@ function isTimeString(value: unknown): value is string {
 async function ensureOfficeConfigRow(admin: ReturnType<typeof getSupabaseAdminClient>) {
   const { data: existing, error: existingErr } = await admin
     .from("office_config")
-    .select("primary_office_location_id,quiet_hours_enabled,quiet_hours_start_local,quiet_hours_end_local")
+    .select(
+      "primary_office_location_id,quiet_hours_enabled,quiet_hours_start_local,quiet_hours_end_local,weekly_hours_reminder_enabled,weekly_hours_reminder_weekday,weekly_hours_reminder_time_local",
+    )
     .eq("id", true)
     .maybeSingle();
 
@@ -86,7 +91,9 @@ async function ensureOfficeConfigRow(admin: ReturnType<typeof getSupabaseAdminCl
   const { data: inserted, error: insertErr } = await admin
     .from("office_config")
     .insert({ id: true, primary_office_location_id: office.id })
-    .select("primary_office_location_id,quiet_hours_enabled,quiet_hours_start_local,quiet_hours_end_local")
+    .select(
+      "primary_office_location_id,quiet_hours_enabled,quiet_hours_start_local,quiet_hours_end_local,weekly_hours_reminder_enabled,weekly_hours_reminder_weekday,weekly_hours_reminder_time_local",
+    )
     .single();
 
   if (insertErr) throw new Error(insertErr.message);
@@ -148,6 +155,16 @@ export async function PUT(request: NextRequest) {
   if (typeof body.quiet_hours_enabled === "boolean") configPatch.quiet_hours_enabled = body.quiet_hours_enabled;
   if (isTimeString(body.quiet_hours_start_local)) configPatch.quiet_hours_start_local = body.quiet_hours_start_local;
   if (isTimeString(body.quiet_hours_end_local)) configPatch.quiet_hours_end_local = body.quiet_hours_end_local;
+  if (typeof body.weekly_hours_reminder_enabled === "boolean") {
+    configPatch.weekly_hours_reminder_enabled = body.weekly_hours_reminder_enabled;
+  }
+  if (typeof body.weekly_hours_reminder_weekday === "number" && Number.isFinite(body.weekly_hours_reminder_weekday)) {
+    const next = Math.floor(body.weekly_hours_reminder_weekday);
+    if (next >= 1 && next <= 5) configPatch.weekly_hours_reminder_weekday = next;
+  }
+  if (isTimeString(body.weekly_hours_reminder_time_local)) {
+    configPatch.weekly_hours_reminder_time_local = body.weekly_hours_reminder_time_local;
+  }
 
   if (Object.keys(officePatch).length > 0) {
     const { error: patchErr } = await admin.from("office_locations").update(officePatch).eq("id", existing.primary_office_location_id);
@@ -177,7 +194,9 @@ export async function PUT(request: NextRequest) {
 
   const { data: config, error: configErr } = await admin
     .from("office_config")
-    .select("primary_office_location_id,quiet_hours_enabled,quiet_hours_start_local,quiet_hours_end_local")
+    .select(
+      "primary_office_location_id,quiet_hours_enabled,quiet_hours_start_local,quiet_hours_end_local,weekly_hours_reminder_enabled,weekly_hours_reminder_weekday,weekly_hours_reminder_time_local",
+    )
     .eq("id", true)
     .single();
 

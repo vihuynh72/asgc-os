@@ -47,6 +47,9 @@ type OfficeConfigRow = {
   quiet_hours_enabled: boolean;
   quiet_hours_start_local: string;
   quiet_hours_end_local: string;
+  weekly_hours_reminder_enabled: boolean;
+  weekly_hours_reminder_weekday: number;
+  weekly_hours_reminder_time_local: string;
 };
 
 type OfficeHourRequirementRow = {
@@ -658,7 +661,8 @@ export function AdminPanel({
       setShiftEndsAtLocal("");
       setShiftOfficeLocationId("");
     } catch (e) {
-      setShiftStatus(e instanceof Error ? e.message : "Failed to create shift");
+      const message = e instanceof Error ? e.message : "Failed to create shift";
+      setShiftStatus(message === "weekend_not_allowed" ? "Shifts can only be scheduled Monday through Friday." : message);
     }
   }
 
@@ -1481,7 +1485,8 @@ export function AdminPanel({
     }
   }
 
-  const currentTermId = terms.find((t: TermRow) => t.is_current)?.id ?? "";
+  const currentTerm = terms.find((t: TermRow) => t.is_current) ?? null;
+  const currentTermId = currentTerm?.id ?? "";
 
   const reqRows = useMemo(() => {
     const termId = selectedTermId;
@@ -1609,6 +1614,7 @@ export function AdminPanel({
           <label className="space-y-1 text-sm">
             <div className="text-foreground/70">Start date (optional)</div>
             <input
+              type="date"
               className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
               value={newTermStart}
               onChange={(e: ChangeEvent<HTMLInputElement>) => setNewTermStart(e.target.value)}
@@ -1619,6 +1625,7 @@ export function AdminPanel({
           <label className="space-y-1 text-sm">
             <div className="text-foreground/70">End date (optional)</div>
             <input
+              type="date"
               className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
               value={newTermEnd}
               onChange={(e: ChangeEvent<HTMLInputElement>) => setNewTermEnd(e.target.value)}
@@ -2341,7 +2348,7 @@ export function AdminPanel({
         <div className="space-y-1">
           <h2 className="text-lg font-semibold">Office Hour Shifts</h2>
           <p className="text-sm text-foreground/70">
-            Admin can schedule shifts; members can see their weekly shifts on the Office Hours page.
+            Admin can schedule shifts; members can see their weekly shifts on the Office Hours page. Weekdays only (Mon-Fri).
           </p>
         </div>
 
@@ -2619,6 +2626,56 @@ export function AdminPanel({
               />
             </label>
 
+            <div className="md:col-span-4 border-t border-foreground/10 pt-3">
+              <div className="text-sm font-medium">Weekly hours reminder</div>
+              <div className="text-xs text-foreground/60">
+                Sends a reminder to members with remaining hours. Uses current term dates.
+                {currentTerm
+                  ? ` Current term: ${currentTerm.name} (${currentTerm.start_date ?? "no start"} - ${currentTerm.end_date ?? "no end"}).`
+                  : " No current term set."}
+              </div>
+            </div>
+
+            <label className="flex items-center gap-2 text-sm md:col-span-2">
+              <input
+                type="checkbox"
+                checked={officeConfig.weekly_hours_reminder_enabled}
+                onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                  setOfficeConfig({ ...officeConfig, weekly_hours_reminder_enabled: e.target.checked })
+                }
+              />
+              <span>Enable weekly reminder</span>
+            </label>
+
+            <label className="space-y-1 text-sm">
+              <div className="text-foreground/70">Reminder day</div>
+              <select
+                className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                value={officeConfig.weekly_hours_reminder_weekday}
+                onChange={(e: ChangeEvent<HTMLSelectElement>) =>
+                  setOfficeConfig({ ...officeConfig, weekly_hours_reminder_weekday: Number(e.target.value) })
+                }
+              >
+                <option value={1}>Monday</option>
+                <option value={2}>Tuesday</option>
+                <option value={3}>Wednesday</option>
+                <option value={4}>Thursday</option>
+                <option value={5}>Friday</option>
+              </select>
+            </label>
+
+            <label className="space-y-1 text-sm">
+              <div className="text-foreground/70">Reminder time (local)</div>
+              <input
+                type="time"
+                className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                value={officeConfig.weekly_hours_reminder_time_local.slice(0, 5)}
+                onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                  setOfficeConfig({ ...officeConfig, weekly_hours_reminder_time_local: e.target.value })
+                }
+              />
+            </label>
+
             <div className="flex items-end gap-3 md:col-span-4">
               <Button
                 onClick={async () => {
@@ -2656,6 +2713,9 @@ export function AdminPanel({
                       quiet_hours_enabled: officeConfig.quiet_hours_enabled,
                       quiet_hours_start_local: officeConfig.quiet_hours_start_local.slice(0, 5),
                       quiet_hours_end_local: officeConfig.quiet_hours_end_local.slice(0, 5),
+                      weekly_hours_reminder_enabled: officeConfig.weekly_hours_reminder_enabled,
+                      weekly_hours_reminder_weekday: officeConfig.weekly_hours_reminder_weekday,
+                      weekly_hours_reminder_time_local: officeConfig.weekly_hours_reminder_time_local.slice(0, 5),
                     };
 
                     const data = await fetchJson<{ officeConfig: OfficeConfigRow; officeLocation: OfficeLocationRow }>(
