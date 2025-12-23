@@ -219,6 +219,49 @@ This repo is built strictly phase-by-phase per [01_stack_and_architecture.md](01
 	- API: [apps/web/src/app/api/finance/exports/route.ts](apps/web/src/app/api/finance/exports/route.ts)
 	- UI: [apps/web/src/app/finance/page.tsx](apps/web/src/app/finance/page.tsx)
 
+- PHASE 41 — Clubs registry v1: ✅ complete
+	- Migration: [supabase/migrations/202512220001_phase41_clubs_registry_v1.sql](supabase/migrations/202512220001_phase41_clubs_registry_v1.sql)
+	- API: [apps/web/src/app/api/clubs/route.ts](apps/web/src/app/api/clubs/route.ts)
+	- UI: [apps/web/src/app/clubs/page.tsx](apps/web/src/app/clubs/page.tsx)
+
+- PHASE 42 — Charter checklist: ✅ complete
+	- Migration: [supabase/migrations/202512220002_phase42_charter_checklist_v1.sql](supabase/migrations/202512220002_phase42_charter_checklist_v1.sql)
+	- API: [apps/web/src/app/api/clubs/checklist/route.ts](apps/web/src/app/api/clubs/checklist/route.ts)
+	- UI: [apps/web/src/app/clubs/page.tsx](apps/web/src/app/clubs/page.tsx)
+
+- PHASE 43 — ICC meetings + attendance v1: ✅ complete
+	- Migration: [supabase/migrations/202512220003_phase43_icc_meetings_v1.sql](supabase/migrations/202512220003_phase43_icc_meetings_v1.sql)
+	- API: [apps/web/src/app/api/icc/meetings/route.ts](apps/web/src/app/api/icc/meetings/route.ts)
+	- UI: [apps/web/src/app/icc/page.tsx](apps/web/src/app/icc/page.tsx)
+
+- PHASE 44 — ICC absence/quorum flags: ✅ complete
+	- Migration: [supabase/migrations/202512220004_phase44_icc_absence_quorum_flags.sql](supabase/migrations/202512220004_phase44_icc_absence_quorum_flags.sql)
+	- API: [apps/web/src/app/api/icc/absence/route.ts](apps/web/src/app/api/icc/absence/route.ts)
+	- UI: [apps/web/src/app/icc/page.tsx](apps/web/src/app/icc/page.tsx)
+
+- PHASE 45 — Club funding eligibility v1: ✅ complete
+	- Migration: [supabase/migrations/202512220005_phase45_club_eligibility_v1.sql](supabase/migrations/202512220005_phase45_club_eligibility_v1.sql)
+	- UI: [apps/web/src/app/clubs/page.tsx](apps/web/src/app/clubs/page.tsx)
+
+- PHASE 46 — Permissions hardening v2: ✅ complete
+	- Migration: [supabase/migrations/202512220006_phase46_permissions_hardening_v2.sql](supabase/migrations/202512220006_phase46_permissions_hardening_v2.sql)
+	- Docs: [docs/security/rls-matrix-v2.md](docs/security/rls-matrix-v2.md)
+
+- PHASE 47 — Backups & retention: ✅ complete
+	- Scripts: [scripts/backup/run_backup.sh](scripts/backup/run_backup.sh), [scripts/backup/export_storage.sh](scripts/backup/export_storage.sh)
+	- Docs: [docs/ops/backups-retention.md](docs/ops/backups-retention.md), [docs/ops/restore-checklist.md](docs/ops/restore-checklist.md)
+
+- PHASE 48 — Security review pass: ✅ complete
+	- Docs: [docs/security/threat-model.md](docs/security/threat-model.md), [docs/security/log-review.md](docs/security/log-review.md), [docs/security/credential-rotation.md](docs/security/credential-rotation.md)
+
+- PHASE 49 — Admin UX polish: ✅ complete
+	- API: [apps/web/src/app/api/admin/bulk-import-members/route.ts](apps/web/src/app/api/admin/bulk-import-members/route.ts)
+	- API: [apps/web/src/app/api/admin/terms/rollover/route.ts](apps/web/src/app/api/admin/terms/rollover/route.ts)
+	- UI: [apps/web/src/app/admin/admin-panel.tsx](apps/web/src/app/admin/admin-panel.tsx)
+
+- PHASE 50 — Launch runbook: ✅ complete
+	- Docs: [docs/runbook/launch-runbook.md](docs/runbook/launch-runbook.md)
+
 ## Handoff notes (for the next AI/dev)
 
 ### Patterns to follow (do not deviate)
@@ -228,13 +271,9 @@ This repo is built strictly phase-by-phase per [01_stack_and_architecture.md](01
 - User/session auth in Route Handlers uses `@supabase/ssr` `createServerClient(...)` + `supabase.auth.getUser()` (cookie-based).
 - Audit logging under RLS should be done via `SECURITY DEFINER` triggers/functions with pinned `search_path` and execution revoked.
 
-### Where to start next (Phase 41)
+### Where to start next
 
-Phase 41 (Clubs registry v1) should:
-
-- Implement `clubs` table (advisor, constitution doc, membership count).
-- Wire ICC module pages under `/clubs` and `/icc`.
-- Add admin CRUD for club records and constitution uploads.
+- Phase 51+ planning (TBD): post-launch enhancements, reporting, and UX refinements.
 
 ### Quick verification checklist
 
@@ -251,10 +290,12 @@ Phase 41 (Clubs registry v1) should:
 - Agenda PDF: Generate an agenda PDF from accepted agenda items and download it.
 - Finance: Create a budget line, submit a funding request with breakdown, transition status, record a vote, log an expense, view burn-down, and generate an export.
 - Tasks: create a task, add a comment, add a URL attachment.
+- Clubs: Create a club, upload a constitution, update checklist items, and confirm eligibility status.
+- ICC: Create a meeting, record attendance, verify quorum status, and export attendance CSV.
 
 Next up (per the phase list):
 
-- PHASE 41 — Clubs registry v1 (not started)
+- Phase 51+ (TBD)
 
 ## Local dev (web)
 

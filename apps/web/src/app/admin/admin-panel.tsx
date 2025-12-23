@@ -277,6 +277,14 @@ export function AdminPanel({
   const [newTermName, setNewTermName] = useState<string>("");
   const [newTermStart, setNewTermStart] = useState<string>("");
   const [newTermEnd, setNewTermEnd] = useState<string>("");
+  const [rolloverFromTermId, setRolloverFromTermId] = useState<string>(initialSelectedTermId);
+  const [rolloverToTermId, setRolloverToTermId] = useState<string>("");
+  const [rolloverEndPrior, setRolloverEndPrior] = useState<boolean>(true);
+  const [rolloverSetCurrent, setRolloverSetCurrent] = useState<boolean>(true);
+
+  const [bulkImportText, setBulkImportText] = useState<string>("");
+  const [bulkImportRoleKey, setBulkImportRoleKey] = useState<RoleKey | "">("");
+  const [bulkImportTermId, setBulkImportTermId] = useState<string>(initialSelectedTermId);
 
   const [officeLocation, setOfficeLocation] = useState<OfficeLocationRow | null>(initialOfficeLocation);
   const [officeConfig, setOfficeConfig] = useState<OfficeConfigRow | null>(initialOfficeConfig);
@@ -1089,6 +1097,7 @@ export function AdminPanel({
   }
 
   const bulkInvitesPreview = useMemo(() => parseBulkInvites(bulkInviteText), [bulkInviteText]);
+  const bulkImportPreview = useMemo(() => parseBulkInvites(bulkImportText), [bulkImportText]);
 
   async function onBulkAddInvites() {
     const candidates = bulkInvitesPreview;
@@ -1121,6 +1130,41 @@ export function AdminPanel({
     setInviteNotesDraftById({});
     setBulkInviteText("");
     setStatus(`Bulk add complete: ${ok} added, ${fail} failed.`);
+  }
+
+  async function onBulkImportMembers() {
+    const candidates = bulkImportPreview;
+    if (candidates.length === 0) {
+      setStatus("No emails found to import.");
+      return;
+    }
+
+    if (bulkImportRoleKey && bulkImportRoleKey !== "advisor" && !bulkImportTermId) {
+      setStatus("Select a term for term-scoped roles.");
+      return;
+    }
+
+    setStatus(`Importing ${candidates.length} members...`);
+    try {
+      await fetchJson("/api/admin/bulk-import-members", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          entries: candidates.map((candidate) => ({
+            email: candidate.email,
+            role_key: bulkImportRoleKey || undefined,
+            term_id: bulkImportRoleKey && bulkImportRoleKey !== "advisor" ? bulkImportTermId : null,
+            notes: candidate.notes ?? null,
+          })),
+        }),
+      });
+
+      setBulkImportText("");
+      setStatus("Bulk import complete.");
+      await loadTermsAndUsers();
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : "Bulk import failed");
+    }
   }
 
   async function onCreateTerm() {
@@ -1159,6 +1203,32 @@ export function AdminPanel({
       await loadTermsAndUsers();
     } catch (e) {
       setStatus(e instanceof Error ? e.message : "Failed to set current term");
+    }
+  }
+
+  async function onRolloverTerm() {
+    if (!rolloverFromTermId || !rolloverToTermId) {
+      setStatus("Select both source and destination terms.");
+      return;
+    }
+
+    setStatus("Rolling over term assignments...");
+    try {
+      await fetchJson("/api/admin/terms/rollover", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          from_term_id: rolloverFromTermId,
+          to_term_id: rolloverToTermId,
+          end_prior: rolloverEndPrior,
+          set_current: rolloverSetCurrent,
+        }),
+      });
+
+      await loadTermsAndUsers();
+      setStatus("Term rollover complete.");
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : "Failed to rollover term");
     }
   }
 
@@ -1211,6 +1281,8 @@ export function AdminPanel({
 
   async function onSelectTerm(nextTermId: string) {
     setSelectedTermId(nextTermId);
+    setBulkImportTermId(nextTermId || initialSelectedTermId);
+    setRolloverFromTermId(nextTermId || initialSelectedTermId);
     if (!nextTermId) return;
     try {
       await Promise.all([loadAssignments(nextTermId), loadOfficeHourRequirements(nextTermId)]);
@@ -1331,6 +1403,70 @@ export function AdminPanel({
             </Button>
           </div>
         </div>
+
+        <div className="rounded-md border p-3">
+          <div className="text-sm font-medium">Term rollover</div>
+          <div className="mt-3 grid gap-3 md:grid-cols-4">
+            <label className="space-y-1 text-sm">
+              <div className="text-foreground/70">From term</div>
+              <select
+                className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                value={rolloverFromTermId}
+                onChange={(e: ChangeEvent<HTMLSelectElement>) => setRolloverFromTermId(e.target.value)}
+              >
+                <option value="">Select term</option>
+                {terms.map((t: TermRow) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                    {t.is_current ? " (current)" : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="space-y-1 text-sm">
+              <div className="text-foreground/70">To term</div>
+              <select
+                className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                value={rolloverToTermId}
+                onChange={(e: ChangeEvent<HTMLSelectElement>) => setRolloverToTermId(e.target.value)}
+              >
+                <option value="">Select term</option>
+                {terms.map((t: TermRow) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                    {t.is_current ? " (current)" : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <div className="flex flex-col gap-2 text-sm">
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={rolloverEndPrior}
+                  onChange={(e) => setRolloverEndPrior(e.target.checked)}
+                />
+                End prior term assignments
+              </label>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={rolloverSetCurrent}
+                  onChange={(e) => setRolloverSetCurrent(e.target.checked)}
+                />
+                Set destination as current term
+              </label>
+            </div>
+
+            <div className="flex items-end">
+              <Button onClick={onRolloverTerm} disabled={!rolloverFromTermId || !rolloverToTermId}>
+                Run rollover
+              </Button>
+            </div>
+          </div>
+        </div>
       </section>
         </>
       ) : null}
@@ -1426,6 +1562,68 @@ export function AdminPanel({
                 Detected: {bulkInvitesPreview.length} unique email{bulkInvitesPreview.length === 1 ? "" : "s"}
               </span>
             ) : null}
+          </div>
+        </div>
+
+        <div className="rounded-md border p-3">
+          <div className="text-sm font-medium">Bulk import members (allowlist + optional role)</div>
+          <div className="mt-1 text-xs text-foreground/70">
+            Paste emails (same format as above). Optionally assign a single role to all imported entries.
+          </div>
+          <textarea
+            className="mt-2 min-h-24 w-full rounded-md border bg-transparent px-2 py-2 text-sm"
+            value={bulkImportText}
+            onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setBulkImportText(e.target.value)}
+            placeholder="Paste emails here..."
+          />
+          <div className="mt-2 grid gap-2 md:grid-cols-3">
+            <label className="space-y-1 text-sm">
+              <div className="text-foreground/70">Role (optional)</div>
+              <select
+                className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                value={bulkImportRoleKey}
+                onChange={(e: ChangeEvent<HTMLSelectElement>) => setBulkImportRoleKey(e.target.value as RoleKey | "")}
+              >
+                <option value="">No role</option>
+                {ROLE_OPTIONS.map((role) => (
+                  <option key={role.key} value={role.key}>
+                    {role.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="space-y-1 text-sm">
+              <div className="text-foreground/70">Term (for term roles)</div>
+              <select
+                className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                value={bulkImportTermId}
+                onChange={(e: ChangeEvent<HTMLSelectElement>) => setBulkImportTermId(e.target.value)}
+              >
+                {terms.map((t: TermRow) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                    {t.is_current ? " (current)" : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <div className="flex items-end gap-2">
+              <Button onClick={() => void onBulkImportMembers()} disabled={bulkImportPreview.length === 0}>
+                Import ({bulkImportPreview.length})
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={() => setBulkImportText("")}
+                disabled={!bulkImportText.trim()}
+              >
+                Clear
+              </Button>
+            </div>
+          </div>
+          <div className="mt-2 text-xs text-foreground/60">
+            Detected: {bulkImportPreview.length} unique email{bulkImportPreview.length === 1 ? "" : "s"}
           </div>
         </div>
 
