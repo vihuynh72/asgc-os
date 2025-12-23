@@ -1181,6 +1181,8 @@ function BoardVotesPanel({
     notes: "",
   });
   const userListId = useId();
+  const meetingsById = useMemo(() => new Map(meetings.map((m) => [m.id, m])), [meetings]);
+  const requestsById = useMemo(() => new Map(fundingRequests.map((r) => [r.id, r])), [fundingRequests]);
   const usersById = useMemo(() => new Map(users.map((user) => [user.id, user])), [users]);
   const selectedMovedBy = form.moved_by.trim() ? usersById.get(form.moved_by.trim()) ?? null : null;
   const selectedSecondedBy = form.seconded_by.trim() ? usersById.get(form.seconded_by.trim()) ?? null : null;
@@ -1473,6 +1475,9 @@ function ExpensesPanel({
     receipt_doc_id: "",
     status: "pending",
   });
+  const budgetLinesById = useMemo(() => new Map(budgetLines.map((line) => [line.id, line])), [budgetLines]);
+  const requestsById = useMemo(() => new Map(fundingRequests.map((r) => [r.id, r])), [fundingRequests]);
+  const docsById = useMemo(() => new Map(docs.map((doc) => [doc.id, doc])), [docs]);
 
 
   useEffect(() => {
@@ -1784,6 +1789,11 @@ function GrantCyclesPanel({ meetings }: { meetings: MeetingLookup[] }) {
   const [cycles, setCycles] = useState<GrantCycle[]>([]);
   const [status, setStatus] = useState<string>("");
   const [form, setForm] = useState({ name: "", opens_at: "", closes_at: "", max_amount: "", board_meeting_target_id: "" });
+  const meetingListId = useId();
+  const meetingsById = useMemo(() => new Map(meetings.map((m) => [m.id, m])), [meetings]);
+  const selectedMeeting = form.board_meeting_target_id.trim()
+    ? meetingsById.get(form.board_meeting_target_id.trim()) ?? null
+    : null;
 
   useEffect(() => {
     let cancelled = false;
@@ -1991,6 +2001,9 @@ function GrantApplicationsPanel({
   const [breakdown, setBreakdown] = useState<{ description: string; amount: string }[]>([
     { description: "", amount: "" },
   ]);
+  const cyclesById = useMemo(() => new Map(grantCycles.map((c) => [c.id, c])), [grantCycles]);
+  const clubsById = useMemo(() => new Map(clubs.map((c) => [c.id, c])), [clubs]);
+  const docsById = useMemo(() => new Map(docs.map((d) => [d.id, d])), [docs]);
 
   useEffect(() => {
     let cancelled = false;
