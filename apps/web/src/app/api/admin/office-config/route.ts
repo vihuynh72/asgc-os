@@ -106,7 +106,12 @@ export async function GET(request: NextRequest) {
 
   const admin = getSupabaseAdminClient();
 
-  const config = await ensureOfficeConfigRow(admin);
+  let config: OfficeConfigRow;
+  try {
+    config = await ensureOfficeConfigRow(admin);
+  } catch (e) {
+    return NextResponse.json({ error: e instanceof Error ? e.message : "Failed to load office config" }, { status: 500 });
+  }
 
   const { data: officeLocation, error: officeErr } = await admin
     .from("office_locations")
