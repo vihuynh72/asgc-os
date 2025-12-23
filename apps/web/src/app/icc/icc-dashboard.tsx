@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type ChangeEvent, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from "react";
 
 import { Button } from "@/components/ui/button";
 
@@ -94,6 +94,11 @@ export function IccDashboard({
     }
     return map;
   }, [attendance]);
+
+  useEffect(() => {
+    if (!selectedMeetingId) return;
+    void loadAttendance(selectedMeetingId);
+  }, [selectedMeetingId]);
 
   async function reloadMeetings() {
     const data = await fetchJson<{ meetings: IccMeeting[] }>("/api/icc/meetings");
@@ -291,7 +296,6 @@ export function IccDashboard({
                       size="sm"
                       onClick={() => {
                         setSelectedMeetingId(meeting.id);
-                        void loadAttendance(meeting.id);
                       }}
                     >
                       Manage attendance
@@ -359,7 +363,6 @@ export function IccDashboard({
               value={selectedMeetingId}
               onChange={(event) => {
                 setSelectedMeetingId(event.target.value);
-                void loadAttendance(event.target.value);
               }}
             >
               <option value="">Select meeting</option>

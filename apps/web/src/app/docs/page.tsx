@@ -28,8 +28,20 @@ type CommitteeRow = {
   name: string;
 };
 
+type MeetingRow = {
+  id: string;
+  title: string;
+  starts_at: string;
+  committee_id: string | null;
+};
+
 export default async function DocsPage() {
   const supabase = await getSupabaseServerComponentClient();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  const userId = user?.id ?? null;
 
   // Fetch docs using RPC (visibility-aware)
   const { data: docsData, error: docsError } = await supabase.rpc("list_docs", {
@@ -47,8 +59,24 @@ export default async function DocsPage() {
     .select("id, committee_key, name")
     .order("name");
 
+  const { data: meetingsData } = await supabase
+    .from("meetings")
+    .select("id,title,starts_at,committee_id")
+    .order("starts_at", { ascending: false })
+    .limit(50);
+
+  let canUseRestricted = false;
+  if (userId) {
+    const [{ data: isAdmin }, { data: isExecutive }] = await Promise.all([
+      supabase.rpc("is_admin", { _uid: userId }),
+      supabase.rpc("is_executive", { _uid: userId }),
+    ]);
+    canUseRestricted = !!isAdmin || !!isExecutive;
+  }
+
   const docs = (docsData ?? []) as DocRow[];
   const committees = (committeesData ?? []) as CommitteeRow[];
+  const meetings = (meetingsData ?? []) as MeetingRow[];
 
   return (
     <PageShell
@@ -58,7 +86,7 @@ export default async function DocsPage() {
       {docsError ? (
         <div className="text-sm text-red-600">Error: {docsError.message}</div>
       ) : (
-        <DocsPanel initialDocs={docs} committees={committees} />
+        <DocsPanel initialDocs={docs} committees={committees} meetings={meetings} canUseRestricted={canUseRestricted} />
       )}
     </PageShell>
   );

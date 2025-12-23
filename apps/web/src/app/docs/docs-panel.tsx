@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState, type ChangeEvent, type FormEvent } from "react";
+import { useCallback, useId, useMemo, useState, type ChangeEvent, type FormEvent } from "react";
 
 import { Button } from "@/components/ui/button";
 
@@ -29,6 +29,13 @@ type CommitteeRow = {
   name: string;
 };
 
+type MeetingRow = {
+  id: string;
+  title: string;
+  starts_at: string;
+  committee_id: string | null;
+};
+
 type DocSummary = {
   id: string;
   doc_id: string;
@@ -55,6 +62,43 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
     throw new Error(message);
   }
   return data;
+}
+
+type UploadBucket = "documents" | "minutes" | "receipts";
+
+const BUCKET_CONFIG: Record<UploadBucket, { maxBytes: number; allowedMimeTypes: string[] }> = {
+  documents: {
+    maxBytes: 50 * 1024 * 1024,
+    allowedMimeTypes: [
+      "application/pdf",
+      "application/msword",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "application/vnd.ms-excel",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "image/png",
+      "image/jpeg",
+      "image/gif",
+      "text/plain",
+    ],
+  },
+  minutes: {
+    maxBytes: 50 * 1024 * 1024,
+    allowedMimeTypes: [
+      "application/pdf",
+      "application/msword",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ],
+  },
+  receipts: {
+    maxBytes: 10 * 1024 * 1024,
+    allowedMimeTypes: ["application/pdf", "image/png", "image/jpeg"],
+  },
+};
+
+function bucketForDocType(docType: string): UploadBucket {
+  if (docType === "minutes") return "minutes";
+  if (docType === "receipt") return "receipts";
+  return "documents";
 }
 
 function formatBytes(bytes: number | null | undefined): string {
@@ -111,9 +155,13 @@ function formatVisibility(visibility: string): string {
 export function DocsPanel({
   initialDocs,
   committees,
+  meetings,
+  canUseRestricted,
 }: {
   initialDocs: DocRow[];
   committees: CommitteeRow[];
+  meetings: MeetingRow[];
+  canUseRestricted: boolean;
 }) {
   const [docs, setDocs] = useState<DocRow[]>(initialDocs);
   const [status, setStatus] = useState<string>("");
@@ -131,6 +179,7 @@ export function DocsPanel({
   const [newDescription, setNewDescription] = useState<string>("");
   const [newVisibility, setNewVisibility] = useState<string>("internal");
   const [newCommitteeId, setNewCommitteeId] = useState<string>("");
+  const [newMeetingId, setNewMeetingId] = useState<string>("");
   const [newContentText, setNewContentText] = useState<string>("");
 
   const [expandedNoteId, setExpandedNoteId] = useState<string | null>(null);
@@ -144,7 +193,48 @@ export function DocsPanel({
     return m;
   }, [committees]);
 
+  const meetingsById = useMemo(() => {
+    const m = new Map<string, MeetingRow>();
+    for (const meeting of meetings) m.set(meeting.id, meeting);
+    return m;
+  }, [meetings]);
+
   const isCommitteeNote = newDocType === "committee_notes";
+  const isMeetingDoc = newDocType === "minutes" || newDocType === "agenda";
+  const uploadBucket = bucketForDocType(newDocType);
+  const uploadConfig = BUCKET_CONFIG[uploadBucket];
+  const fileAcceptList = uploadConfig.allowedMimeTypes.join(",");
+  const fileInputId = useId();
+  const selectedMeeting = useMemo(
+    () => (isMeetingDoc ? meetingsById.get(newMeetingId) ?? null : null),
+    [isMeetingDoc, meetingsById, newMeetingId],
+  );
+  const meetingCommitteeId = selectedMeeting?.committee_id ?? null;
+  const committeeSelectValue =
+    isMeetingDoc && meetingCommitteeId ? meetingCommitteeId : newCommitteeId;
+
+  function resetUploadDraft() {
+    setUploadFile(null);
+    setNewTitle("");
+    setNewDocType("other");
+    setNewDescription("");
+    setNewVisibility("internal");
+    setNewCommitteeId("");
+    setNewMeetingId("");
+    setNewContentText("");
+    setShowUploadForm(false);
+  }
+
+  function handleFileSelected(file: File | null) {
+    setUploadFile(file);
+    if (!file) return;
+    setNewTitle((prev) => (prev.trim() ? prev : file.name.replace(/\.[^.]+$/, "")));
+  }
+
+  function openUploadForm() {
+    setStatus("");
+    setShowUploadForm(true);
+  }
 
   const filteredDocs = useMemo(() => {
     return docs.filter((d) => {
@@ -174,6 +264,9 @@ export function DocsPanel({
     }
 
     const isCommitteeNote = newDocType === "committee_notes";
+    const isMeetingDoc = newDocType === "minutes" || newDocType === "agenda";
+    const selectedMeeting = isMeetingDoc ? meetingsById.get(newMeetingId) ?? null : null;
+    const meetingCommitteeId = selectedMeeting?.committee_id ?? null;
 
     if (isCommitteeNote) {
       if (!newCommitteeId) {
@@ -202,14 +295,7 @@ export function DocsPanel({
         });
 
         setStatus("Done!");
-        setUploadFile(null);
-        setNewTitle("");
-        setNewDocType("other");
-        setNewDescription("");
-        setNewVisibility("internal");
-        setNewCommitteeId("");
-        setNewContentText("");
-        setShowUploadForm(false);
+        resetUploadDraft();
         await reload();
       } catch (err) {
         setStatus(err instanceof Error ? err.message : "Note creation failed");
@@ -220,6 +306,37 @@ export function DocsPanel({
 
     if (!uploadFile) {
       setStatus("No file selected");
+      return;
+    }
+
+    if (isMeetingDoc) {
+      if (!newMeetingId) {
+        setStatus("Meeting required for minutes/agenda");
+        return;
+      }
+      if (!selectedMeeting) {
+        setStatus("Select a valid meeting");
+        return;
+      }
+    }
+
+    if (uploadFile.size > uploadConfig.maxBytes) {
+      setStatus(`File too large (max ${formatBytes(uploadConfig.maxBytes)})`);
+      return;
+    }
+
+    if (uploadFile.type && !uploadConfig.allowedMimeTypes.includes(uploadFile.type)) {
+      setStatus("Unsupported file type for this document type");
+      return;
+    }
+
+    const effectiveCommitteeId =
+      isMeetingDoc && meetingCommitteeId ? meetingCommitteeId : newCommitteeId || null;
+    const effectiveVisibility =
+      isMeetingDoc && meetingCommitteeId ? "committee_only" : newVisibility;
+
+    if (effectiveVisibility === "committee_only" && !effectiveCommitteeId) {
+      setStatus("Committee required for committee-only visibility");
       return;
     }
 
@@ -238,7 +355,7 @@ export function DocsPanel({
         body: JSON.stringify({
           filename: uploadFile.name,
           content_type: uploadFile.type,
-          bucket: "documents",
+          bucket: uploadBucket,
         }),
       });
 
@@ -268,21 +385,15 @@ export function DocsPanel({
           storage_bucket: bucket,
           mime_type: uploadFile.type || null,
           size_bytes: uploadFile.size,
-          visibility: newVisibility,
-          committee_id: newCommitteeId || null,
+          visibility: effectiveVisibility,
+          committee_id: effectiveCommitteeId,
+          meeting_id: isMeetingDoc ? newMeetingId : null,
           description: newDescription.trim() || null,
         }),
       });
 
       setStatus("Done!");
-      setUploadFile(null);
-      setNewTitle("");
-      setNewDocType("other");
-      setNewDescription("");
-      setNewVisibility("internal");
-      setNewCommitteeId("");
-      setNewContentText("");
-      setShowUploadForm(false);
+      resetUploadDraft();
       await reload();
     } catch (err) {
       setStatus(err instanceof Error ? err.message : "Upload failed");
@@ -464,7 +575,18 @@ export function DocsPanel({
 
         <div className="flex-1" />
 
-        <Button type="button" size="sm" onClick={() => setShowUploadForm(!showUploadForm)}>
+        <Button
+          type="button"
+          size="sm"
+          onClick={() => {
+            if (showUploadForm) {
+              setStatus("");
+              resetUploadDraft();
+            } else {
+              openUploadForm();
+            }
+          }}
+        >
           {showUploadForm ? "Cancel" : "Upload Document"}
         </Button>
       </div>
@@ -498,9 +620,16 @@ export function DocsPanel({
                     if (!newCommitteeId && committees[0]?.id) {
                       setNewCommitteeId(committees[0].id);
                     }
+                    setUploadFile(null);
+                    setNewMeetingId("");
                   } else if (newVisibility === "committee_only") {
                     setNewVisibility("internal");
                     setNewContentText("");
+                  }
+                  if (value !== "minutes" && value !== "agenda") {
+                    setNewMeetingId("");
+                  } else if (!newMeetingId && meetings[0]?.id) {
+                    setNewMeetingId(meetings[0].id);
                   }
                 }}
                 className="w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
@@ -518,6 +647,40 @@ export function DocsPanel({
               </select>
             </div>
 
+            {isMeetingDoc ? (
+              <div>
+                <label className="mb-1 block text-xs text-foreground/70">Meeting *</label>
+                <select
+                  value={newMeetingId}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setNewMeetingId(value);
+                    const meeting = meetingsById.get(value) ?? null;
+                    if (meeting?.committee_id) {
+                      setNewCommitteeId(meeting.committee_id);
+                      setNewVisibility("committee_only");
+                    } else if (newVisibility === "committee_only") {
+                      setNewCommitteeId("");
+                      setNewVisibility("internal");
+                    }
+                  }}
+                  className="w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
+                >
+                  <option value="">Select meeting</option>
+                  {meetings.map((meeting) => (
+                    <option key={meeting.id} value={meeting.id}>
+                      {new Date(meeting.starts_at).toLocaleString()} - {meeting.title}
+                    </option>
+                  ))}
+                </select>
+                {selectedMeeting ? (
+                  <div className="mt-1 text-xs text-foreground/60">
+                    {selectedMeeting.committee_id ? "Committee meeting" : "General meeting"}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
             <div>
               <label className="mb-1 block text-xs text-foreground/70">Visibility</label>
               <select
@@ -532,7 +695,7 @@ export function DocsPanel({
                   <>
                     <option value="public">Public</option>
                     <option value="internal">Internal</option>
-                    <option value="restricted">Restricted</option>
+                    {canUseRestricted ? <option value="restricted">Restricted</option> : null}
                     <option value="committee_only">Committee Only</option>
                   </>
                 )}
@@ -544,8 +707,9 @@ export function DocsPanel({
                 Committee {isCommitteeNote ? "*" : "(optional)"}
               </label>
               <select
-                value={newCommitteeId}
+                value={committeeSelectValue}
                 onChange={(e) => setNewCommitteeId(e.target.value)}
+                disabled={isMeetingDoc && !!meetingCommitteeId}
                 className="w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
               >
                 <option value="">None</option>
@@ -582,22 +746,31 @@ export function DocsPanel({
             ) : (
               <div className="sm:col-span-2">
                 <label className="mb-1 block text-xs text-foreground/70">File *</label>
-                <input
-                  type="file"
-                  onChange={(e: ChangeEvent<HTMLInputElement>) => {
-                    const f = e.target.files?.[0] ?? null;
-                    setUploadFile(f);
-                    if (f && !newTitle.trim()) {
-                      setNewTitle(f.name.replace(/\\.[^.]+$/, ""));
-                    }
-                  }}
-                  className="text-sm"
-                />
-                {uploadFile ? (
-                  <div className="mt-1 text-xs text-foreground/70">
-                    {uploadFile.name} ({formatBytes(uploadFile.size)})
+                <div className="flex flex-wrap items-center gap-3">
+                  <input
+                    id={fileInputId}
+                    type="file"
+                    accept={fileAcceptList}
+                    onChange={(e: ChangeEvent<HTMLInputElement>) => {
+                      const f = e.target.files?.[0] ?? null;
+                      handleFileSelected(f);
+                      e.currentTarget.value = "";
+                    }}
+                    className="sr-only"
+                  />
+                  <label
+                    htmlFor={fileInputId}
+                    className="inline-flex cursor-pointer items-center rounded border border-foreground/20 px-3 py-1 text-sm text-foreground hover:bg-foreground/5"
+                  >
+                    Choose file
+                  </label>
+                  <div className="text-xs text-foreground/70">
+                    {uploadFile ? `${uploadFile.name} (${formatBytes(uploadFile.size)})` : "No file selected"}
                   </div>
-                ) : null}
+                </div>
+                <div className="mt-1 text-xs text-foreground/60">
+                  Max size {formatBytes(uploadConfig.maxBytes)}. Allowed: {uploadConfig.allowedMimeTypes.join(", ")}.
+                </div>
               </div>
             )}
           </div>
