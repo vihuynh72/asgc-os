@@ -1494,6 +1494,7 @@ export function AdminPanel({
     return byRole;
   }, [officeHourRequirements, selectedTermId]);
 
+  /* eslint-disable react-hooks/preserve-manual-memoization */
   const committeeById = useMemo(() => {
     const map = new Map<string, CommitteeRow>();
     for (const committee of committees) {
@@ -1501,6 +1502,7 @@ export function AdminPanel({
     }
     return map;
   }, [committees]);
+  /* eslint-enable react-hooks/preserve-manual-memoization */
 
   const shiftUsers = useMemo(() => {
     const query = shiftUserSearch.trim().toLowerCase();
@@ -1513,6 +1515,7 @@ export function AdminPanel({
     [users, shiftUserId],
   );
 
+  /* eslint-disable react-hooks/preserve-manual-memoization */
   const filteredMeetings = useMemo(() => {
     const query = meetingSearch.trim().toLowerCase();
     if (!query) return adminMeetings;
@@ -1528,6 +1531,7 @@ export function AdminPanel({
       return haystack.includes(query);
     });
   }, [adminMeetings, committeeById, meetingSearch]);
+  /* eslint-enable react-hooks/preserve-manual-memoization */
 
   return (
     <div className="space-y-6">
