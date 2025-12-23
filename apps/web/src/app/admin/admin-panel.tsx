@@ -335,6 +335,9 @@ export function AdminPanel({
         void loadCommittees();
       }
     }
+    if (nextTab === "office_hours" && !officeConfig) {
+      void loadOfficeConfig();
+    }
   }
 
   const [newBanPattern, setNewBanPattern] = useState<string>("");
