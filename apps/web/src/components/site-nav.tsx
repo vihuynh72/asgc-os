@@ -40,12 +40,12 @@ export async function SiteNav() {
   const links = user ? appLinks.filter((l) => l.href !== "/admin" || isAdmin) : publicLinks;
 
   return (
-    <header className="border-b">
+    <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
       <div className="mx-auto flex h-14 w-full max-w-5xl items-center justify-between gap-4 px-4">
         <Link href="/" className="font-semibold">
           ASGC OS
         </Link>
-        <nav className="flex min-w-0 flex-1 gap-4 overflow-x-auto whitespace-nowrap text-sm">
+        <nav aria-label="Primary" className="flex min-w-0 flex-1 gap-4 overflow-x-auto whitespace-nowrap text-sm">
           {links.map((l) => (
             <Link
               key={l.href}

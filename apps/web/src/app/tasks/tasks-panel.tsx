@@ -90,6 +90,10 @@ export function TasksPanel({
   const [assigneesByCommitteeId, setAssigneesByCommitteeId] = useState<Record<string, AssigneeRow[]>>({});
 
   const [status, setStatus] = useState<string>("");
+  const [filterQuery, setFilterQuery] = useState<string>("");
+  const [filterStatus, setFilterStatus] = useState<TaskRow["status"] | "">("");
+  const [filterCommitteeId, setFilterCommitteeId] = useState<string>("");
+  const [sortKey, setSortKey] = useState<"updated" | "due" | "title">("updated");
 
   const [newCommitteeId, setNewCommitteeId] = useState<string>(initialCommittees[0]?.id ?? "");
   const [newTitle, setNewTitle] = useState<string>("");
@@ -110,6 +114,43 @@ export function TasksPanel({
     for (const c of committees) m.set(c.id, c);
     return m;
   }, [committees]);
+
+  const filteredTasks = useMemo(() => {
+    const query = filterQuery.trim().toLowerCase();
+    let next = tasks;
+
+    if (filterStatus) {
+      next = next.filter((t) => t.status === filterStatus);
+    }
+    if (filterCommitteeId) {
+      next = next.filter((t) => t.committee_id === filterCommitteeId);
+    }
+    if (query) {
+      next = next.filter((t) => {
+        const committeeName = committeesById.get(t.committee_id)?.name ?? "";
+        const haystack = `${t.title} ${t.description ?? ""} ${committeeName}`.toLowerCase();
+        return haystack.includes(query);
+      });
+    }
+
+    const sorted = [...next];
+    if (sortKey === "title") {
+      sorted.sort((a, b) => a.title.localeCompare(b.title));
+      return sorted;
+    }
+    if (sortKey === "due") {
+      sorted.sort((a, b) => {
+        const aDue = a.due_at ? new Date(a.due_at).getTime() : Number.POSITIVE_INFINITY;
+        const bDue = b.due_at ? new Date(b.due_at).getTime() : Number.POSITIVE_INFINITY;
+        if (aDue !== bDue) return aDue - bDue;
+        return a.title.localeCompare(b.title);
+      });
+      return sorted;
+    }
+
+    sorted.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
+    return sorted;
+  }, [committeesById, filterCommitteeId, filterQuery, filterStatus, sortKey, tasks]);
 
   async function loadAssignees(committeeId: string) {
     if (!committeeId) return;
@@ -187,6 +228,7 @@ export function TasksPanel({
   }
 
   async function deleteComment(taskId: string, commentId: string) {
+    if (!window.confirm("Delete this comment?")) return;
     setStatus("Removing comment...");
     try {
       await fetchJson<{ ok: true }>(
@@ -229,6 +271,7 @@ export function TasksPanel({
   }
 
   async function deleteAttachment(taskId: string, attachmentId: string) {
+    if (!window.confirm("Remove this attachment?")) return;
     setStatus("Removing link...");
     try {
       await fetchJson<{ ok: true }>(
@@ -309,6 +352,9 @@ export function TasksPanel({
   }
 
   async function deleteTask(taskId: string) {
+    const task = tasks.find((t) => t.id === taskId);
+    const label = task?.title ? `"${task.title}"` : "this task";
+    if (!window.confirm(`Delete ${label}? This cannot be undone.`)) return;
     setStatus("Deleting...");
     try {
       await fetchJson<{ ok: true }>(`/api/tasks/${encodeURIComponent(taskId)}`, { method: "DELETE" });
@@ -321,7 +367,11 @@ export function TasksPanel({
 
   return (
     <div className="space-y-8">
-      {status ? <div className="rounded-md border px-3 py-2 text-sm text-foreground/80">{status}</div> : null}
+      {status ? (
+        <div className="rounded-md border px-3 py-2 text-sm text-foreground/80" role="status" aria-live="polite">
+          {status}
+        </div>
+      ) : null}
 
       <section className="space-y-3">
         <div className="space-y-1">
@@ -431,12 +481,92 @@ export function TasksPanel({
           </p>
         </div>
 
+        <div className="rounded-md border p-3">
+          <div className="grid gap-3 md:grid-cols-5">
+            <label className="space-y-1 text-sm md:col-span-2">
+              <div className="text-foreground/70">Search</div>
+              <input
+                className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                value={filterQuery}
+                onChange={(e: ChangeEvent<HTMLInputElement>) => setFilterQuery(e.target.value)}
+                placeholder="Title, description, committee…"
+              />
+            </label>
+
+            <label className="space-y-1 text-sm">
+              <div className="text-foreground/70">Status</div>
+              <select
+                className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                value={filterStatus}
+                onChange={(e: ChangeEvent<HTMLSelectElement>) =>
+                  setFilterStatus(e.target.value as TaskRow["status"] | "")
+                }
+              >
+                <option value="">All</option>
+                <option value="todo">To do</option>
+                <option value="doing">Doing</option>
+                <option value="done">Done</option>
+              </select>
+            </label>
+
+            <label className="space-y-1 text-sm">
+              <div className="text-foreground/70">Committee</div>
+              <select
+                className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                value={filterCommitteeId}
+                onChange={(e: ChangeEvent<HTMLSelectElement>) => setFilterCommitteeId(e.target.value)}
+              >
+                <option value="">All</option>
+                {committees.map((committee) => (
+                  <option key={committee.id} value={committee.id}>
+                    {committee.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="space-y-1 text-sm">
+              <div className="text-foreground/70">Sort by</div>
+              <select
+                className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                value={sortKey}
+                onChange={(e: ChangeEvent<HTMLSelectElement>) => setSortKey(e.target.value as typeof sortKey)}
+              >
+                <option value="updated">Recently updated</option>
+                <option value="due">Due date</option>
+                <option value="title">Title</option>
+              </select>
+            </label>
+          </div>
+
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-foreground/60">
+            <span>
+              Showing {filteredTasks.length} of {tasks.length} tasks
+            </span>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setFilterQuery("");
+                setFilterStatus("");
+                setFilterCommitteeId("");
+                setSortKey("updated");
+              }}
+              disabled={!filterQuery && !filterStatus && !filterCommitteeId && sortKey === "updated"}
+            >
+              Clear filters
+            </Button>
+          </div>
+        </div>
+
         <div className="rounded-md border">
           <div className="divide-y">
-            {tasks.length === 0 ? (
-              <div className="px-3 py-2 text-sm text-foreground/70">No tasks yet.</div>
+            {filteredTasks.length === 0 ? (
+              <div className="px-3 py-2 text-sm text-foreground/70">
+                {tasks.length === 0 ? "No tasks yet." : "No tasks match the current filters."}
+              </div>
             ) : (
-              tasks.map((t) => {
+              filteredTasks.map((t) => {
                 const committee = committeesById.get(t.committee_id);
                 const isExpanded = expandedTaskId === t.id;
                 const comments = commentsByTaskId[t.id] ?? [];

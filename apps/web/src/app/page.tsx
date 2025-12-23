@@ -48,8 +48,7 @@ export default async function Home() {
       <div className="space-y-6">
         <div className="rounded-lg border p-4">
           <p className="text-sm text-foreground/70">
-            This repo follows the build packet phases. Office Hours is the top MVP priority and
-            uses location + an office geofence.
+            Office Hours check-in uses location and an office geofence to confirm presence.
           </p>
         </div>
 

@@ -88,7 +88,11 @@ export function ProjectsPanel({ initialProjects, committees }: { initialProjects
 
   return (
     <div className="space-y-8">
-      {status ? <div className="rounded-md border px-3 py-2 text-sm text-foreground/80">{status}</div> : null}
+      {status ? (
+        <div className="rounded-md border px-3 py-2 text-sm text-foreground/80" role="status" aria-live="polite">
+          {status}
+        </div>
+      ) : null}
 
       <section className="space-y-3">
         <div className="space-y-1">

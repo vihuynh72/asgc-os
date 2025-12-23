@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useId, useMemo, useState, type FormEvent } from "react";
 
 import { Button } from "@/components/ui/button";
 
@@ -142,6 +142,86 @@ type DocRow = {
   size_bytes: number | null;
 };
 
+type CommitteeLookup = {
+  id: string;
+  name: string;
+  committee_key: string | null;
+};
+
+type MeetingLookup = {
+  id: string;
+  title: string;
+  meeting_type: string;
+  starts_at: string;
+  status: string;
+};
+
+type FundingRequestLookup = {
+  id: string;
+  title: string;
+  amount_requested: number;
+  state: string;
+  committee_id: string | null;
+  submitted_at: string | null;
+};
+
+type BudgetLineLookup = {
+  id: string;
+  name: string;
+  fiscal_year: number;
+  category: string;
+  is_active: boolean;
+};
+
+type GrantCycleLookup = {
+  id: string;
+  name: string;
+  opens_at: string;
+  closes_at: string;
+  max_amount: number;
+};
+
+type ClubLookup = {
+  id: string;
+  name: string;
+  status: string;
+};
+
+type DocLookup = {
+  id: string;
+  title: string;
+  doc_type: string;
+  created_at: string;
+};
+
+type UserLookup = {
+  id: string;
+  display_name: string | null;
+  status: string;
+};
+
+type FinanceLookups = {
+  committees: CommitteeLookup[];
+  meetings: MeetingLookup[];
+  fundingRequests: FundingRequestLookup[];
+  budgetLines: BudgetLineLookup[];
+  grantCycles: GrantCycleLookup[];
+  clubs: ClubLookup[];
+  docs: DocLookup[];
+  users: UserLookup[];
+};
+
+const EMPTY_LOOKUPS: FinanceLookups = {
+  committees: [],
+  meetings: [],
+  fundingRequests: [],
+  budgetLines: [],
+  grantCycles: [],
+  clubs: [],
+  docs: [],
+  users: [],
+};
+
 export function FinanceDashboard({
   isFinanceAdmin,
   isBoardMember,
@@ -149,16 +229,73 @@ export function FinanceDashboard({
   isFinanceAdmin: boolean;
   isBoardMember: boolean;
 }) {
+  const [lookups, setLookups] = useState<FinanceLookups>(EMPTY_LOOKUPS);
+  const [lookupError, setLookupError] = useState<string>("");
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadLookups() {
+      try {
+        const data = await fetchJson<FinanceLookups>("/api/finance/lookups");
+        if (!cancelled) {
+          setLookups({
+            committees: data.committees ?? [],
+            meetings: data.meetings ?? [],
+            fundingRequests: data.fundingRequests ?? [],
+            budgetLines: data.budgetLines ?? [],
+            grantCycles: data.grantCycles ?? [],
+            clubs: data.clubs ?? [],
+            docs: data.docs ?? [],
+            users: data.users ?? [],
+          });
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setLookupError(err instanceof Error ? err.message : "Failed to load reference data");
+        }
+      }
+    }
+
+    void loadLookups();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   return (
     <div className="space-y-10">
+      {lookupError ? (
+        <div className="rounded-md border px-3 py-2 text-sm text-red-600" role="alert">
+          {lookupError}
+        </div>
+      ) : null}
       {isFinanceAdmin ? <FinanceConfigPanel /> : null}
       {isFinanceAdmin ? <BudgetLinesPanel /> : null}
-      <FundingRequestsPanel isFinanceAdmin={isFinanceAdmin} />
-      {isBoardMember || isFinanceAdmin ? <BoardVotesPanel /> : null}
-      {isFinanceAdmin ? <ExpensesPanel /> : null}
+      <FundingRequestsPanel
+        isFinanceAdmin={isFinanceAdmin}
+        committees={lookups.committees}
+        docs={lookups.docs}
+      />
+      {isBoardMember || isFinanceAdmin ? (
+        <BoardVotesPanel meetings={lookups.meetings} fundingRequests={lookups.fundingRequests} users={lookups.users} />
+      ) : null}
+      {isFinanceAdmin ? (
+        <ExpensesPanel
+          budgetLines={lookups.budgetLines}
+          fundingRequests={lookups.fundingRequests}
+          docs={lookups.docs}
+        />
+      ) : null}
       {isFinanceAdmin ? <BudgetBurndownPanel /> : null}
-      {isFinanceAdmin ? <GrantCyclesPanel /> : null}
-      <GrantApplicationsPanel isFinanceAdmin={isFinanceAdmin} />
+      {isFinanceAdmin ? <GrantCyclesPanel meetings={lookups.meetings} /> : null}
+      <GrantApplicationsPanel
+        isFinanceAdmin={isFinanceAdmin}
+        grantCycles={lookups.grantCycles}
+        clubs={lookups.clubs}
+        docs={lookups.docs}
+      />
       {isFinanceAdmin ? <FinanceExportsPanel /> : null}
     </div>
   );
@@ -215,10 +352,26 @@ function FinanceConfigPanel() {
     setStatus("Saving...");
 
     try {
+      const boardThreshold = Number(form.board_action_threshold);
+      if (!Number.isFinite(boardThreshold) || boardThreshold < 0) {
+        setStatus("Board action threshold must be 0 or higher.");
+        return;
+      }
+      const grantMax = Number(form.grant_max);
+      if (!Number.isFinite(grantMax) || grantMax < 0) {
+        setStatus("Grant max must be 0 or higher.");
+        return;
+      }
+      const leadTimeDays = Number(form.lead_time_days);
+      if (!Number.isFinite(leadTimeDays) || leadTimeDays < 0) {
+        setStatus("Contract lead-time days must be 0 or higher.");
+        return;
+      }
+
       const payload = {
-        board_action_threshold: Number(form.board_action_threshold),
-        grant_max: Number(form.grant_max),
-        lead_time_days: Number(form.lead_time_days),
+        board_action_threshold: boardThreshold,
+        grant_max: grantMax,
+        lead_time_days: leadTimeDays,
       };
 
       const data = await fetchJson<{ config: FinanceConfig }>("/api/finance/config", {
@@ -236,24 +389,30 @@ function FinanceConfigPanel() {
 
   return (
     <Section title="Finance Config" description="Thresholds and defaults used across finance workflows.">
-      {status ? <div className="text-sm text-foreground/70">{status}</div> : null}
+      {status ? (
+        <div className="text-sm text-foreground/70" role="status" aria-live="polite">
+          {status}
+        </div>
+      ) : null}
       {config ? (
         <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-3">
           <label className="text-sm">
-            Board action threshold
+            Board action threshold (USD)
             <input
               type="number"
               step="0.01"
+              min={0}
               value={form.board_action_threshold}
               onChange={(event) => setForm((prev) => ({ ...prev, board_action_threshold: event.target.value }))}
               className="mt-1 w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
             />
           </label>
           <label className="text-sm">
-            Grant max
+            Grant max (USD)
             <input
               type="number"
               step="0.01"
+              min={0}
               value={form.grant_max}
               onChange={(event) => setForm((prev) => ({ ...prev, grant_max: event.target.value }))}
               className="mt-1 w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
@@ -263,6 +422,8 @@ function FinanceConfigPanel() {
             Contract lead-time days
             <input
               type="number"
+              min={0}
+              step={1}
               value={form.lead_time_days}
               onChange={(event) => setForm((prev) => ({ ...prev, lead_time_days: event.target.value }))}
               className="mt-1 w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
@@ -352,6 +513,11 @@ function BudgetLinesPanel() {
   }
 
   async function toggleActive(line: BudgetLine) {
+    if (line.is_active) {
+      const ok = window.confirm(`Archive budget line "${line.name}" (${line.fiscal_year})?`);
+      if (!ok) return;
+    }
+
     setStatus("Updating...");
     try {
       const data = await fetchJson<{ budgetLine: BudgetLine }>(`/api/finance/budget-lines/${line.id}`, {
@@ -368,12 +534,18 @@ function BudgetLinesPanel() {
 
   return (
     <Section title="Budget Lines" description="Manage annual budget allocations.">
-      {status ? <div className="text-sm text-foreground/70">{status}</div> : null}
+      {status ? (
+        <div className="text-sm text-foreground/70" role="status" aria-live="polite">
+          {status}
+        </div>
+      ) : null}
       <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2">
         <label className="text-sm">
           Fiscal year
           <input
             type="number"
+            min={2000}
+            step={1}
             value={form.fiscal_year}
             onChange={(event) => setForm((prev) => ({ ...prev, fiscal_year: event.target.value }))}
             className="mt-1 w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
@@ -402,6 +574,7 @@ function BudgetLinesPanel() {
           <input
             type="number"
             step="0.01"
+            min={0}
             value={form.allocated_amount}
             onChange={(event) => setForm((prev) => ({ ...prev, allocated_amount: event.target.value }))}
             className="mt-1 w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
@@ -448,7 +621,15 @@ function BudgetLinesPanel() {
   );
 }
 
-function FundingRequestsPanel({ isFinanceAdmin }: { isFinanceAdmin: boolean }) {
+function FundingRequestsPanel({
+  isFinanceAdmin,
+  committees,
+  docs,
+}: {
+  isFinanceAdmin: boolean;
+  committees: CommitteeLookup[];
+  docs: DocLookup[];
+}) {
   const [requests, setRequests] = useState<FundingRequest[]>([]);
   const [status, setStatus] = useState<string>("");
   const [form, setForm] = useState({
@@ -462,6 +643,13 @@ function FundingRequestsPanel({ isFinanceAdmin }: { isFinanceAdmin: boolean }) {
   const [breakdown, setBreakdown] = useState<{ description: string; amount: string }[]>([
     { description: "", amount: "" },
   ]);
+  const committeeListId = useId();
+  const docListId = useId();
+  const committeeById = useMemo(() => new Map(committees.map((committee) => [committee.id, committee])), [committees]);
+  const docsById = useMemo(() => new Map(docs.map((doc) => [doc.id, doc])), [docs]);
+  const selectedCommittee = form.committee_id.trim()
+    ? committeeById.get(form.committee_id.trim()) ?? null
+    : null;
 
   useEffect(() => {
     let cancelled = false;
@@ -509,6 +697,10 @@ function FundingRequestsPanel({ isFinanceAdmin }: { isFinanceAdmin: boolean }) {
 
       if (!Number.isFinite(amount) || amount <= 0) {
         setStatus("Amount requested must be greater than 0");
+        return;
+      }
+      if (form.requires_contract && !form.event_date) {
+        setStatus("Event date is required when a contract is needed");
         return;
       }
 
@@ -576,6 +768,9 @@ function FundingRequestsPanel({ isFinanceAdmin }: { isFinanceAdmin: boolean }) {
   }
 
   async function withdrawRequest(requestId: string) {
+    const ok = window.confirm("Withdraw this funding request?");
+    if (!ok) return;
+
     setStatus("Withdrawing request...");
     try {
       const { fundingRequest } = await fetchJson<{ fundingRequest: FundingRequest }>(
@@ -590,6 +785,11 @@ function FundingRequestsPanel({ isFinanceAdmin }: { isFinanceAdmin: boolean }) {
   }
 
   async function transitionRequest(requestId: string, nextState: string) {
+    if (nextState === "denied") {
+      const ok = window.confirm("Mark this funding request as denied?");
+      if (!ok) return;
+    }
+
     setStatus("Updating status...");
     try {
       const { fundingRequest } = await fetchJson<{ fundingRequest: FundingRequest }>(
@@ -609,17 +809,36 @@ function FundingRequestsPanel({ isFinanceAdmin }: { isFinanceAdmin: boolean }) {
 
   return (
     <Section title="Funding Requests" description="Submit and manage funding requests with breakdowns and attachments.">
-      {status ? <div className="text-sm text-foreground/70">{status}</div> : null}
+      {status ? (
+        <div className="text-sm text-foreground/70" role="status" aria-live="polite">
+          {status}
+        </div>
+      ) : null}
 
       <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2">
         <label className="text-sm">
           Committee ID (optional)
           <input
             type="text"
+            list={committeeListId}
             value={form.committee_id}
             onChange={(event) => setForm((prev) => ({ ...prev, committee_id: event.target.value }))}
             className="mt-1 w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
           />
+          <datalist id={committeeListId}>
+            {committees.map((committee) => {
+              const label = committee.committee_key
+                ? `${committee.name} (${committee.committee_key})`
+                : committee.name;
+              return <option key={committee.id} value={committee.id} label={label} />;
+            })}
+          </datalist>
+          {selectedCommittee ? (
+            <div className="mt-1 text-xs text-foreground/60">
+              Selected: {selectedCommittee.name}
+              {selectedCommittee.committee_key ? ` (${selectedCommittee.committee_key})` : ""}
+            </div>
+          ) : null}
         </label>
         <label className="text-sm">
           Title
@@ -644,6 +863,7 @@ function FundingRequestsPanel({ isFinanceAdmin }: { isFinanceAdmin: boolean }) {
           <input
             type="number"
             step="0.01"
+            min={0}
             value={form.amount_requested}
             onChange={(event) => setForm((prev) => ({ ...prev, amount_requested: event.target.value }))}
             className="mt-1 w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
@@ -674,6 +894,7 @@ function FundingRequestsPanel({ isFinanceAdmin }: { isFinanceAdmin: boolean }) {
               <input
                 type="text"
                 placeholder="Description"
+                aria-label="Line item description"
                 value={item.description}
                 onChange={(event) =>
                   setBreakdown((prev) =>
@@ -685,7 +906,9 @@ function FundingRequestsPanel({ isFinanceAdmin }: { isFinanceAdmin: boolean }) {
               <input
                 type="number"
                 step="0.01"
+                min={0}
                 placeholder="Amount"
+                aria-label="Line item amount"
                 value={item.amount}
                 onChange={(event) =>
                   setBreakdown((prev) =>
@@ -719,6 +942,12 @@ function FundingRequestsPanel({ isFinanceAdmin }: { isFinanceAdmin: boolean }) {
         </div>
       </form>
 
+      <datalist id={docListId}>
+        {docs.map((doc) => (
+          <option key={doc.id} value={doc.id} label={`${doc.title} • ${doc.doc_type}`} />
+        ))}
+      </datalist>
+
       <div className="space-y-3">
         {requests.length === 0 ? (
           <div className="text-sm text-foreground/70">No funding requests yet.</div>
@@ -731,6 +960,9 @@ function FundingRequestsPanel({ isFinanceAdmin }: { isFinanceAdmin: boolean }) {
               onSubmit={() => submitRequest(request.id)}
               onWithdraw={() => withdrawRequest(request.id)}
               onTransition={(state) => transitionRequest(request.id, state)}
+              docListId={docListId}
+              docsById={docsById}
+              committeeById={committeeById}
             />
           ))
         )}
@@ -745,17 +977,25 @@ function FundingRequestRow({
   onSubmit,
   onWithdraw,
   onTransition,
+  docListId,
+  docsById,
+  committeeById,
 }: {
   request: FundingRequest;
   isFinanceAdmin: boolean;
   onSubmit: () => void;
   onWithdraw: () => void;
   onTransition: (state: string) => void;
+  docListId: string;
+  docsById: Map<string, DocLookup>;
+  committeeById: Map<string, CommitteeLookup>;
 }) {
   const [attachments, setAttachments] = useState<FundingAttachment[]>([]);
   const [docId, setDocId] = useState<string>("");
   const [docKind, setDocKind] = useState<string>("attachment");
   const [status, setStatus] = useState<string>("");
+  const selectedDoc = docId.trim() ? docsById.get(docId.trim()) ?? null : null;
+  const selectedCommittee = request.committee_id ? committeeById.get(request.committee_id) ?? null : null;
 
   useEffect(() => {
     let cancelled = false;
@@ -843,6 +1083,11 @@ function FundingRequestRow({
       </div>
 
       <div className="mt-2 text-xs text-foreground/70">Purpose: {request.purpose}</div>
+      {selectedCommittee ? (
+        <div className="mt-1 text-xs text-foreground/70">
+          Committee: {selectedCommittee.name}
+        </div>
+      ) : null}
       <div className="mt-2 text-xs text-foreground/70">
         Submitted: {formatDateTime(request.submitted_at)}
       </div>
@@ -866,6 +1111,8 @@ function FundingRequestRow({
           <input
             type="text"
             placeholder="Doc ID"
+            aria-label="Document ID"
+            list={docListId}
             value={docId}
             onChange={(event) => setDocId(event.target.value)}
             className="flex-1 rounded border border-foreground/20 bg-background px-2 py-1 text-xs"
@@ -873,6 +1120,7 @@ function FundingRequestRow({
           <select
             value={docKind}
             onChange={(event) => setDocKind(event.target.value)}
+            aria-label="Document kind"
             className="rounded border border-foreground/20 bg-background px-2 py-1 text-xs"
           >
             <option value="attachment">Attachment</option>
@@ -884,7 +1132,16 @@ function FundingRequestRow({
             Attach Doc
           </Button>
         </form>
-        {status ? <div className="mt-1 text-xs text-foreground/70">{status}</div> : null}
+        {selectedDoc ? (
+          <div className="mt-1 text-xs text-foreground/60">
+            Selected: {selectedDoc.title} • {selectedDoc.doc_type}
+          </div>
+        ) : null}
+        {status ? (
+          <div className="mt-1 text-xs text-foreground/70" role="status" aria-live="polite">
+            {status}
+          </div>
+        ) : null}
       </div>
 
       {attachments.length > 0 ? (
@@ -900,7 +1157,15 @@ function FundingRequestRow({
   );
 }
 
-function BoardVotesPanel() {
+function BoardVotesPanel({
+  meetings,
+  fundingRequests,
+  users,
+}: {
+  meetings: MeetingLookup[];
+  fundingRequests: FundingRequestLookup[];
+  users: UserLookup[];
+}) {
   const [votes, setVotes] = useState<BoardVote[]>([]);
   const [status, setStatus] = useState<string>("");
   const [form, setForm] = useState({
@@ -915,6 +1180,21 @@ function BoardVotesPanel() {
     result: "approved",
     notes: "",
   });
+  const meetingListId = useId();
+  const requestListId = useId();
+  const userListId = useId();
+  const meetingsById = useMemo(() => new Map(meetings.map((meeting) => [meeting.id, meeting])), [meetings]);
+  const requestsById = useMemo(
+    () => new Map(fundingRequests.map((request) => [request.id, request])),
+    [fundingRequests],
+  );
+  const usersById = useMemo(() => new Map(users.map((user) => [user.id, user])), [users]);
+  const selectedMeeting = form.meeting_id.trim() ? meetingsById.get(form.meeting_id.trim()) ?? null : null;
+  const selectedRequest = form.funding_request_id.trim()
+    ? requestsById.get(form.funding_request_id.trim()) ?? null
+    : null;
+  const selectedMovedBy = form.moved_by.trim() ? usersById.get(form.moved_by.trim()) ?? null : null;
+  const selectedSecondedBy = form.seconded_by.trim() ? usersById.get(form.seconded_by.trim()) ?? null : null;
 
   useEffect(() => {
     let cancelled = false;
@@ -992,25 +1272,59 @@ function BoardVotesPanel() {
 
   return (
     <Section title="Board Votes" description="Record board votes and outcomes tied to funding requests.">
-      {status ? <div className="text-sm text-foreground/70">{status}</div> : null}
+      {status ? (
+        <div className="text-sm text-foreground/70" role="status" aria-live="polite">
+          {status}
+        </div>
+      ) : null}
       <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2">
         <label className="text-sm">
           Meeting ID
           <input
             type="text"
+            list={meetingListId}
             value={form.meeting_id}
             onChange={(event) => setForm((prev) => ({ ...prev, meeting_id: event.target.value }))}
             className="mt-1 w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
           />
+          <datalist id={meetingListId}>
+            {meetings.map((meeting) => (
+              <option
+                key={meeting.id}
+                value={meeting.id}
+                label={`${formatDateTime(meeting.starts_at)} • ${meeting.title}`}
+              />
+            ))}
+          </datalist>
+          {selectedMeeting ? (
+            <div className="mt-1 text-xs text-foreground/60">
+              Selected: {formatDateTime(selectedMeeting.starts_at)} • {selectedMeeting.title}
+            </div>
+          ) : null}
         </label>
         <label className="text-sm">
           Funding request ID (optional)
           <input
             type="text"
+            list={requestListId}
             value={form.funding_request_id}
             onChange={(event) => setForm((prev) => ({ ...prev, funding_request_id: event.target.value }))}
             className="mt-1 w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
           />
+          <datalist id={requestListId}>
+            {fundingRequests.map((request) => (
+              <option
+                key={request.id}
+                value={request.id}
+                label={`${request.title} • ${formatCurrency(request.amount_requested)} • ${request.state}`}
+              />
+            ))}
+          </datalist>
+          {selectedRequest ? (
+            <div className="mt-1 text-xs text-foreground/60">
+              Selected: {selectedRequest.title} • {formatCurrency(selectedRequest.amount_requested)} • {selectedRequest.state}
+            </div>
+          ) : null}
         </label>
         <label className="text-sm sm:col-span-2">
           Motion text
@@ -1025,24 +1339,43 @@ function BoardVotesPanel() {
           Moved by (user id)
           <input
             type="text"
+            list={userListId}
             value={form.moved_by}
             onChange={(event) => setForm((prev) => ({ ...prev, moved_by: event.target.value }))}
             className="mt-1 w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
           />
+          {selectedMovedBy ? (
+            <div className="mt-1 text-xs text-foreground/60">
+              Selected: {selectedMovedBy.display_name?.trim() || selectedMovedBy.id}
+            </div>
+          ) : null}
         </label>
         <label className="text-sm">
           Seconded by (user id)
           <input
             type="text"
+            list={userListId}
             value={form.seconded_by}
             onChange={(event) => setForm((prev) => ({ ...prev, seconded_by: event.target.value }))}
             className="mt-1 w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
           />
+          {selectedSecondedBy ? (
+            <div className="mt-1 text-xs text-foreground/60">
+              Selected: {selectedSecondedBy.display_name?.trim() || selectedSecondedBy.id}
+            </div>
+          ) : null}
         </label>
+        <datalist id={userListId}>
+          {users.map((user) => (
+            <option key={user.id} value={user.id} label={user.display_name?.trim() || user.id} />
+          ))}
+        </datalist>
         <label className="text-sm">
           Yes votes
           <input
             type="number"
+            min={0}
+            step={1}
             value={form.vote_yes}
             onChange={(event) => setForm((prev) => ({ ...prev, vote_yes: event.target.value }))}
             className="mt-1 w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
@@ -1052,6 +1385,8 @@ function BoardVotesPanel() {
           No votes
           <input
             type="number"
+            min={0}
+            step={1}
             value={form.vote_no}
             onChange={(event) => setForm((prev) => ({ ...prev, vote_no: event.target.value }))}
             className="mt-1 w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
@@ -1061,6 +1396,8 @@ function BoardVotesPanel() {
           Abstain votes
           <input
             type="number"
+            min={0}
+            step={1}
             value={form.vote_abstain}
             onChange={(event) => setForm((prev) => ({ ...prev, vote_abstain: event.target.value }))}
             className="mt-1 w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
@@ -1098,22 +1435,54 @@ function BoardVotesPanel() {
         <div className="text-sm text-foreground/70">No votes recorded yet.</div>
       ) : (
         <div className="space-y-2">
-          {votes.map((vote) => (
-            <div key={vote.id} className="rounded border border-foreground/10 p-3 text-sm">
-              <div className="font-medium">{vote.motion_text}</div>
-              <div className="text-xs text-foreground/70">
-                {vote.result} • {vote.vote_yes}-{vote.vote_no}-{vote.vote_abstain}
+          {votes.map((vote) => {
+            const meeting = meetingsById.get(vote.meeting_id) ?? null;
+            const request = vote.funding_request_id ? requestsById.get(vote.funding_request_id) ?? null : null;
+            const movedBy = vote.moved_by ? usersById.get(vote.moved_by) ?? null : null;
+            const secondedBy = vote.seconded_by ? usersById.get(vote.seconded_by) ?? null : null;
+
+            return (
+              <div key={vote.id} className="rounded border border-foreground/10 p-3 text-sm">
+                <div className="font-medium">{vote.motion_text}</div>
+                <div className="text-xs text-foreground/70">
+                  {vote.result} • {vote.vote_yes}-{vote.vote_no}-{vote.vote_abstain}
+                </div>
+                <div className="text-xs text-foreground/70">
+                  Meeting: {meeting ? `${formatDateTime(meeting.starts_at)} • ${meeting.title}` : vote.meeting_id}
+                </div>
+                {request ? (
+                  <div className="text-xs text-foreground/70">
+                    Request: {request.title} • {formatCurrency(request.amount_requested)} • {request.state}
+                  </div>
+                ) : null}
+                {vote.moved_by ? (
+                  <div className="text-xs text-foreground/70">
+                    Moved by: {movedBy?.display_name?.trim() || vote.moved_by}
+                  </div>
+                ) : null}
+                {vote.seconded_by ? (
+                  <div className="text-xs text-foreground/70">
+                    Seconded by: {secondedBy?.display_name?.trim() || vote.seconded_by}
+                  </div>
+                ) : null}
               </div>
-              <div className="text-xs text-foreground/70">Meeting: {vote.meeting_id}</div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </Section>
   );
 }
 
-function ExpensesPanel() {
+function ExpensesPanel({
+  budgetLines,
+  fundingRequests,
+  docs,
+}: {
+  budgetLines: BudgetLineLookup[];
+  fundingRequests: FundingRequestLookup[];
+  docs: DocLookup[];
+}) {
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [status, setStatus] = useState<string>("");
   const [form, setForm] = useState({
@@ -1126,6 +1495,24 @@ function ExpensesPanel() {
     receipt_doc_id: "",
     status: "pending",
   });
+  const budgetLineListId = useId();
+  const requestListId = useId();
+  const docListId = useId();
+  const budgetLinesById = useMemo(() => new Map(budgetLines.map((line) => [line.id, line])), [budgetLines]);
+  const requestsById = useMemo(
+    () => new Map(fundingRequests.map((request) => [request.id, request])),
+    [fundingRequests],
+  );
+  const docsById = useMemo(() => new Map(docs.map((doc) => [doc.id, doc])), [docs]);
+  const selectedBudgetLine = form.budget_line_id.trim()
+    ? budgetLinesById.get(form.budget_line_id.trim()) ?? null
+    : null;
+  const selectedRequest = form.funding_request_id.trim()
+    ? requestsById.get(form.funding_request_id.trim()) ?? null
+    : null;
+  const selectedReceiptDoc = form.receipt_doc_id.trim()
+    ? docsById.get(form.receipt_doc_id.trim()) ?? null
+    : null;
 
   useEffect(() => {
     let cancelled = false;
@@ -1209,25 +1596,59 @@ function ExpensesPanel() {
 
   return (
     <Section title="Expenses" description="Log expenses and link receipts.">
-      {status ? <div className="text-sm text-foreground/70">{status}</div> : null}
+      {status ? (
+        <div className="text-sm text-foreground/70" role="status" aria-live="polite">
+          {status}
+        </div>
+      ) : null}
       <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2">
         <label className="text-sm">
           Budget line ID
           <input
             type="text"
+            list={budgetLineListId}
             value={form.budget_line_id}
             onChange={(event) => setForm((prev) => ({ ...prev, budget_line_id: event.target.value }))}
             className="mt-1 w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
           />
+          <datalist id={budgetLineListId}>
+            {budgetLines.map((line) => (
+              <option
+                key={line.id}
+                value={line.id}
+                label={`${line.name} (${line.fiscal_year})${line.is_active ? "" : " • archived"}`}
+              />
+            ))}
+          </datalist>
+          {selectedBudgetLine ? (
+            <div className="mt-1 text-xs text-foreground/60">
+              Selected: {selectedBudgetLine.name} ({selectedBudgetLine.fiscal_year})
+            </div>
+          ) : null}
         </label>
         <label className="text-sm">
           Funding request ID (optional)
           <input
             type="text"
+            list={requestListId}
             value={form.funding_request_id}
             onChange={(event) => setForm((prev) => ({ ...prev, funding_request_id: event.target.value }))}
             className="mt-1 w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
           />
+          <datalist id={requestListId}>
+            {fundingRequests.map((request) => (
+              <option
+                key={request.id}
+                value={request.id}
+                label={`${request.title} • ${formatCurrency(request.amount_requested)} • ${request.state}`}
+              />
+            ))}
+          </datalist>
+          {selectedRequest ? (
+            <div className="mt-1 text-xs text-foreground/60">
+              Selected: {selectedRequest.title} • {formatCurrency(selectedRequest.amount_requested)} • {selectedRequest.state}
+            </div>
+          ) : null}
         </label>
         <label className="text-sm">
           Payee
@@ -1243,6 +1664,7 @@ function ExpensesPanel() {
           <input
             type="number"
             step="0.01"
+            min={0}
             value={form.amount}
             onChange={(event) => setForm((prev) => ({ ...prev, amount: event.target.value }))}
             className="mt-1 w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
@@ -1274,10 +1696,21 @@ function ExpensesPanel() {
           Receipt doc ID (optional)
           <input
             type="text"
+            list={docListId}
             value={form.receipt_doc_id}
             onChange={(event) => setForm((prev) => ({ ...prev, receipt_doc_id: event.target.value }))}
             className="mt-1 w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
           />
+          <datalist id={docListId}>
+            {docs.map((doc) => (
+              <option key={doc.id} value={doc.id} label={`${doc.title} • ${doc.doc_type}`} />
+            ))}
+          </datalist>
+          {selectedReceiptDoc ? (
+            <div className="mt-1 text-xs text-foreground/60">
+              Selected: {selectedReceiptDoc.title} • {selectedReceiptDoc.doc_type}
+            </div>
+          ) : null}
         </label>
         <label className="text-sm sm:col-span-2">
           Description
@@ -1299,17 +1732,38 @@ function ExpensesPanel() {
         <div className="text-sm text-foreground/70">No expenses logged yet.</div>
       ) : (
         <div className="space-y-2">
-          {expenses.map((expense) => (
-            <div key={expense.id} className="rounded border border-foreground/10 p-3 text-sm">
-              <div className="font-medium">{expense.payee}</div>
-              <div className="text-xs text-foreground/70">
-                {formatCurrency(expense.amount)} • {expense.status} • {formatDateTime(expense.purchased_at)}
+          {expenses.map((expense) => {
+            const budgetLine = budgetLinesById.get(expense.budget_line_id) ?? null;
+            const request = expense.funding_request_id ? requestsById.get(expense.funding_request_id) ?? null : null;
+            const receipt = expense.receipt_doc_id ? docsById.get(expense.receipt_doc_id) ?? null : null;
+
+            return (
+              <div key={expense.id} className="rounded border border-foreground/10 p-3 text-sm">
+                <div className="font-medium">{expense.payee}</div>
+                <div className="text-xs text-foreground/70">
+                  {formatCurrency(expense.amount)} • {expense.status} • {formatDateTime(expense.purchased_at)}
+                </div>
+                {budgetLine ? (
+                  <div className="text-xs text-foreground/70">
+                    Budget line: {budgetLine.name} ({budgetLine.fiscal_year})
+                  </div>
+                ) : null}
+                {request ? (
+                  <div className="text-xs text-foreground/70">
+                    Request: {request.title} • {formatCurrency(request.amount_requested)} • {request.state}
+                  </div>
+                ) : null}
+                {receipt ? (
+                  <div className="text-xs text-foreground/70">
+                    Receipt: {receipt.title} • {receipt.doc_type}
+                  </div>
+                ) : null}
+                {expense.description ? (
+                  <div className="text-xs text-foreground/70">{expense.description}</div>
+                ) : null}
               </div>
-              {expense.description ? (
-                <div className="text-xs text-foreground/70">{expense.description}</div>
-              ) : null}
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </Section>
@@ -1348,12 +1802,18 @@ function BudgetBurndownPanel() {
 
   return (
     <Section title="Budget Burn-down" description="Allocated vs spent by budget line.">
-      {status ? <div className="text-sm text-foreground/70">{status}</div> : null}
+      {status ? (
+        <div className="text-sm text-foreground/70" role="status" aria-live="polite">
+          {status}
+        </div>
+      ) : null}
       <div className="flex flex-wrap items-center gap-2">
         <label className="text-sm">
           Fiscal year
           <input
             type="number"
+            min={2000}
+            step={1}
             value={fiscalYear}
             onChange={(event) => setFiscalYear(event.target.value)}
             className="ml-2 w-28 rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
@@ -1382,10 +1842,15 @@ function BudgetBurndownPanel() {
   );
 }
 
-function GrantCyclesPanel() {
+function GrantCyclesPanel({ meetings }: { meetings: MeetingLookup[] }) {
   const [cycles, setCycles] = useState<GrantCycle[]>([]);
   const [status, setStatus] = useState<string>("");
   const [form, setForm] = useState({ name: "", opens_at: "", closes_at: "", max_amount: "", board_meeting_target_id: "" });
+  const meetingListId = useId();
+  const meetingsById = useMemo(() => new Map(meetings.map((meeting) => [meeting.id, meeting])), [meetings]);
+  const selectedMeeting = form.board_meeting_target_id.trim()
+    ? meetingsById.get(form.board_meeting_target_id.trim()) ?? null
+    : null;
 
   useEffect(() => {
     let cancelled = false;
@@ -1423,6 +1888,16 @@ function GrantCyclesPanel() {
         setStatus("Open and close dates are required");
         return;
       }
+      const opensAtDate = new Date(form.opens_at);
+      const closesAtDate = new Date(form.closes_at);
+      if (Number.isNaN(opensAtDate.getTime()) || Number.isNaN(closesAtDate.getTime())) {
+        setStatus("Open and close dates must be valid");
+        return;
+      }
+      if (closesAtDate <= opensAtDate) {
+        setStatus("Close date must be after open date");
+        return;
+      }
       const maxAmount = Number(form.max_amount);
       if (!Number.isFinite(maxAmount) || maxAmount <= 0) {
         setStatus("Max amount must be greater than 0");
@@ -1431,8 +1906,8 @@ function GrantCyclesPanel() {
 
       const payload = {
         name: form.name,
-        opens_at: new Date(form.opens_at).toISOString(),
-        closes_at: new Date(form.closes_at).toISOString(),
+        opens_at: opensAtDate.toISOString(),
+        closes_at: closesAtDate.toISOString(),
         max_amount: maxAmount,
         board_meeting_target_id: form.board_meeting_target_id || null,
       };
@@ -1453,7 +1928,11 @@ function GrantCyclesPanel() {
 
   return (
     <Section title="Grant Cycles" description="Define grant cycles and deadlines.">
-      {status ? <div className="text-sm text-foreground/70">{status}</div> : null}
+      {status ? (
+        <div className="text-sm text-foreground/70" role="status" aria-live="polite">
+          {status}
+        </div>
+      ) : null}
       <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2">
         <label className="text-sm">
           Name
@@ -1469,6 +1948,7 @@ function GrantCyclesPanel() {
           <input
             type="number"
             step="0.01"
+            min={0}
             value={form.max_amount}
             onChange={(event) => setForm((prev) => ({ ...prev, max_amount: event.target.value }))}
             className="mt-1 w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
@@ -1496,10 +1976,25 @@ function GrantCyclesPanel() {
           Target board meeting ID (optional)
           <input
             type="text"
+            list={meetingListId}
             value={form.board_meeting_target_id}
             onChange={(event) => setForm((prev) => ({ ...prev, board_meeting_target_id: event.target.value }))}
             className="mt-1 w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
           />
+          <datalist id={meetingListId}>
+            {meetings.map((meeting) => (
+              <option
+                key={meeting.id}
+                value={meeting.id}
+                label={`${formatDateTime(meeting.starts_at)} • ${meeting.title}`}
+              />
+            ))}
+          </datalist>
+          {selectedMeeting ? (
+            <div className="mt-1 text-xs text-foreground/60">
+              Selected: {formatDateTime(selectedMeeting.starts_at)} • {selectedMeeting.title}
+            </div>
+          ) : null}
         </label>
         <div className="sm:col-span-2 flex justify-end">
           <Button type="submit" size="sm">
@@ -1512,21 +2007,43 @@ function GrantCyclesPanel() {
         <div className="text-sm text-foreground/70">No grant cycles yet.</div>
       ) : (
         <div className="space-y-2">
-          {cycles.map((cycle) => (
-            <div key={cycle.id} className="rounded border border-foreground/10 p-3 text-sm">
-              <div className="font-medium">{cycle.name}</div>
-              <div className="text-xs text-foreground/70">
-                {formatDateTime(cycle.opens_at)} → {formatDateTime(cycle.closes_at)} • Max {formatCurrency(cycle.max_amount)}
+          {cycles.map((cycle) => {
+            const target = cycle.board_meeting_target_id
+              ? meetingsById.get(cycle.board_meeting_target_id) ?? null
+              : null;
+
+            return (
+              <div key={cycle.id} className="rounded border border-foreground/10 p-3 text-sm">
+                <div className="font-medium">{cycle.name}</div>
+                <div className="text-xs text-foreground/70">
+                  {formatDateTime(cycle.opens_at)} → {formatDateTime(cycle.closes_at)} • Max{" "}
+                  {formatCurrency(cycle.max_amount)}
+                </div>
+                {target ? (
+                  <div className="text-xs text-foreground/70">
+                    Target meeting: {formatDateTime(target.starts_at)} • {target.title}
+                  </div>
+                ) : null}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </Section>
   );
 }
 
-function GrantApplicationsPanel({ isFinanceAdmin }: { isFinanceAdmin: boolean }) {
+function GrantApplicationsPanel({
+  isFinanceAdmin,
+  grantCycles,
+  clubs,
+  docs,
+}: {
+  isFinanceAdmin: boolean;
+  grantCycles: GrantCycleLookup[];
+  clubs: ClubLookup[];
+  docs: DocLookup[];
+}) {
   const [applications, setApplications] = useState<GrantApplication[]>([]);
   const [status, setStatus] = useState<string>("");
   const [form, setForm] = useState({
@@ -1541,6 +2058,15 @@ function GrantApplicationsPanel({ isFinanceAdmin }: { isFinanceAdmin: boolean })
   const [breakdown, setBreakdown] = useState<{ description: string; amount: string }[]>([
     { description: "", amount: "" },
   ]);
+  const cycleListId = useId();
+  const clubListId = useId();
+  const docListId = useId();
+  const cyclesById = useMemo(() => new Map(grantCycles.map((cycle) => [cycle.id, cycle])), [grantCycles]);
+  const clubsById = useMemo(() => new Map(clubs.map((club) => [club.id, club])), [clubs]);
+  const docsById = useMemo(() => new Map(docs.map((doc) => [doc.id, doc])), [docs]);
+  const selectedCycle = form.cycle_id.trim() ? cyclesById.get(form.cycle_id.trim()) ?? null : null;
+  const selectedClub = form.club_id.trim() ? clubsById.get(form.club_id.trim()) ?? null : null;
+  const selectedDoc = form.doc_id.trim() ? docsById.get(form.doc_id.trim()) ?? null : null;
 
   useEffect(() => {
     let cancelled = false;
@@ -1648,6 +2174,11 @@ function GrantApplicationsPanel({ isFinanceAdmin }: { isFinanceAdmin: boolean })
   }
 
   async function reviewApplication(id: string, decision: "approved" | "denied") {
+    if (decision === "denied") {
+      const ok = window.confirm("Mark this grant application as denied?");
+      if (!ok) return;
+    }
+
     setStatus("Reviewing...");
     try {
       const { application } = await fetchJson<{ application: GrantApplication }>(
@@ -1695,17 +2226,37 @@ function GrantApplicationsPanel({ isFinanceAdmin }: { isFinanceAdmin: boolean })
 
   return (
     <Section title="Grant Applications" description="Submit and review grant applications.">
-      {status ? <div className="text-sm text-foreground/70">{status}</div> : null}
+      {status ? (
+        <div className="text-sm text-foreground/70" role="status" aria-live="polite">
+          {status}
+        </div>
+      ) : null}
 
       <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2">
         <label className="text-sm">
           Cycle ID
           <input
             type="text"
+            list={cycleListId}
             value={form.cycle_id}
             onChange={(event) => setForm((prev) => ({ ...prev, cycle_id: event.target.value }))}
             className="mt-1 w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
           />
+          <datalist id={cycleListId}>
+            {grantCycles.map((cycle) => (
+              <option
+                key={cycle.id}
+                value={cycle.id}
+                label={`${cycle.name} • ${formatDateTime(cycle.opens_at)} → ${formatDateTime(cycle.closes_at)}`}
+              />
+            ))}
+          </datalist>
+          {selectedCycle ? (
+            <div className="mt-1 text-xs text-foreground/60">
+              Selected: {selectedCycle.name} • {formatDateTime(selectedCycle.opens_at)} →{" "}
+              {formatDateTime(selectedCycle.closes_at)}
+            </div>
+          ) : null}
         </label>
         <label className="text-sm">
           Applicant type
@@ -1720,10 +2271,21 @@ function GrantApplicationsPanel({ isFinanceAdmin }: { isFinanceAdmin: boolean })
           Club ID (optional)
           <input
             type="text"
+            list={clubListId}
             value={form.club_id}
             onChange={(event) => setForm((prev) => ({ ...prev, club_id: event.target.value }))}
             className="mt-1 w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
           />
+          <datalist id={clubListId}>
+            {clubs.map((club) => (
+              <option key={club.id} value={club.id} label={`${club.name} (${club.status})`} />
+            ))}
+          </datalist>
+          {selectedClub ? (
+            <div className="mt-1 text-xs text-foreground/60">
+              Selected: {selectedClub.name} ({selectedClub.status})
+            </div>
+          ) : null}
         </label>
         <label className="text-sm">
           Title
@@ -1748,6 +2310,7 @@ function GrantApplicationsPanel({ isFinanceAdmin }: { isFinanceAdmin: boolean })
           <input
             type="number"
             step="0.01"
+            min={0}
             value={form.amount_requested}
             onChange={(event) => setForm((prev) => ({ ...prev, amount_requested: event.target.value }))}
             className="mt-1 w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
@@ -1757,10 +2320,21 @@ function GrantApplicationsPanel({ isFinanceAdmin }: { isFinanceAdmin: boolean })
           Doc ID (grant application file)
           <input
             type="text"
+            list={docListId}
             value={form.doc_id}
             onChange={(event) => setForm((prev) => ({ ...prev, doc_id: event.target.value }))}
             className="mt-1 w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
           />
+          <datalist id={docListId}>
+            {docs.map((doc) => (
+              <option key={doc.id} value={doc.id} label={`${doc.title} • ${doc.doc_type}`} />
+            ))}
+          </datalist>
+          {selectedDoc ? (
+            <div className="mt-1 text-xs text-foreground/60">
+              Selected: {selectedDoc.title} • {selectedDoc.doc_type}
+            </div>
+          ) : null}
         </label>
         <div className="sm:col-span-2 space-y-2">
           <div className="text-sm font-medium">Breakdown</div>
@@ -1769,6 +2343,7 @@ function GrantApplicationsPanel({ isFinanceAdmin }: { isFinanceAdmin: boolean })
               <input
                 type="text"
                 placeholder="Description"
+                aria-label="Application line item description"
                 value={item.description}
                 onChange={(event) =>
                   setBreakdown((prev) =>
@@ -1781,6 +2356,7 @@ function GrantApplicationsPanel({ isFinanceAdmin }: { isFinanceAdmin: boolean })
                 type="number"
                 step="0.01"
                 placeholder="Amount"
+                aria-label="Application line item amount"
                 value={item.amount}
                 onChange={(event) =>
                   setBreakdown((prev) =>
@@ -1817,43 +2393,72 @@ function GrantApplicationsPanel({ isFinanceAdmin }: { isFinanceAdmin: boolean })
         <div className="text-sm text-foreground/70">No grant applications yet.</div>
       ) : (
         <div className="space-y-2">
-          {applications.map((app) => (
-            <div key={app.id} className="rounded border border-foreground/10 p-3 text-sm">
-              <div className="font-medium">{app.title}</div>
-              <div className="text-xs text-foreground/70">
-                {formatCurrency(app.amount_requested)} • {app.state}
-              </div>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {app.state === "draft" ? (
-                  <Button type="button" size="sm" onClick={() => submitApplication(app.id)}>
-                    Submit
-                  </Button>
+          {applications.map((app) => {
+            const cycle = cyclesById.get(app.cycle_id) ?? null;
+            const club = app.club_id ? clubsById.get(app.club_id) ?? null : null;
+            const doc = docsById.get(app.doc_id) ?? null;
+
+            return (
+              <div key={app.id} className="rounded border border-foreground/10 p-3 text-sm">
+                <div className="font-medium">{app.title}</div>
+                <div className="text-xs text-foreground/70">
+                  {formatCurrency(app.amount_requested)} • {app.state}
+                </div>
+                {cycle ? (
+                  <div className="text-xs text-foreground/70">
+                    Cycle: {cycle.name} • {formatDateTime(cycle.opens_at)} → {formatDateTime(cycle.closes_at)}
+                  </div>
                 ) : null}
-                {isFinanceAdmin && app.state === "submitted" ? (
-                  <>
-                    <Button type="button" variant="outline" size="sm" onClick={() => reviewApplication(app.id, "approved")}
-                    >
-                      Approve
+                {club ? (
+                  <div className="text-xs text-foreground/70">
+                    Club: {club.name} ({club.status})
+                  </div>
+                ) : null}
+                {doc ? (
+                  <div className="text-xs text-foreground/70">
+                    Doc: {doc.title} • {doc.doc_type}
+                  </div>
+                ) : null}
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {app.state === "draft" ? (
+                    <Button type="button" size="sm" onClick={() => submitApplication(app.id)}>
+                      Submit
                     </Button>
-                    <Button type="button" variant="outline" size="sm" onClick={() => reviewApplication(app.id, "denied")}
-                    >
-                      Deny
+                  ) : null}
+                  {isFinanceAdmin && app.state === "submitted" ? (
+                    <>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => reviewApplication(app.id, "approved")}
+                      >
+                        Approve
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => reviewApplication(app.id, "denied")}
+                      >
+                        Deny
+                      </Button>
+                    </>
+                  ) : null}
+                  {isFinanceAdmin && app.state === "approved" ? (
+                    <Button type="button" variant="outline" size="sm" onClick={() => markAwarded(app.id)}>
+                      Mark Awarded
                     </Button>
-                  </>
-                ) : null}
-                {isFinanceAdmin && app.state === "approved" ? (
-                  <Button type="button" variant="outline" size="sm" onClick={() => markAwarded(app.id)}>
-                    Mark Awarded
-                  </Button>
-                ) : null}
-                {isFinanceAdmin && app.state === "awarded" ? (
-                  <Button type="button" variant="outline" size="sm" onClick={() => markExpended(app.id)}>
-                    Mark Expended
-                  </Button>
-                ) : null}
+                  ) : null}
+                  {isFinanceAdmin && app.state === "awarded" ? (
+                    <Button type="button" variant="outline" size="sm" onClick={() => markExpended(app.id)}>
+                      Mark Expended
+                    </Button>
+                  ) : null}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </Section>
@@ -1917,7 +2522,11 @@ function FinanceExportsPanel() {
 
   return (
     <Section title="Finance Exports" description="Generate monthly PDF/CSV exports.">
-      {status ? <div className="text-sm text-foreground/70">{status}</div> : null}
+      {status ? (
+        <div className="text-sm text-foreground/70" role="status" aria-live="polite">
+          {status}
+        </div>
+      ) : null}
       <div className="flex flex-wrap items-center gap-2">
         <label className="text-sm">
           Month

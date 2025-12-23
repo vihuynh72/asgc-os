@@ -78,6 +78,14 @@ type ClubDraft = {
 
 const STATUS_OPTIONS: ClubRow["status"][] = ["pending", "chartered", "suspended", "revoked", "inactive"];
 
+function parseNonNegativeInt(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const value = Number(trimmed);
+  if (!Number.isFinite(value) || value < 0) return null;
+  return Math.floor(value);
+}
+
 function draftFromClub(club: ClubRow): ClubDraft {
   return {
     name: club.name,
@@ -112,6 +120,8 @@ export function ClubsDashboard({
   const [absenceSummary, setAbsenceSummary] = useState<AbsenceSummaryRow[]>(initialAbsenceSummary);
   const [drafts, setDrafts] = useState<Record<string, ClubDraft>>({});
   const [status, setStatus] = useState<string>("");
+  const [clubSearch, setClubSearch] = useState<string>("");
+  const [clubStatusFilter, setClubStatusFilter] = useState<ClubRow["status"] | "">("");
   const [newClubName, setNewClubName] = useState<string>("");
   const [newClubAdvisor, setNewClubAdvisor] = useState<string>("");
   const [newClubAdvisorEmail, setNewClubAdvisorEmail] = useState<string>("");
@@ -147,6 +157,23 @@ export function ClubsDashboard({
     return map;
   }, [absenceSummary]);
 
+  const filteredClubs = useMemo(() => {
+    const query = clubSearch.trim().toLowerCase();
+    return clubs.filter((club) => {
+      if (clubStatusFilter && club.status !== clubStatusFilter) return false;
+      if (!query) return true;
+      const haystack = [
+        club.name,
+        club.status,
+        club.advisor_name ?? "",
+        club.advisor_email ?? "",
+      ]
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [clubSearch, clubStatusFilter, clubs]);
+
   async function reload() {
     const data = await fetchJson<{
       clubs: ClubRow[];
@@ -167,6 +194,17 @@ export function ClubsDashboard({
   async function onCreateClub(event: FormEvent) {
     event.preventDefault();
     if (!newClubName.trim()) return;
+    const membersCount = parseNonNegativeInt(newClubMembers);
+    if (membersCount === null) {
+      setStatus("Members count must be 0 or higher.");
+      return;
+    }
+    const benefitCount = parseNonNegativeInt(newClubBenefitCards);
+    if (benefitCount === null) {
+      setStatus("Benefit card count must be 0 or higher.");
+      return;
+    }
+
     setStatus("Creating club...");
 
     try {
@@ -178,8 +216,8 @@ export function ClubsDashboard({
           status: newClubStatus,
           advisor_name: newClubAdvisor.trim() || undefined,
           advisor_email: newClubAdvisorEmail.trim() || undefined,
-          members_count: Number(newClubMembers || 0),
-          benefit_card_count: Number(newClubBenefitCards || 0),
+          members_count: membersCount,
+          benefit_card_count: benefitCount,
         }),
       });
       setNewClubName("");
@@ -207,6 +245,17 @@ export function ClubsDashboard({
 
   async function saveClub(club: ClubRow) {
     const draft = drafts[club.id] ?? draftFromClub(club);
+    const membersCount = parseNonNegativeInt(draft.members_count);
+    if (membersCount === null) {
+      setStatus("Members count must be 0 or higher.");
+      return;
+    }
+    const benefitCount = parseNonNegativeInt(draft.benefit_card_count);
+    if (benefitCount === null) {
+      setStatus("Benefit card count must be 0 or higher.");
+      return;
+    }
+
     setStatus("Saving club...");
 
     try {
@@ -218,8 +267,8 @@ export function ClubsDashboard({
           status: draft.status,
           advisor_name: draft.advisor_name.trim() || null,
           advisor_email: draft.advisor_email.trim() || null,
-          members_count: Number(draft.members_count || 0),
-          benefit_card_count: Number(draft.benefit_card_count || 0),
+          members_count: membersCount,
+          benefit_card_count: benefitCount,
           status_reason: draft.status_reason.trim() || null,
         }),
       });
@@ -333,7 +382,56 @@ export function ClubsDashboard({
 
   return (
     <div className="space-y-8">
-      {status ? <div className="text-sm text-foreground/70">{status}</div> : null}
+      {status ? (
+        <div className="text-sm text-foreground/70" role="status" aria-live="polite">
+          {status}
+        </div>
+      ) : null}
+
+      <div className="rounded-lg border p-4">
+        <div className="text-sm font-medium">Find clubs</div>
+        <div className="mt-3 flex flex-wrap items-end gap-3">
+          <label className="space-y-1 text-sm">
+            <div className="text-foreground/70">Search</div>
+            <input
+              className="h-9 w-64 rounded border px-3 py-2 text-sm"
+              placeholder="Name, advisor, status…"
+              value={clubSearch}
+              onChange={(event: ChangeEvent<HTMLInputElement>) => setClubSearch(event.target.value)}
+            />
+          </label>
+          <label className="space-y-1 text-sm">
+            <div className="text-foreground/70">Status</div>
+            <select
+              className="h-9 rounded border px-3 py-2 text-sm"
+              value={clubStatusFilter}
+              onChange={(event) => setClubStatusFilter(event.target.value as ClubRow["status"] | "")}
+            >
+              <option value="">All</option>
+              {STATUS_OPTIONS.map((statusOption) => (
+                <option key={statusOption} value={statusOption}>
+                  {statusOption}
+                </option>
+              ))}
+            </select>
+          </label>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setClubSearch("");
+              setClubStatusFilter("");
+            }}
+            disabled={!clubSearch && !clubStatusFilter}
+          >
+            Clear
+          </Button>
+        </div>
+        <div className="mt-2 text-xs text-foreground/60">
+          Showing {filteredClubs.length} of {clubs.length} clubs
+        </div>
+      </div>
 
       {isAdmin ? (
         <form onSubmit={onCreateClub} className="rounded-lg border p-4">
@@ -342,11 +440,13 @@ export function ClubsDashboard({
             <input
               className="rounded border px-3 py-2 text-sm"
               placeholder="Club name"
+              aria-label="Club name"
               value={newClubName}
               onChange={(event: ChangeEvent<HTMLInputElement>) => setNewClubName(event.target.value)}
             />
             <select
               className="rounded border px-3 py-2 text-sm"
+              aria-label="Club status"
               value={newClubStatus}
               onChange={(event) => setNewClubStatus(event.target.value as ClubRow["status"])}
             >
@@ -359,28 +459,35 @@ export function ClubsDashboard({
             <input
               className="rounded border px-3 py-2 text-sm"
               placeholder="Advisor name"
+              aria-label="Advisor name"
               value={newClubAdvisor}
               onChange={(event: ChangeEvent<HTMLInputElement>) => setNewClubAdvisor(event.target.value)}
             />
             <input
               className="rounded border px-3 py-2 text-sm"
               placeholder="Advisor email"
+              aria-label="Advisor email"
+              type="email"
               value={newClubAdvisorEmail}
               onChange={(event: ChangeEvent<HTMLInputElement>) => setNewClubAdvisorEmail(event.target.value)}
             />
             <input
               className="rounded border px-3 py-2 text-sm"
               placeholder="Members count"
+              aria-label="Members count"
               type="number"
               min={0}
+              step={1}
               value={newClubMembers}
               onChange={(event: ChangeEvent<HTMLInputElement>) => setNewClubMembers(event.target.value)}
             />
             <input
               className="rounded border px-3 py-2 text-sm"
               placeholder="Benefit card count"
+              aria-label="Benefit card count"
               type="number"
               min={0}
+              step={1}
               value={newClubBenefitCards}
               onChange={(event: ChangeEvent<HTMLInputElement>) => setNewClubBenefitCards(event.target.value)}
             />
@@ -394,10 +501,12 @@ export function ClubsDashboard({
       ) : null}
 
       <div className="space-y-4">
-        {clubs.length === 0 ? (
-          <div className="text-sm text-foreground/70">No clubs yet.</div>
+        {filteredClubs.length === 0 ? (
+          <div className="text-sm text-foreground/70">
+            {clubs.length === 0 ? "No clubs yet." : "No clubs match the current filters."}
+          </div>
         ) : (
-          clubs.map((club) => {
+          filteredClubs.map((club) => {
             const draft = drafts[club.id] ?? draftFromClub(club);
             const clubChecklist = checklistByClub.get(club.id);
             const eligibilityRow = eligibilityByClub.get(club.id);
@@ -431,6 +540,7 @@ export function ClubsDashboard({
                       />
                       <select
                         className="rounded border px-3 py-2 text-sm"
+                        aria-label="Club status"
                         value={draft.status}
                         onChange={(event) =>
                           updateDraft(club.id, { status: event.target.value as ClubRow["status"] })
@@ -446,6 +556,7 @@ export function ClubsDashboard({
                       <input
                         className="rounded border px-3 py-2 text-sm"
                         placeholder="Advisor name"
+                        aria-label="Advisor name"
                         value={draft.advisor_name}
                         onChange={(event) => updateDraft(club.id, { advisor_name: event.target.value })}
                         disabled={!isAdmin}
@@ -453,6 +564,8 @@ export function ClubsDashboard({
                       <input
                         className="rounded border px-3 py-2 text-sm"
                         placeholder="Advisor email"
+                        aria-label="Advisor email"
+                        type="email"
                         value={draft.advisor_email}
                         onChange={(event) => updateDraft(club.id, { advisor_email: event.target.value })}
                         disabled={!isAdmin}
@@ -460,8 +573,10 @@ export function ClubsDashboard({
                       <input
                         className="rounded border px-3 py-2 text-sm"
                         placeholder="Members count"
+                        aria-label="Members count"
                         type="number"
                         min={0}
+                        step={1}
                         value={draft.members_count}
                         onChange={(event) => updateDraft(club.id, { members_count: event.target.value })}
                         disabled={!isAdmin}
@@ -469,8 +584,10 @@ export function ClubsDashboard({
                       <input
                         className="rounded border px-3 py-2 text-sm"
                         placeholder="Benefit card count"
+                        aria-label="Benefit card count"
                         type="number"
                         min={0}
+                        step={1}
                         value={draft.benefit_card_count}
                         onChange={(event) => updateDraft(club.id, { benefit_card_count: event.target.value })}
                         disabled={!isAdmin}
@@ -478,6 +595,7 @@ export function ClubsDashboard({
                       <input
                         className="rounded border px-3 py-2 text-sm"
                         placeholder="Status reason"
+                        aria-label="Status reason"
                         value={draft.status_reason}
                         onChange={(event) => updateDraft(club.id, { status_reason: event.target.value })}
                         disabled={!isAdmin}
@@ -501,6 +619,7 @@ export function ClubsDashboard({
                         <input
                           type="file"
                           className="text-sm"
+                          aria-label="Constitution file"
                           onChange={(event) =>
                             setUploadFiles((prev) => ({
                               ...prev,

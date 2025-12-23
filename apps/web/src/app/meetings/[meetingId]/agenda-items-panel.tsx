@@ -280,7 +280,11 @@ export function AgendaItemsPanel({
 
   return (
     <div className="space-y-6">
-      {status ? <div className="text-sm text-foreground/70">{status}</div> : null}
+      {status ? (
+        <div className="text-sm text-foreground/70" role="status" aria-live="polite">
+          {status}
+        </div>
+      ) : null}
 
       {/* Deadline info */}
       {deadline ? (

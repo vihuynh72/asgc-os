@@ -424,7 +424,11 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
           </span>
         </div>
 
-        {error ? <div className="mt-3 text-sm text-red-600">{error}</div> : null}
+        {error ? (
+          <div className="mt-3 text-sm text-red-600" role="alert">
+            {error}
+          </div>
+        ) : null}
       </div>
 
       {view === "day" ? (

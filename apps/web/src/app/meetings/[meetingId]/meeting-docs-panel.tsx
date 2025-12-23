@@ -172,7 +172,11 @@ export function MeetingDocsPanel({
 
   return (
     <div className="space-y-6">
-      {status ? <div className="text-sm text-foreground/70">{status}</div> : null}
+      {status ? (
+        <div className="text-sm text-foreground/70" role="status" aria-live="polite">
+          {status}
+        </div>
+      ) : null}
 
       <div className="rounded-lg border border-foreground/10 p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">

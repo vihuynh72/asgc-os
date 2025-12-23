@@ -265,8 +265,16 @@ export default function OfficeHoursKioskPage() {
             </Button>
           </div>
 
-          {notice ? <div className="mt-3 text-sm text-foreground/80">{notice}</div> : null}
-          {error ? <div className="mt-3 text-sm text-red-600">{error}</div> : null}
+          {notice ? (
+            <div className="mt-3 text-sm text-foreground/80" role="status" aria-live="polite">
+              {notice}
+            </div>
+          ) : null}
+          {error ? (
+            <div className="mt-3 text-sm text-red-600" role="alert">
+              {error}
+            </div>
+          ) : null}
 
           <div className="mt-3 text-xs text-foreground/70">
             Need access? Ask an admin to add your email to the allowlist.

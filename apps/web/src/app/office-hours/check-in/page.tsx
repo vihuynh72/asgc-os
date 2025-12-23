@@ -129,8 +129,16 @@ export default function OfficeHoursCheckInPage() {
             ) : null}
           </div>
 
-          {notice ? <div className="mt-3 text-sm text-foreground/80">{notice}</div> : null}
-          {error ? <div className="mt-3 text-sm text-red-600">{error}</div> : null}
+          {notice ? (
+            <div className="mt-3 text-sm text-foreground/80" role="status" aria-live="polite">
+              {notice}
+            </div>
+          ) : null}
+          {error ? (
+            <div className="mt-3 text-sm text-red-600" role="alert">
+              {error}
+            </div>
+          ) : null}
         </div>
       </div>
     </PageShell>

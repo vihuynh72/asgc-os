@@ -170,10 +170,12 @@ export function DocsPanel({
   const [filterDocType, setFilterDocType] = useState<string>("");
   const [filterVisibility, setFilterVisibility] = useState<string>("");
   const [filterCommittee, setFilterCommittee] = useState<string>("");
+  const [filterQuery, setFilterQuery] = useState<string>("");
 
   // Upload state
   const [showUploadForm, setShowUploadForm] = useState<boolean>(false);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [isUploading, setIsUploading] = useState<boolean>(false);
   const [newTitle, setNewTitle] = useState<string>("");
   const [newDocType, setNewDocType] = useState<string>("other");
   const [newDescription, setNewDescription] = useState<string>("");
@@ -237,13 +239,29 @@ export function DocsPanel({
   }
 
   const filteredDocs = useMemo(() => {
+    const query = filterQuery.trim().toLowerCase();
     return docs.filter((d) => {
       if (filterDocType && d.doc_type !== filterDocType) return false;
       if (filterVisibility && d.visibility !== filterVisibility) return false;
       if (filterCommittee && d.committee_id !== filterCommittee) return false;
+      if (query) {
+        const committeeName = d.committee_id ? committeesById.get(d.committee_id)?.name ?? "" : "";
+        const meetingTitle = d.meeting_id ? meetingsById.get(d.meeting_id)?.title ?? "" : "";
+        const haystack = [
+          d.title,
+          d.description ?? "",
+          d.doc_type,
+          formatDocType(d.doc_type),
+          committeeName,
+          meetingTitle,
+        ]
+          .join(" ")
+          .toLowerCase();
+        if (!haystack.includes(query)) return false;
+      }
       return true;
     });
-  }, [docs, filterDocType, filterVisibility, filterCommittee]);
+  }, [committeesById, docs, filterCommittee, filterDocType, filterQuery, filterVisibility, meetingsById]);
 
   const reload = useCallback(async () => {
     const qs = new URLSearchParams();
@@ -257,6 +275,8 @@ export function DocsPanel({
 
   async function handleUpload(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (isUploading) return;
+    setStatus("");
 
     if (!newTitle.trim()) {
       setStatus("Title required");
@@ -280,6 +300,7 @@ export function DocsPanel({
       }
 
       setStatus("Creating note...");
+      setIsUploading(true);
       try {
         await fetchJson("/api/docs", {
           method: "POST",
@@ -299,6 +320,8 @@ export function DocsPanel({
         await reload();
       } catch (err) {
         setStatus(err instanceof Error ? err.message : "Note creation failed");
+      } finally {
+        setIsUploading(false);
       }
 
       return;
@@ -341,7 +364,7 @@ export function DocsPanel({
     }
 
     setStatus("Getting upload URL...");
-
+    setIsUploading(true);
     try {
       // Get signed upload URL
       const { uploadUrl, path, bucket } = await fetchJson<{
@@ -397,6 +420,8 @@ export function DocsPanel({
       await reload();
     } catch (err) {
       setStatus(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      setIsUploading(false);
     }
   }
 
@@ -512,10 +537,22 @@ export function DocsPanel({
 
   return (
     <div className="space-y-4">
-      {status ? <div className="text-sm text-foreground/70">{status}</div> : null}
+      {status ? (
+        <div className="text-sm text-foreground/70" role="status" aria-live="polite">
+          {status}
+        </div>
+      ) : null}
 
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-3">
+        <input
+          value={filterQuery}
+          onChange={(e: ChangeEvent<HTMLInputElement>) => setFilterQuery(e.target.value)}
+          className="w-56 rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
+          placeholder="Search docs…"
+          aria-label="Search documents"
+        />
+
         <select
           value={filterDocType}
           onChange={(e) => setFilterDocType(e.target.value)}
@@ -565,10 +602,12 @@ export function DocsPanel({
           variant="outline"
           size="sm"
           onClick={() => {
+            setFilterQuery("");
             setFilterDocType("");
             setFilterVisibility("");
             setFilterCommittee("");
           }}
+          disabled={!filterQuery && !filterDocType && !filterVisibility && !filterCommittee}
         >
           Clear Filters
         </Button>
@@ -586,66 +625,86 @@ export function DocsPanel({
               openUploadForm();
             }
           }}
+          disabled={isUploading}
         >
           {showUploadForm ? "Cancel" : "Upload Document"}
         </Button>
       </div>
 
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-foreground/60">
+        <span>
+          Showing {filteredDocs.length} of {docs.length} documents
+        </span>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={() => void reload()}
+        >
+          Refresh list
+        </Button>
+      </div>
+
       {/* Upload form */}
       {showUploadForm ? (
-        <form onSubmit={handleUpload} className="space-y-3 rounded-lg border border-foreground/10 p-4">
+        <form
+          onSubmit={handleUpload}
+          className="space-y-3 rounded-lg border border-foreground/10 p-4"
+          aria-busy={isUploading}
+        >
           <div className="text-sm font-medium">Upload New Document</div>
 
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div>
-              <label className="mb-1 block text-xs text-foreground/70">Title *</label>
-              <input
-                type="text"
-                value={newTitle}
-                onChange={(e: ChangeEvent<HTMLInputElement>) => setNewTitle(e.target.value)}
-                placeholder="Document title"
-                className="w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
-              />
-            </div>
+          <fieldset disabled={isUploading} className="space-y-3">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <label className="mb-1 block text-xs text-foreground/70">Title *</label>
+                <input
+                  type="text"
+                  value={newTitle}
+                  onChange={(e: ChangeEvent<HTMLInputElement>) => setNewTitle(e.target.value)}
+                  placeholder="Document title"
+                  className="w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
+                />
+              </div>
 
-            <div>
-              <label className="mb-1 block text-xs text-foreground/70">Type</label>
-              <select
-                value={newDocType}
-                onChange={(e) => {
-                  const value = e.target.value;
-                  setNewDocType(value);
-                  if (value === "committee_notes") {
-                    setNewVisibility("committee_only");
-                    if (!newCommitteeId && committees[0]?.id) {
-                      setNewCommitteeId(committees[0].id);
+              <div>
+                <label className="mb-1 block text-xs text-foreground/70">Type</label>
+                <select
+                  value={newDocType}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setNewDocType(value);
+                    if (value === "committee_notes") {
+                      setNewVisibility("committee_only");
+                      if (!newCommitteeId && committees[0]?.id) {
+                        setNewCommitteeId(committees[0].id);
+                      }
+                      setUploadFile(null);
+                      setNewMeetingId("");
+                    } else if (newVisibility === "committee_only") {
+                      setNewVisibility("internal");
+                      setNewContentText("");
                     }
-                    setUploadFile(null);
-                    setNewMeetingId("");
-                  } else if (newVisibility === "committee_only") {
-                    setNewVisibility("internal");
-                    setNewContentText("");
-                  }
-                  if (value !== "minutes" && value !== "agenda") {
-                    setNewMeetingId("");
-                  } else if (!newMeetingId && meetings[0]?.id) {
-                    setNewMeetingId(meetings[0].id);
-                  }
-                }}
-                className="w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
-              >
-                <option value="minutes">Minutes</option>
-                <option value="agenda">Agenda</option>
-                <option value="committee_notes">Committee Notes</option>
-                <option value="attachment">Attachment</option>
-                <option value="receipt">Receipt</option>
-                <option value="grant_application">Grant Application</option>
-                <option value="report">Report</option>
-                <option value="constitution">Constitution</option>
-                <option value="policy">Policy</option>
-                <option value="other">Other</option>
-              </select>
-            </div>
+                    if (value !== "minutes" && value !== "agenda") {
+                      setNewMeetingId("");
+                    } else if (!newMeetingId && meetings[0]?.id) {
+                      setNewMeetingId(meetings[0].id);
+                    }
+                  }}
+                  className="w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
+                >
+                  <option value="minutes">Minutes</option>
+                  <option value="agenda">Agenda</option>
+                  <option value="committee_notes">Committee Notes</option>
+                  <option value="attachment">Attachment</option>
+                  <option value="receipt">Receipt</option>
+                  <option value="grant_application">Grant Application</option>
+                  <option value="report">Report</option>
+                  <option value="constitution">Constitution</option>
+                  <option value="policy">Policy</option>
+                  <option value="other">Other</option>
+                </select>
+              </div>
 
             {isMeetingDoc ? (
               <div>
@@ -773,19 +832,21 @@ export function DocsPanel({
                 </div>
               </div>
             )}
-          </div>
-
-          <div className="flex justify-end">
-            <Button type="submit" size="sm">
-              Upload
-            </Button>
-          </div>
+            </div>
+            <div className="flex justify-end">
+              <Button type="submit" size="sm" disabled={isUploading}>
+                {isUploading ? "Uploading..." : "Upload"}
+              </Button>
+            </div>
+          </fieldset>
         </form>
       ) : null}
 
       {/* Docs list */}
       {filteredDocs.length === 0 ? (
-        <div className="text-sm text-foreground/70">No documents found.</div>
+        <div className="text-sm text-foreground/70">
+          {docs.length === 0 ? "No documents found." : "No documents match the current filters."}
+        </div>
       ) : (
         <div className="space-y-3">
           {filteredDocs.map((doc) => {
@@ -813,6 +874,12 @@ export function DocsPanel({
                           {committeesById.get(doc.committee_id)?.name}
                         </span>
                       ) : null}
+                      {doc.meeting_id && meetingsById.has(doc.meeting_id) ? (
+                        <span className="rounded bg-foreground/5 px-1.5 py-0.5">
+                          {meetingsById.get(doc.meeting_id)?.title}
+                        </span>
+                      ) : null}
+                      <span>{new Date(doc.created_at).toLocaleDateString()}</span>
                       <span>{formatBytes(doc.size_bytes)}</span>
                     </div>
                     {doc.description ? (

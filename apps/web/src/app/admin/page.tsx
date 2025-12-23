@@ -253,7 +253,7 @@ export default async function AdminPage() {
   }
 
   return (
-    <PageShell title="Admin" description="Manage terms and role assignments (Phase 3).">
+    <PageShell title="Admin" description="Manage terms and role assignments.">
       <AdminPanel
         initialTerms={safeTerms}
         initialUsers={safeUsers}

@@ -60,7 +60,7 @@ export async function POST(request: NextRequest) {
   }
 
   const subject = "ASGC OS: Test email";
-  const text = "This is a test email from ASGC OS (Phase 10 notifications plumbing).";
+  const text = "This is a test email from ASGC OS.";
 
   const admin = getSupabaseAdminClient();
 
