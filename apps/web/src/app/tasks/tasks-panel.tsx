@@ -180,11 +180,13 @@ export function TasksPanel({
   }
 
   async function toggleExpanded(taskId: string, committeeId: string) {
+    // Toggle off: if clicking the same task's Hide button, collapse it
     if (expandedTaskId === taskId) {
       setExpandedTaskId(null);
       return;
     }
 
+    // Toggle on: expand this task and collapse any other
     setExpandedTaskId(taskId);
     if (committeeId) {
       try {
@@ -584,7 +586,13 @@ export function TasksPanel({
                       </div>
 
                       <div className="flex flex-wrap items-center gap-2">
-                        <Button variant="ghost" onClick={() => void toggleExpanded(t.id, t.committee_id)}>
+                        <Button
+                          variant="ghost"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void toggleExpanded(t.id, t.committee_id);
+                          }}
+                        >
                           {isExpanded ? "Hide" : "Details"}
                         </Button>
 

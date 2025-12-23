@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 
 import { Button } from "@/components/ui/button";
 
@@ -86,6 +86,7 @@ export function IccDashboard({
   const [attendance, setAttendance] = useState<AttendanceRow[]>([]);
   const [meetingDrafts, setMeetingDrafts] = useState<Record<string, MeetingDraft>>({});
   const [attendanceDrafts, setAttendanceDrafts] = useState<Record<string, AttendanceDraft>>({});
+  const attendanceSectionRef = useRef<HTMLDivElement>(null);
 
   const attendanceByClubId = useMemo(() => {
     const map = new Map<string, AttendanceRow>();
@@ -94,11 +95,6 @@ export function IccDashboard({
     }
     return map;
   }, [attendance]);
-
-  useEffect(() => {
-    if (!selectedMeetingId) return;
-    void loadAttendance(selectedMeetingId);
-  }, [selectedMeetingId]);
 
   async function reloadMeetings() {
     const data = await fetchJson<{ meetings: IccMeeting[] }>("/api/icc/meetings");
@@ -120,6 +116,13 @@ export function IccDashboard({
       setStatus(err instanceof Error ? err.message : "Failed to load attendance");
     }
   }
+
+  useEffect(() => {
+    if (!selectedMeetingId) return;
+    // Fetching data on selection change is a valid use of useEffect
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void loadAttendance(selectedMeetingId);
+  }, [selectedMeetingId]);
 
   async function onCreateMeeting(event: FormEvent) {
     event.preventDefault();
@@ -302,6 +305,10 @@ export function IccDashboard({
                       size="sm"
                       onClick={() => {
                         setSelectedMeetingId(meeting.id);
+                        // Scroll to attendance section after a brief delay to allow state update
+                        setTimeout(() => {
+                          attendanceSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+                        }, 100);
                       }}
                     >
                       Manage attendance
@@ -360,7 +367,7 @@ export function IccDashboard({
         )}
       </div>
 
-      <div className="rounded-lg border p-4">
+      <div ref={attendanceSectionRef} className="rounded-lg border p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <div className="text-sm font-medium">Attendance</div>

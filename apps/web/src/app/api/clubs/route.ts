@@ -86,7 +86,15 @@ export async function POST(request: NextRequest) {
 
   const parsed = ClubCreateSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
-    return NextResponse.json({ error: "invalid_request" }, { status: 400 });
+    // Return user-friendly error message for validation failures
+    const fieldErrors = parsed.error.flatten().fieldErrors;
+    const firstError = Object.entries(fieldErrors).find(([, errors]) => errors && errors.length > 0);
+    if (firstError) {
+      const [field, errors] = firstError;
+      const fieldName = field.replace(/_/g, " ");
+      return NextResponse.json({ error: `Invalid ${fieldName}: ${errors?.[0] ?? "check your input"}` }, { status: 400 });
+    }
+    return NextResponse.json({ error: "Invalid input. Please check your data." }, { status: 400 });
   }
 
   const admin = getSupabaseAdminClient();

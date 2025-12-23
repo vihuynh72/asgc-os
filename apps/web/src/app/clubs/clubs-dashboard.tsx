@@ -86,6 +86,12 @@ function parseNonNegativeInt(raw: string): number | null {
   return Math.floor(value);
 }
 
+function isValidEmail(email: string): boolean {
+  if (!email.trim()) return true; // Empty email is allowed (optional field)
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return emailRegex.test(email.trim());
+}
+
 function draftFromClub(club: ClubRow): ClubDraft {
   return {
     name: club.name,
@@ -193,7 +199,10 @@ export function ClubsDashboard({
 
   async function onCreateClub(event: FormEvent) {
     event.preventDefault();
-    if (!newClubName.trim()) return;
+    if (!newClubName.trim()) {
+      setStatus("Club name is required.");
+      return;
+    }
     const membersCount = parseNonNegativeInt(newClubMembers);
     if (membersCount === null) {
       setStatus("Members count must be 0 or higher.");
@@ -202,6 +211,10 @@ export function ClubsDashboard({
     const benefitCount = parseNonNegativeInt(newClubBenefitCards);
     if (benefitCount === null) {
       setStatus("Benefit card count must be 0 or higher.");
+      return;
+    }
+    if (!isValidEmail(newClubAdvisorEmail)) {
+      setStatus("Please enter a valid advisor email address.");
       return;
     }
 
