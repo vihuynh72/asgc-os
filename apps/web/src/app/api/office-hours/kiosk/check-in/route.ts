@@ -9,6 +9,7 @@ import {
   getOrCreateUserIdByEmail,
   haversineMeters,
   isEmailAllowlisted,
+  isWeekendInTimeZone,
   normalizeKioskEmail,
   setProfileDisplayName,
 } from "../_kiosk";
@@ -39,6 +40,7 @@ function mapErrorStatus(message: string): number {
     case "office_config_missing":
     case "invalid_lat":
     case "invalid_lon":
+    case "weekend_not_allowed":
       return 400;
     default:
       return 500;
@@ -79,6 +81,9 @@ export async function POST(request: NextRequest) {
     }
 
     const geo = await getOfficeGeo(admin);
+    if (isWeekendInTimeZone(new Date(), geo.timezone)) {
+      return NextResponse.json({ error: "weekend_not_allowed" }, { status: 400 });
+    }
     const dist = haversineMeters(lat, lon, geo.lat, geo.lon);
 
     if (dist > geo.graceRadiusM) {

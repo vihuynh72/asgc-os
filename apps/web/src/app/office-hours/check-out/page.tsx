@@ -13,6 +13,11 @@ type OpenSession = {
   checkin_at: string;
 };
 
+type OfficeGeo = {
+  radiusM: number;
+  graceRadiusM: number;
+};
+
 function friendlyError(message: string): string {
   switch (message) {
     case "location_required":
@@ -48,6 +53,9 @@ export default function OfficeHoursCheckOutPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [geoPermission, setGeoPermission] = useState<"granted" | "denied" | "prompt" | "unsupported">("prompt");
+  const [officeGeoStatus, setOfficeGeoStatus] = useState<"loading" | "ready" | "not_configured">("loading");
+  const [officeGeo, setOfficeGeo] = useState<OfficeGeo | null>(null);
 
   const refreshOpenSession = useCallback(async () => {
     setError(null);
@@ -66,6 +74,75 @@ export default function OfficeHoursCheckOutPage() {
   useEffect(() => {
     void refreshOpenSession();
   }, [refreshOpenSession]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!navigator?.permissions?.query) {
+      setGeoPermission("unsupported");
+      return;
+    }
+
+    navigator.permissions
+      .query({ name: "geolocation" as PermissionName })
+      .then((status) => {
+        if (cancelled) return;
+        setGeoPermission(status.state);
+        status.onchange = () => setGeoPermission(status.state);
+      })
+      .catch(() => setGeoPermission("unsupported"));
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadOfficeGeo() {
+      setOfficeGeoStatus("loading");
+      const { data: config, error: cfgErr } = await supabase
+        .from("office_config")
+        .select("primary_office_location_id")
+        .eq("id", true)
+        .maybeSingle();
+
+      if (cancelled) return;
+      if (cfgErr || !config?.primary_office_location_id) {
+        setOfficeGeo(null);
+        setOfficeGeoStatus("not_configured");
+        return;
+      }
+
+      const { data: office, error: officeErr } = await supabase
+        .from("office_locations")
+        .select("lat,lon,radius_m,grace_radius_m,active")
+        .eq("id", config.primary_office_location_id)
+        .maybeSingle();
+
+      if (cancelled) return;
+      if (
+        officeErr ||
+        !office ||
+        !office.active ||
+        office.lat === null ||
+        office.lon === null ||
+        office.radius_m === null ||
+        office.grace_radius_m === null
+      ) {
+        setOfficeGeo(null);
+        setOfficeGeoStatus("not_configured");
+        return;
+      }
+
+      setOfficeGeo({ radiusM: office.radius_m, graceRadiusM: office.grace_radius_m });
+      setOfficeGeoStatus("ready");
+    }
+
+    void loadOfficeGeo();
+    return () => {
+      cancelled = true;
+    };
+  }, [supabase]);
 
   const onSubmit = useCallback(async () => {
     setLoading(true);
@@ -106,6 +183,23 @@ export default function OfficeHoursCheckOutPage() {
           ) : (
             <div className="text-sm text-foreground/80">No open session.</div>
           )}
+          {geoPermission === "denied" ? (
+            <div className="mt-2 text-xs text-red-600">
+              Location permission is blocked. Enable location access in your browser settings to check out.
+            </div>
+          ) : null}
+          {officeGeoStatus === "not_configured" ? (
+            <div className="mt-2 text-xs text-foreground/70">
+              Office geofence is not configured yet. Check-out may be unavailable until an admin sets it.
+            </div>
+          ) : officeGeo ? (
+            <div className="mt-2 text-xs text-foreground/70">
+              Geofence radius {officeGeo.radiusM}m, grace {officeGeo.graceRadiusM}m.
+            </div>
+          ) : null}
+          <div className="mt-2 text-xs text-foreground/70">
+            If you are offsite and cannot check out, contact an admin to review your session.
+          </div>
 
           <div className="mt-4 flex flex-wrap gap-2">
             <Button onClick={onSubmit} disabled={loading || !openSession}>
@@ -125,6 +219,12 @@ export default function OfficeHoursCheckOutPage() {
                 Go to check in
               </Link>
             ) : null}
+            <Link
+              href="/office-hours/kiosk"
+              className="inline-flex h-9 items-center justify-center rounded-md border border-foreground/20 bg-transparent px-3 text-sm font-medium text-foreground transition-colors hover:bg-foreground/5"
+            >
+              Use Office Hours Form
+            </Link>
           </div>
 
           {notice ? (

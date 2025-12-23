@@ -41,6 +41,8 @@ function friendlyError(code: string): string {
       return "Office location is not configured yet.";
     case "location_incomplete":
       return "Location data is incomplete.";
+    case "weekend_not_allowed":
+      return "Office hours are only available Monday through Friday.";
     default:
       return code || "Something went wrong.";
   }
@@ -69,6 +71,7 @@ export default function OfficeHoursKioskPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [geoPermission, setGeoPermission] = useState<"granted" | "denied" | "prompt" | "unsupported">("prompt");
 
   const emailNormalized = useMemo(() => normalizeEmail(email), [email]);
   const emailValid = useMemo(() => EmailSchema.safeParse(emailNormalized).success, [emailNormalized]);
@@ -80,6 +83,27 @@ export default function OfficeHoursKioskPage() {
     } catch {
       // Ignore
     }
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!navigator?.permissions?.query) {
+      setGeoPermission("unsupported");
+      return;
+    }
+
+    navigator.permissions
+      .query({ name: "geolocation" as PermissionName })
+      .then((status) => {
+        if (cancelled) return;
+        setGeoPermission(status.state);
+        status.onchange = () => setGeoPermission(status.state);
+      })
+      .catch(() => setGeoPermission("unsupported"));
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const loadStatus = useCallback(async () => {
@@ -244,6 +268,17 @@ export default function OfficeHoursKioskPage() {
               <span>Not checked in.</span>
             )}
           </div>
+          {status?.user_exists === false ? (
+            <div className="mt-2 text-xs text-foreground/70">
+              We could not find an existing account for this email yet. A kiosk check-in will create one.
+            </div>
+          ) : null}
+          {geoPermission === "denied" ? (
+            <div className="mt-2 text-xs text-red-600">
+              Location permission is blocked. Check-in requires location access. Check-out can proceed without it.
+            </div>
+          ) : null}
+          <div className="mt-2 text-xs text-foreground/70">Office hours are tracked Monday through Friday.</div>
 
           <div className="mt-4 grid grid-cols-2 gap-2">
             <Button onClick={onCheckIn} disabled={loading || !emailValid || !!openSession} className="h-12 text-base">
@@ -277,6 +312,9 @@ export default function OfficeHoursKioskPage() {
           ) : null}
 
           <div className="mt-3 text-xs text-foreground/70">
+            Check-in requires location. If you are offsite, ask an admin for guidance or coverage.
+          </div>
+          <div className="mt-1 text-xs text-foreground/70">
             Need access? Ask an admin to add your email to the allowlist.
           </div>
         </div>

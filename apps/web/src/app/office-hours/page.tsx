@@ -56,6 +56,12 @@ type CoverageRequest = {
   claimed_at: string | null;
 };
 
+type OfficeConfig = {
+  quiet_hours_enabled: boolean;
+  quiet_hours_start_local: string;
+  quiet_hours_end_local: string;
+};
+
 type OpenSession = {
   id: string;
   checkin_at: string;
@@ -81,6 +87,8 @@ function friendlyError(message: string): string {
       return "No open session found to check out.";
     case "office_location_not_configured":
       return "Office location is not fully configured yet (lat/lon/radii missing).";
+    case "weekend_not_allowed":
+      return "Office hours are only available Monday through Friday.";
     default:
       return message || "Something went wrong.";
   }
@@ -186,6 +194,10 @@ export default function OfficeHoursPage() {
   const [officeTz, setOfficeTz] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [weekAnchorDate, setWeekAnchorDate] = useState<string>(() => todayDateString());
+  const [officeConfig, setOfficeConfig] = useState<OfficeConfig | null>(null);
+  const [quietHoursActive, setQuietHoursActive] = useState<boolean | null>(null);
+  const [officeLocationName, setOfficeLocationName] = useState<string | null>(null);
+  const [coverageNotesByShiftId, setCoverageNotesByShiftId] = useState<Record<string, string>>({});
 
   const [officeGeo, setOfficeGeo] = useState<{
     lat: number;
@@ -226,7 +238,7 @@ export default function OfficeHoursPage() {
   const selectedWeekDays = useMemo(() => {
     if (!selectedWeekStart) return [];
     const out: string[] = [];
-    for (let i = 0; i < 7; i += 1) {
+    for (let i = 0; i < 5; i += 1) {
       const d = addDays(selectedWeekStart, i);
       if (d) out.push(d);
     }
@@ -247,6 +259,39 @@ export default function OfficeHoursPage() {
     return m;
   }, [officeTz, sessions]);
 
+  const shiftsById = useMemo(() => {
+    const m = new Map<string, OfficeHourShift>();
+    for (const shift of shifts) {
+      m.set(shift.id, shift);
+    }
+    return m;
+  }, [shifts]);
+
+  const coverageByShiftId = useMemo(() => {
+    const m = new Map<string, CoverageRequest>();
+    for (const request of openCoverageRequests) {
+      m.set(request.shift_id, request);
+    }
+    return m;
+  }, [openCoverageRequests]);
+
+  const weeklySummary = useMemo(() => {
+    if (!weekly) return null;
+    const requiredTotalMinutes = Math.max(weekly.total_minutes + weekly.deficit_minutes, 0);
+    const requiredInOfficeMinutes = Math.max(weekly.in_office_minutes + weekly.deficit_in_office_minutes, 0);
+    const nonInOfficeMinutes = Math.max(weekly.total_minutes - weekly.in_office_minutes, 0);
+    const totalProgress = requiredTotalMinutes > 0 ? Math.min(weekly.total_minutes / requiredTotalMinutes, 1) : 0;
+    const inOfficeProgress =
+      requiredInOfficeMinutes > 0 ? Math.min(weekly.in_office_minutes / requiredInOfficeMinutes, 1) : 0;
+    return {
+      requiredTotalMinutes,
+      requiredInOfficeMinutes,
+      nonInOfficeMinutes,
+      totalProgress,
+      inOfficeProgress,
+    };
+  }, [weekly]);
+
   const refresh = useCallback(async () => {
     setError(null);
     setNotice(null);
@@ -257,6 +302,11 @@ export default function OfficeHoursPage() {
     const { data: tzData, error: tzErr } = await supabase.rpc("office_timezone");
     if (!tzErr && typeof tzData === "string" && tzData.length > 0) {
       setOfficeTz(tzData);
+    }
+
+    const quietRes = await supabase.rpc("is_quiet_hours");
+    if (!quietRes.error && typeof quietRes.data === "boolean") {
+      setQuietHoursActive(quietRes.data);
     }
 
     const weekStart = selectedWeekStart || undefined;
@@ -312,6 +362,9 @@ export default function OfficeHoursPage() {
     if (coverageRes.ok) {
       const coverageJson = (await coverageRes.json().catch(() => null)) as { requests?: CoverageRequest[] } | null;
       setOpenCoverageRequests((coverageJson?.requests ?? []) as CoverageRequest[]);
+    } else {
+      const coverageJson = (await coverageRes.json().catch(() => null)) as { error?: string } | null;
+      setError(coverageJson?.error ?? "Failed to load coverage requests");
     }
   }, [selectedWeekStart, supabase]);
 
@@ -337,38 +390,51 @@ export default function OfficeHoursPage() {
   }, [autoPresenceEnabled]);
 
   useEffect(() => {
-    if (officeGeo) {
-      setOfficeGeoStatus("ready");
-      return;
-    }
-
     let cancelled = false;
     async function load() {
       setOfficeGeoStatus("loading");
       const { data: config, error: cfgErr } = await supabase
         .from("office_config")
-        .select("primary_office_location_id")
+        .select("primary_office_location_id,quiet_hours_enabled,quiet_hours_start_local,quiet_hours_end_local")
         .eq("id", true)
         .maybeSingle();
 
       if (cancelled) return;
-      if (cfgErr || !config?.primary_office_location_id) {
+      if (cfgErr || !config) {
+        setOfficeGeo(null);
+        setOfficeGeoStatus("not_configured");
+        return;
+      }
+
+      setOfficeConfig({
+        quiet_hours_enabled: config.quiet_hours_enabled,
+        quiet_hours_start_local: config.quiet_hours_start_local,
+        quiet_hours_end_local: config.quiet_hours_end_local,
+      });
+
+      if (!config.primary_office_location_id) {
+        setOfficeGeo(null);
         setOfficeGeoStatus("not_configured");
         return;
       }
 
       const { data: office, error: officeErr } = await supabase
         .from("office_locations")
-        .select("lat,lon,radius_m,grace_radius_m")
+        .select("name,lat,lon,radius_m,grace_radius_m")
         .eq("id", config.primary_office_location_id)
         .maybeSingle();
 
       if (cancelled) return;
       if (officeErr || !office) {
+        setOfficeGeo(null);
         setOfficeGeoStatus("not_configured");
         return;
       }
+
+      setOfficeLocationName(typeof office.name === "string" ? office.name : null);
+
       if (office.lat === null || office.lon === null || office.radius_m === null || office.grace_radius_m === null) {
+        setOfficeGeo(null);
         setOfficeGeoStatus("not_configured");
         return;
       }
@@ -386,7 +452,7 @@ export default function OfficeHoursPage() {
     return () => {
       cancelled = true;
     };
-  }, [officeGeo, supabase]);
+  }, [supabase]);
 
   const openCheckinAt = openSession?.checkin_at ?? null;
 
@@ -477,11 +543,13 @@ export default function OfficeHoursPage() {
     async (shiftId: string) => {
       setLoading(true);
       setError(null);
+      setNotice(null);
       try {
+        const note = coverageNotesByShiftId[shiftId]?.trim() || null;
         const res = await fetch("/api/office-hours/coverage", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ shift_id: shiftId }),
+          body: JSON.stringify({ shift_id: shiftId, notes: note }),
         });
 
         const json = (await res.json().catch(() => null)) as { error?: string } | null;
@@ -490,18 +558,25 @@ export default function OfficeHoursPage() {
           return;
         }
 
+        setCoverageNotesByShiftId((prev) => {
+          const next = { ...prev };
+          delete next[shiftId];
+          return next;
+        });
+        setNotice("Coverage request submitted.");
         await refresh();
       } finally {
         setLoading(false);
       }
     },
-    [refresh],
+    [coverageNotesByShiftId, refresh],
   );
 
   const onClaimCoverage = useCallback(
     async (requestId: string) => {
       setLoading(true);
       setError(null);
+      setNotice(null);
       try {
         const res = await fetch(`/api/office-hours/coverage/${requestId}`, {
           method: "POST",
@@ -513,6 +588,7 @@ export default function OfficeHoursPage() {
           return;
         }
 
+        setNotice("Coverage request claimed.");
         await refresh();
       } finally {
         setLoading(false);
@@ -525,6 +601,7 @@ export default function OfficeHoursPage() {
     async (requestId: string) => {
       setLoading(true);
       setError(null);
+      setNotice(null);
       try {
         const res = await fetch(`/api/office-hours/coverage/${requestId}`, {
           method: "DELETE",
@@ -536,6 +613,7 @@ export default function OfficeHoursPage() {
           return;
         }
 
+        setNotice("Coverage request cancelled.");
         await refresh();
       } finally {
         setLoading(false);
@@ -548,7 +626,7 @@ export default function OfficeHoursPage() {
     ? Math.max(0, Math.round((clock - new Date(openSession.checkin_at).getTime()) / 60_000))
     : null;
 
-  const selectedWeekLabel = selectedWeekStart ? `Week of ${selectedWeekStart}` : "Week";
+  const selectedWeekLabel = selectedWeekStart ? `Work week of ${selectedWeekStart}` : "Work week";
 
   return (
     <PageShell title="Office Hours" description="Check in/out with location.">
@@ -604,6 +682,22 @@ export default function OfficeHoursPage() {
                         : ""}
                 </div>
               ) : null}
+              {officeConfig ? (
+                <div className="text-xs text-foreground/60">
+                  Quiet hours:{" "}
+                  {officeConfig.quiet_hours_enabled
+                    ? `${officeConfig.quiet_hours_start_local.slice(0, 5)}-${officeConfig.quiet_hours_end_local.slice(0, 5)}`
+                    : "disabled"}
+                  {officeTz ? ` (${officeTz})` : ""}
+                  {officeConfig.quiet_hours_enabled && quietHoursActive ? " • active now" : ""}
+                </div>
+              ) : null}
+              {officeGeo ? (
+                <div className="text-xs text-foreground/60">
+                  {officeLocationName ? `${officeLocationName} geofence` : "Office geofence"}: radius {officeGeo.radiusM}m,
+                  grace {officeGeo.graceRadiusM}m
+                </div>
+              ) : null}
               {officeGeoStatus === "not_configured" ? (
                 <div className="mt-2 text-xs text-foreground/70">
                   Office geofence isn’t configured yet. Ask an admin to set it in <span className="font-mono">/admin</span> → Office Hours Config.
@@ -641,7 +735,7 @@ export default function OfficeHoursPage() {
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div className="space-y-1">
               <div className="text-sm font-medium">{selectedWeekLabel}</div>
-              {officeTz ? <div className="text-xs text-foreground/60">Times shown in {officeTz}</div> : null}
+              {officeTz ? <div className="text-xs text-foreground/60">Times shown in {officeTz} • Mon-Fri only</div> : null}
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
@@ -670,23 +764,56 @@ export default function OfficeHoursPage() {
           </div>
 
           {weekly ? (
-            <div className="mt-2 grid gap-2 sm:grid-cols-2">
-              <div className="text-sm text-foreground/80">
-                Total: {formatMinutes(weekly.total_minutes)}
+            <>
+              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                <div className="text-sm text-foreground/80">
+                  Total: {formatMinutes(weekly.total_minutes)}
+                </div>
+                <div className="text-sm text-foreground/80">
+                  In-office: {formatMinutes(weekly.in_office_minutes)}
+                </div>
+                <div className="text-sm text-foreground/80">
+                  On-behalf: {formatMinutes(weeklySummary?.nonInOfficeMinutes ?? 0)}
+                </div>
+                <div className="text-sm text-foreground/80">
+                  Requirement total: {formatMinutes(weeklySummary?.requiredTotalMinutes ?? 0)}
+                </div>
+                <div className="text-sm text-foreground/80">
+                  Requirement in-office: {formatMinutes(weeklySummary?.requiredInOfficeMinutes ?? 0)}
+                </div>
+                <div className="text-sm text-foreground/80">
+                  Remaining: {formatMinutes(weekly.deficit_minutes)} total, {formatMinutes(weekly.deficit_in_office_minutes)} in-office
+                </div>
               </div>
-              <div className="text-sm text-foreground/80">
-                In-office: {formatMinutes(weekly.in_office_minutes)}
-              </div>
-              <div className="text-sm text-foreground/80">
-                Total deficit: {formatMinutes(weekly.deficit_minutes)}
-              </div>
-              <div className="text-sm text-foreground/80">
-                In-office deficit: {formatMinutes(weekly.deficit_in_office_minutes)}
-              </div>
-            </div>
-	          ) : (
-	            <div className="mt-2 text-sm text-foreground/70">Loading…</div>
-	          )}
+              {weeklySummary ? (
+                <div className="mt-3 space-y-2">
+                  <div className="text-xs text-foreground/60">
+                    Total progress: {Math.round(weeklySummary.totalProgress * 100)}%
+                  </div>
+                  <div className="h-2 rounded-full bg-foreground/10">
+                    <div
+                      className="h-2 rounded-full bg-foreground/60"
+                      style={{ width: `${Math.round(weeklySummary.totalProgress * 100)}%` }}
+                    />
+                  </div>
+                  <div className="text-xs text-foreground/60">
+                    In-office progress: {Math.round(weeklySummary.inOfficeProgress * 100)}%
+                  </div>
+                  <div className="h-2 rounded-full bg-foreground/10">
+                    <div
+                      className="h-2 rounded-full bg-foreground/60"
+                      style={{ width: `${Math.round(weeklySummary.inOfficeProgress * 100)}%` }}
+                    />
+                  </div>
+                  <div className="text-xs text-foreground/60">
+                    Deficits represent remaining hours to meet weekly requirements. Approved exceptions count toward totals.
+                  </div>
+                </div>
+              ) : null}
+            </>
+          ) : (
+            <div className="mt-2 text-sm text-foreground/70">Loading…</div>
+          )}
 	        </div>
 
         <div className="grid gap-6 lg:grid-cols-3">
@@ -696,6 +823,9 @@ export default function OfficeHoursPage() {
 	                <div className="text-sm font-medium">Sessions</div>
 	                <div className="text-xs text-foreground/60">Showing sessions for the selected week.</div>
 	              </div>
+                <div className="mt-1 text-xs text-foreground/60">
+                  Legend: in office = within radius, in grace = near office, outside = beyond grace radius.
+                </div>
 
               {sessions.length === 0 ? (
                 <div className="mt-2 text-sm text-foreground/70">No sessions yet.</div>
@@ -780,12 +910,18 @@ export default function OfficeHoursPage() {
                   ))}
                 </div>
               )}
+              <div className="mt-2 text-xs text-foreground/60">
+                Need an exception? Contact an admin to review your timesheet.
+              </div>
             </div>
           </div>
 
           <div className="space-y-6">
             <div className="rounded-lg border border-foreground/10 p-4">
               <div className="text-sm font-medium">Shifts</div>
+              <div className="mt-1 text-xs text-foreground/60">
+                Request coverage for future shifts and include a note if needed.
+              </div>
               {shifts.length === 0 ? (
                 <div className="mt-2 text-sm text-foreground/70">No shifts scheduled.</div>
               ) : (
@@ -793,7 +929,10 @@ export default function OfficeHoursPage() {
                   {shifts.map((s) => {
                     const isFuture = new Date(s.starts_at) > new Date();
                     const canRequest = isFuture && s.status === "scheduled" && !s.covered_by_user_id;
-                    const hasPendingRequest = openCoverageRequests.some((cr) => cr.shift_id === s.id);
+                    const coverageRequest = coverageByShiftId.get(s.id) ?? null;
+                    const hasPendingRequest = !!coverageRequest;
+                    const noteValue = coverageNotesByShiftId[s.id] ?? "";
+                    const isNow = new Date() >= new Date(s.starts_at) && new Date() <= new Date(s.ends_at);
                     return (
                       <div
                         key={s.id}
@@ -801,22 +940,38 @@ export default function OfficeHoursPage() {
                       >
                         <div className="text-sm text-foreground/80">
                           {formatInOfficeTz(s.starts_at)} → {formatInOfficeTz(s.ends_at)}
+                          {isNow ? " • now" : ""}
                         </div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
                           {s.covered_by_user_id ? (
-                            <span className="text-xs text-foreground/70">coverage claimed</span>
+                            <span className="text-xs text-foreground/70">
+                              {s.covered_by_user_id === userId ? "covered by you" : "coverage claimed"}
+                            </span>
                           ) : hasPendingRequest ? (
-                            <span className="text-xs text-foreground/70">coverage requested</span>
+                            <span className="text-xs text-foreground/70">
+                              coverage requested{coverageRequest?.notes ? ` • ${coverageRequest.notes}` : ""}
+                            </span>
                           ) : null}
                           {canRequest && !hasPendingRequest ? (
-                            <Button
-                              variant="ghost"
-                              onClick={() => onRequestCoverage(s.id)}
-                              disabled={loading}
-                              className="h-6 px-2 text-xs"
-                            >
-                              Request coverage
-                            </Button>
+                            <>
+                              <input
+                                className="h-7 w-44 rounded-md border bg-transparent px-2 text-xs"
+                                placeholder="Coverage note (optional)"
+                                value={noteValue}
+                                maxLength={120}
+                                onChange={(e) =>
+                                  setCoverageNotesByShiftId((prev) => ({ ...prev, [s.id]: e.target.value }))
+                                }
+                              />
+                              <Button
+                                variant="ghost"
+                                onClick={() => onRequestCoverage(s.id)}
+                                disabled={loading}
+                                className="h-6 px-2 text-xs"
+                              >
+                                Request coverage
+                              </Button>
+                            </>
                           ) : null}
                           <span className="text-xs text-foreground/70">{s.status}</span>
                         </div>
@@ -835,13 +990,16 @@ export default function OfficeHoursPage() {
                 <div className="mt-2 space-y-2">
                   {openCoverageRequests.map((cr) => {
                     const isOwn = cr.requestor_user_id === userId;
+                    const shift = shiftsById.get(cr.shift_id) ?? null;
                     return (
                       <div
                         key={cr.id}
                         className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-foreground/10 px-3 py-2"
                       >
                         <div className="text-sm text-foreground/80">
-                          Shift: {cr.shift_id.slice(0, 8)}…
+                          {shift
+                            ? `Shift: ${formatInOfficeTz(shift.starts_at)} → ${formatInOfficeTz(shift.ends_at)}`
+                            : `Shift: ${cr.shift_id.slice(0, 8)}…`}
                           {cr.notes ? ` • ${cr.notes}` : ""}
                         </div>
                         <div className="flex items-center gap-2">
