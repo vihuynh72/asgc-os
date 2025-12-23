@@ -8,6 +8,30 @@ import { getPublicEnv } from "@/lib/env";
 
 export const runtime = "nodejs";
 
+type IccMeetingRow = {
+  id: string;
+  term_id: string | null;
+  starts_at: string;
+  location: string | null;
+  called_to_order_at: string | null;
+  advisor_present: boolean;
+  status: "scheduled" | "cancelled" | "completed";
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type IccQuorumRow = {
+  meeting_id: string;
+  member_count: number;
+  excused_count: number;
+  eligible_count: number;
+  present_count: number;
+  quorum_required: number;
+  advisor_present: boolean;
+  quorum_met: boolean;
+};
+
 async function getSupabaseForRequest(request: NextRequest) {
   const env = getPublicEnv();
   return createServerClient(env.NEXT_PUBLIC_SUPABASE_URL, env.NEXT_PUBLIC_SUPABASE_ANON_KEY, {
@@ -69,12 +93,14 @@ export async function GET(request: NextRequest) {
   if (meetingsRes.error) return NextResponse.json({ error: meetingsRes.error.message }, { status: 500 });
   if (quorumRes.error) return NextResponse.json({ error: quorumRes.error.message }, { status: 500 });
 
-  const quorumByMeetingId = new Map<string, (typeof quorumRes.data)[number]>();
-  for (const row of quorumRes.data ?? []) {
+  const quorumByMeetingId = new Map<string, IccQuorumRow>();
+  const quorumRows = (quorumRes.data ?? []) as IccQuorumRow[];
+  for (const row of quorumRows) {
     quorumByMeetingId.set(row.meeting_id, row);
   }
 
-  const meetings = (meetingsRes.data ?? []).map((meeting) => ({
+  const meetingsData = (meetingsRes.data ?? []) as IccMeetingRow[];
+  const meetings = meetingsData.map((meeting) => ({
     ...meeting,
     quorum: quorumByMeetingId.get(meeting.id) ?? null,
   }));
