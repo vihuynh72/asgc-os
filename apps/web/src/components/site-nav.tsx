@@ -8,6 +8,8 @@ const appLinks = [
   { href: "/office-hours", label: "Office Hours" },
   { href: "/tasks", label: "Tasks" },
   { href: "/meetings", label: "Meetings" },
+  { href: "/clubs", label: "Clubs" },
+  { href: "/icc", label: "ICC" },
   { href: "/docs", label: "Docs" },
   { href: "/finance", label: "Finance" },
   { href: "/admin", label: "Admin" },
