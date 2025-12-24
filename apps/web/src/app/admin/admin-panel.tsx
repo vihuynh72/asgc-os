@@ -141,6 +141,23 @@ type AdminMeetingDraft = {
   status: string;
 };
 
+type AdminAccessAuditRow = {
+  assignment_id: string;
+  user_id: string;
+  role_key: RoleKey;
+  term_id: string | null;
+  term_label: string | null;
+  display_name: string | null;
+  email: string | null;
+};
+
+type AdminAccessAudit = {
+  current_term: { id: string; name: string } | null;
+  admin_assignments: AdminAccessAuditRow[];
+  non_current_presidents: AdminAccessAuditRow[];
+  invalid_assignments: AdminAccessAuditRow[];
+};
+
 const ROLE_OPTIONS: Array<{ key: RoleKey; label: string; scope: "global" | "term" }> = [
   { key: "advisor", label: "Advisor (global)", scope: "global" },
   { key: "president", label: "President (term)", scope: "term" },
@@ -312,6 +329,11 @@ export function AdminPanel({
     initialGlobalAdvisorAssignments,
   );
   const [termAssignments, setTermAssignments] = useState<AssignmentRow[]>(initialTermAssignments);
+  const [showAllTermAssignments, setShowAllTermAssignments] = useState<boolean>(false);
+  const [revokeNotify, setRevokeNotify] = useState<boolean>(false);
+  const [revokeNote, setRevokeNote] = useState<string>("");
+  const [adminAccessAudit, setAdminAccessAudit] = useState<AdminAccessAudit | null>(null);
+  const [adminAccessAuditStatus, setAdminAccessAuditStatus] = useState<string>("");
 
   const [invitesAllowlist, setInvitesAllowlist] = useState<InviteAllowlistRow[]>(initialInvitesAllowlist);
   const [invitesBlocklist, setInvitesBlocklist] = useState<InviteBlocklistRow[]>(initialInvitesBlocklist);
@@ -586,6 +608,7 @@ export function AdminPanel({
     () => ROLE_OPTIONS.find((r) => r.key === selectedRoleKey) ?? ROLE_OPTIONS[0],
     [selectedRoleKey],
   );
+  const termAssignmentsLabel = showAllTermAssignments ? "all terms" : "the selected term";
 
   const exportWeekStartResolved = useMemo(
     () => startOfWeekMondayDateOnly(exportWeekStart) ?? startOfWeekMondayDateOnly(todayDateString()),
@@ -817,30 +840,50 @@ export function AdminPanel({
     setTerms(t);
     setUsers(u);
 
-    if (!selectedTermId) {
-      const current = t.find((x) => x.is_current) ?? t[0];
-      if (current?.id) setSelectedTermId(current.id);
+    const nextSelected =
+      selectedTermId || t.find((x) => x.is_current)?.id || t[0]?.id || "";
+    if (nextSelected) setSelectedTermId(nextSelected);
+
+    if (nextSelected) {
+      await loadAssignments(nextSelected);
     }
 
     setStatus("");
   }
 
-  async function loadAssignments(termId: string) {
-    if (!termId) return;
+  async function loadAssignments(termId: string, options?: { allTerms?: boolean }) {
+    const allTerms = options?.allTerms ?? showAllTermAssignments;
+    if (!termId && !allTerms) return;
     setStatus("Loading role assignments...");
+
+    const termQuery = allTerms
+      ? "/api/admin/role-assignments?activeOnly=1"
+      : `/api/admin/role-assignments?termId=${encodeURIComponent(termId)}&activeOnly=1`;
 
     const [globalAdvisor, termScoped] = await Promise.all([
       fetchJson<{ assignments: AssignmentRow[] }>(
         "/api/admin/role-assignments?scope=global&roleKey=advisor&activeOnly=1",
       ),
-      fetchJson<{ assignments: AssignmentRow[] }>(
-        `/api/admin/role-assignments?termId=${encodeURIComponent(termId)}&activeOnly=1`,
-      ),
+      fetchJson<{ assignments: AssignmentRow[] }>(termQuery),
     ]);
 
     setGlobalAdvisorAssignments(globalAdvisor.assignments);
-    setTermAssignments(termScoped.assignments);
+    const nextTermAssignments = allTerms
+      ? (termScoped.assignments ?? []).filter((a) => a.term_id)
+      : termScoped.assignments;
+    setTermAssignments(nextTermAssignments);
     setStatus("");
+  }
+
+  async function loadAdminAccessAudit() {
+    setAdminAccessAuditStatus("Loading admin access audit...");
+    try {
+      const data = await fetchJson<AdminAccessAudit>("/api/admin/admin-access-audit");
+      setAdminAccessAudit(data);
+      setAdminAccessAuditStatus("");
+    } catch (e) {
+      setAdminAccessAuditStatus(e instanceof Error ? e.message : "Failed to load admin access audit");
+    }
   }
 
   async function loadInvitesAllowlist() {
@@ -1487,14 +1530,34 @@ export function AdminPanel({
   async function onEndAssignment(assignmentId: string) {
     setStatus("Ending role assignment...");
     try {
-      await fetchJson<{ ok: true }>("/api/admin/role-assignments", {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ assignmentId }),
-      });
+      const notify = revokeNotify;
+      const note = revokeNote.trim();
+
+      const data = await fetchJson<{ ok: true; notify_error?: string; already_ended?: boolean }>(
+        "/api/admin/role-assignments",
+        {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            assignmentId,
+            notify,
+            note: notify && note ? note : undefined,
+          }),
+        },
+      );
 
       await loadAssignments(selectedTermId);
-      setStatus("");
+      if (adminAccessAudit) {
+        void loadAdminAccessAudit();
+      }
+
+      if (data.already_ended) {
+        setStatus("Role assignment was already ended.");
+      } else if (notify) {
+        setStatus(data.notify_error ? `Role ended. Email failed: ${data.notify_error}` : "Role ended and email sent.");
+      } else {
+        setStatus("");
+      }
     } catch (e) {
       setStatus(e instanceof Error ? e.message : "Failed to end role assignment");
     }
@@ -3141,8 +3204,43 @@ export function AdminPanel({
         <div className="space-y-1">
           <h2 className="text-lg font-semibold">Active assignments</h2>
           <p className="text-sm text-foreground/70">
-            Global Advisor assignments and assignments for the selected term.
+            Global Advisor assignments and assignments for {termAssignmentsLabel}.
           </p>
+        </div>
+
+        <div className="rounded-md border px-3 py-2 text-sm">
+          <div className="flex flex-wrap items-center gap-4">
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={showAllTermAssignments}
+                onChange={(e) => {
+                  const next = e.target.checked;
+                  setShowAllTermAssignments(next);
+                  void loadAssignments(selectedTermId, { allTerms: next });
+                }}
+              />
+              <span className="text-foreground/70">Show all terms</span>
+            </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={revokeNotify}
+                onChange={(e) => setRevokeNotify(e.target.checked)}
+              />
+              <span className="text-foreground/70">Notify member on revoke</span>
+            </label>
+          </div>
+          {revokeNotify ? (
+            <div className="mt-2">
+              <input
+                className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                value={revokeNote}
+                onChange={(e: ChangeEvent<HTMLInputElement>) => setRevokeNote(e.target.value)}
+                placeholder="Optional note to include in the email (max 500 chars)"
+              />
+            </div>
+          ) : null}
         </div>
 
         <div className="space-y-3">
@@ -3171,18 +3269,24 @@ export function AdminPanel({
           </div>
 
           <div className="rounded-md border">
-            <div className="border-b px-3 py-2 text-sm font-medium">Selected term</div>
+            <div className="border-b px-3 py-2 text-sm font-medium">
+              {showAllTermAssignments ? "All terms" : "Selected term"}
+            </div>
             <div className="divide-y">
               {termAssignments.length === 0 ? (
                 <div className="px-3 py-2 text-sm text-foreground/70">No active term roles.</div>
               ) : (
                 termAssignments.map((a) => {
                   const u = usersById.get(a.user_id);
+                  const termLabel = a.term_id ? termNameById.get(a.term_id) ?? a.term_id : "Global";
                   return (
                     <div key={a.id} className="flex items-center justify-between gap-3 px-3 py-2">
                       <div className="min-w-0">
                         <div className="truncate text-sm">{u ? formatUserLabel(u) : a.user_id}</div>
-                        <div className="text-xs text-foreground/70">{a.role_key}</div>
+                        <div className="text-xs text-foreground/70">
+                          {a.role_key}
+                          {showAllTermAssignments ? ` • ${termLabel}` : ""}
+                        </div>
                       </div>
                       <Button variant="ghost" onClick={() => void onEndAssignment(a.id)}>
                         End
@@ -3194,6 +3298,117 @@ export function AdminPanel({
             </div>
           </div>
         </div>
+      </section>
+
+      <section className="space-y-3">
+        <div className="space-y-1">
+          <h2 className="text-lg font-semibold">Admin access audit</h2>
+          <p className="text-sm text-foreground/70">
+            Shows who currently has admin access and highlights potential role mismatches.
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3">
+          <Button variant="outline" onClick={() => void loadAdminAccessAudit()}>
+            {adminAccessAudit ? "Refresh audit" : "Load audit"}
+          </Button>
+          {adminAccessAuditStatus ? <span className="text-sm text-foreground/70">{adminAccessAuditStatus}</span> : null}
+        </div>
+
+        {adminAccessAudit ? (
+          <div className="space-y-3">
+            <div className="rounded-md border px-3 py-2 text-sm text-foreground/70">
+              Current term:{" "}
+              <span className="font-medium text-foreground">
+                {adminAccessAudit.current_term?.name ?? "None"}
+              </span>
+            </div>
+            <div className="rounded-md border">
+              <div className="border-b px-3 py-2 text-sm font-medium">Current admin access</div>
+              {adminAccessAudit.admin_assignments.length === 0 ? (
+                <div className="px-3 py-2 text-sm text-foreground/70">No admin assignments found.</div>
+              ) : (
+                <div className="divide-y">
+                  {adminAccessAudit.admin_assignments.map((row) => {
+                    const primary = row.display_name?.trim() || row.email?.trim() || row.user_id;
+                    const secondary = row.display_name?.trim() && row.email?.trim() ? row.email.trim() : null;
+                    const termLabel = row.term_label ?? row.term_id ?? "Global";
+                    const meta = [row.role_key, termLabel, secondary].filter(Boolean).join(" • ");
+                    return (
+                      <div key={row.assignment_id} className="flex flex-wrap items-center justify-between gap-3 px-3 py-2">
+                        <div className="min-w-0">
+                          <div className="truncate text-sm">{primary}</div>
+                          <div className="text-xs text-foreground/70">{meta}</div>
+                        </div>
+                        <Button variant="ghost" onClick={() => void onEndAssignment(row.assignment_id)}>
+                          End role
+                        </Button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div className="rounded-md border">
+              <div className="border-b px-3 py-2 text-sm font-medium">Other president assignments</div>
+              {adminAccessAudit.non_current_presidents.length === 0 ? (
+                <div className="px-3 py-2 text-sm text-foreground/70">No non-current president roles.</div>
+              ) : (
+                <div className="divide-y">
+                  {adminAccessAudit.non_current_presidents.map((row) => {
+                    const primary = row.display_name?.trim() || row.email?.trim() || row.user_id;
+                    const secondary = row.display_name?.trim() && row.email?.trim() ? row.email.trim() : null;
+                    const termLabel = row.term_label ?? row.term_id ?? "Unknown term";
+                    const meta = [row.role_key, termLabel, secondary].filter(Boolean).join(" • ");
+                    return (
+                      <div key={row.assignment_id} className="flex flex-wrap items-center justify-between gap-3 px-3 py-2">
+                        <div className="min-w-0">
+                          <div className="truncate text-sm">{primary}</div>
+                          <div className="text-xs text-foreground/70">{meta}</div>
+                        </div>
+                        <Button variant="ghost" onClick={() => void onEndAssignment(row.assignment_id)}>
+                          End role
+                        </Button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div className="rounded-md border">
+              <div className="border-b px-3 py-2 text-sm font-medium">Potential mismatches</div>
+              {adminAccessAudit.invalid_assignments.length === 0 ? (
+                <div className="px-3 py-2 text-sm text-foreground/70">No mismatches detected.</div>
+              ) : (
+                <div className="divide-y">
+                  {adminAccessAudit.invalid_assignments.map((row) => {
+                    const primary = row.display_name?.trim() || row.email?.trim() || row.user_id;
+                    const secondary = row.display_name?.trim() && row.email?.trim() ? row.email.trim() : null;
+                    const termLabel = row.term_label ?? row.term_id ?? "Global";
+                    const meta = [row.role_key, termLabel, secondary].filter(Boolean).join(" • ");
+                    return (
+                      <div key={row.assignment_id} className="flex flex-wrap items-center justify-between gap-3 px-3 py-2">
+                        <div className="min-w-0">
+                          <div className="truncate text-sm">{primary}</div>
+                          <div className="text-xs text-foreground/70">{meta}</div>
+                        </div>
+                        <Button variant="ghost" onClick={() => void onEndAssignment(row.assignment_id)}>
+                          End role
+                        </Button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="rounded-md border px-3 py-2 text-sm text-foreground/70">
+            Run the audit to inspect admin access and resolve mismatches.
+          </div>
+        )}
       </section>
         </>
       ) : null}
