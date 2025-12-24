@@ -1,45 +1,10 @@
-import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
-import { getPublicEnv } from "@/lib/env";
+import { requirePartialAdmin } from "@/lib/adminAuth";
+import { getSupabaseRouteHandlerClient } from "@/lib/supabaseServer";
 
 export const runtime = "nodejs";
-
-async function isAdminForRequest(
-  request: NextRequest,
-): Promise<
-  | { ok: true; userId: string; supabase: ReturnType<typeof createServerClient> }
-  | { ok: false; response: NextResponse }
-> {
-  const env = getPublicEnv();
-
-  const supabase = createServerClient(env.NEXT_PUBLIC_SUPABASE_URL, env.NEXT_PUBLIC_SUPABASE_ANON_KEY, {
-    cookies: {
-      getAll() {
-        return request.cookies.getAll();
-      },
-      setAll() {
-        // No-op.
-      },
-    },
-  });
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return { ok: false, response: NextResponse.json({ error: "unauthorized" }, { status: 401 }) };
-  }
-
-  const { data: isAdmin, error: adminErr } = await supabase.rpc("is_admin", { _uid: user.id });
-  if (adminErr || !isAdmin) {
-    return { ok: false, response: NextResponse.json({ error: "forbidden" }, { status: 403 }) };
-  }
-
-  return { ok: true, userId: user.id, supabase };
-}
 
 const CreateShiftSchema = z.object({
   userId: z.string().uuid(),
@@ -48,9 +13,12 @@ const CreateShiftSchema = z.object({
   officeLocationId: z.string().uuid().optional(),
 });
 
+// POST: Create a shift (partial admin or higher with write access)
 export async function POST(request: NextRequest) {
-  const authz = await isAdminForRequest(request);
+  const authz = await requirePartialAdmin(request);
   if (!authz.ok) return authz.response;
+
+  const supabase = await getSupabaseRouteHandlerClient();
 
   const parsed = CreateShiftSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
@@ -59,7 +27,7 @@ export async function POST(request: NextRequest) {
 
   const { userId, startsAt, endsAt, officeLocationId } = parsed.data;
 
-  const { data, error } = await authz.supabase.rpc("admin_create_office_hour_shift", {
+  const { data, error } = await supabase.rpc("admin_create_office_hour_shift", {
     _user_id: userId,
     _starts_at: startsAt,
     _ends_at: endsAt,

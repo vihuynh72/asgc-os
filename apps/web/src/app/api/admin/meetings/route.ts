@@ -1,26 +1,16 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 import { getSupabaseRouteHandlerClient } from "@/lib/supabaseServer";
+import { requireAnyAdminRead, requirePartialAdmin } from "@/lib/adminAuth";
 
 export const runtime = "nodejs";
 
-// GET: List meetings (admin only)
+// GET: List meetings (any admin tier can read)
 export async function GET(request: NextRequest) {
+  const authz = await requireAnyAdminRead(request);
+  if (!authz.ok) return authz.response;
+
   const supabase = await getSupabaseRouteHandlerClient();
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
-
-  // Check admin
-  const { data: isAdmin, error: adminErr } = await supabase.rpc("is_admin", { _uid: user.id });
-  if (adminErr || !isAdmin) {
-    return NextResponse.json({ error: "forbidden" }, { status: 403 });
-  }
 
   const { searchParams } = new URL(request.url);
   const status = searchParams.get("status");
@@ -44,23 +34,12 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({ meetings: data ?? [] });
 }
 
-// POST: Create a meeting (admin only)
+// POST: Create a meeting (partial admin or higher with write access)
 export async function POST(request: NextRequest) {
+  const authz = await requirePartialAdmin(request);
+  if (!authz.ok) return authz.response;
+
   const supabase = await getSupabaseRouteHandlerClient();
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
-
-  // Check admin
-  const { data: isAdmin, error: adminErr } = await supabase.rpc("is_admin", { _uid: user.id });
-  if (adminErr || !isAdmin) {
-    return NextResponse.json({ error: "forbidden" }, { status: 403 });
-  }
 
   let body: {
     meeting_type?: string;

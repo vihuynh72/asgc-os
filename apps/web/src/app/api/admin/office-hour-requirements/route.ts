@@ -1,8 +1,7 @@
-import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
-import { getPublicEnv } from "@/lib/env";
+import { requireAnyAdminRead, requirePartialAdmin } from "@/lib/adminAuth";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
@@ -17,41 +16,6 @@ type RequirementRow = {
   effective_end: string | null;
 };
 
-async function isAdminForRequest(
-  request: NextRequest,
-): Promise<
-  | { ok: true; userId: string; supabase: ReturnType<typeof createServerClient> }
-  | { ok: false; response: NextResponse }
-> {
-  const env = getPublicEnv();
-
-  const supabase = createServerClient(env.NEXT_PUBLIC_SUPABASE_URL, env.NEXT_PUBLIC_SUPABASE_ANON_KEY, {
-    cookies: {
-      getAll() {
-        return request.cookies.getAll();
-      },
-      setAll() {
-        // No-op: these admin endpoints don't need to refresh auth cookies.
-      },
-    },
-  });
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return { ok: false, response: NextResponse.json({ error: "unauthorized" }, { status: 401 }) };
-  }
-
-  const { data: isAdmin, error: adminErr } = await supabase.rpc("is_admin", { _uid: user.id });
-  if (adminErr || !isAdmin) {
-    return { ok: false, response: NextResponse.json({ error: "forbidden" }, { status: 403 }) };
-  }
-
-  return { ok: true, userId: user.id, supabase };
-}
-
 const PutSchema = z.object({
   termId: z.string().uuid(),
   requirements: z
@@ -65,8 +29,9 @@ const PutSchema = z.object({
     .min(1),
 });
 
+// GET: Read office hour requirements (any admin tier can read)
 export async function GET(request: NextRequest) {
-  const authz = await isAdminForRequest(request);
+  const authz = await requireAnyAdminRead(request);
   if (!authz.ok) return authz.response;
 
   const url = request.nextUrl;
@@ -100,8 +65,9 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({ termId: resolvedTermId, requirements: (requirements ?? []) as RequirementRow[] });
 }
 
+// PUT: Update office hour requirements (partial admin or higher with write access)
 export async function PUT(request: NextRequest) {
-  const authz = await isAdminForRequest(request);
+  const authz = await requirePartialAdmin(request);
   if (!authz.ok) return authz.response;
 
   const parsed = PutSchema.safeParse(await request.json().catch(() => null));

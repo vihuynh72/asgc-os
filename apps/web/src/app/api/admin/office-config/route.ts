@@ -1,7 +1,6 @@
-import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-import { getPublicEnv } from "@/lib/env";
+import { requireFullAdminOrEvp, requireAnyAdminRead } from "@/lib/adminAuth";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
@@ -26,41 +25,6 @@ type OfficeConfigRow = {
   weekly_hours_reminder_weekday: number;
   weekly_hours_reminder_time_local: string;
 };
-
-async function isAdminForRequest(
-  request: NextRequest,
-): Promise<
-  | { ok: true; userId: string; supabase: ReturnType<typeof createServerClient> }
-  | { ok: false; response: NextResponse }
-> {
-  const env = getPublicEnv();
-
-  const supabase = createServerClient(env.NEXT_PUBLIC_SUPABASE_URL, env.NEXT_PUBLIC_SUPABASE_ANON_KEY, {
-    cookies: {
-      getAll() {
-        return request.cookies.getAll();
-      },
-      setAll() {
-        // No-op: these admin endpoints don't need to refresh auth cookies.
-      },
-    },
-  });
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return { ok: false, response: NextResponse.json({ error: "unauthorized" }, { status: 401 }) };
-  }
-
-  const { data: isAdmin, error: adminErr } = await supabase.rpc("is_admin", { _uid: user.id });
-  if (adminErr || !isAdmin) {
-    return { ok: false, response: NextResponse.json({ error: "forbidden" }, { status: 403 }) };
-  }
-
-  return { ok: true, userId: user.id, supabase };
-}
 
 function isTimeString(value: unknown): value is string {
   return typeof value === "string" && /^\d{2}:\d{2}(:\d{2})?$/.test(value);
@@ -100,8 +64,12 @@ async function ensureOfficeConfigRow(admin: ReturnType<typeof getSupabaseAdminCl
   return inserted as OfficeConfigRow;
 }
 
+// GET: Read office config (any admin tier can read, but EVP and full admin only see the data)
 export async function GET(request: NextRequest) {
-  const authz = await isAdminForRequest(request);
+  // For reading, any admin tier needs to at least see Office Hours tab
+  // But office config details are only shown to full admin or EVP in UI
+  // We allow read here; UI gates visibility
+  const authz = await requireAnyAdminRead(request);
   if (!authz.ok) return authz.response;
 
   const admin = getSupabaseAdminClient();
@@ -129,8 +97,9 @@ export async function GET(request: NextRequest) {
   });
 }
 
+// PUT: Update office config (full admin OR EVP only)
 export async function PUT(request: NextRequest) {
-  const authz = await isAdminForRequest(request);
+  const authz = await requireFullAdminOrEvp(request);
   if (!authz.ok) return authz.response;
 
   const body = (await request.json().catch(() => null)) as null | Record<string, unknown>;

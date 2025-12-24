@@ -131,9 +131,13 @@ export async function middleware(request: NextRequest) {
       });
     }
   } else if (pathname.startsWith("/admin")) {
-    const { data: isAdmin, error: adminErr } = await supabase.rpc("is_admin", { _uid: user.id });
+    // Use get_admin_tier for tiered admin access (full, partial, read-only)
+    const { data: tierData, error: tierErr } = await supabase.rpc("get_admin_tier", { _uid: user.id });
 
-    if (adminErr || !isAdmin) {
+    const tier = tierData?.tier as string | null;
+
+    // Allow access if user has any admin tier (full, partial, or read-only)
+    if (tierErr || !tier) {
       const redirectUrl = request.nextUrl.clone();
       redirectUrl.pathname = "/unauthorized";
       redirectUrl.search = "";

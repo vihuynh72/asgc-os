@@ -2,6 +2,7 @@
 
 import type { ChangeEvent } from "react";
 import { useMemo, useState } from "react";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { addDaysDateOnly, normalizeDateOnlyString, startOfWeekMondayDateOnly, todayDateString } from "@/lib/dateOnly";
@@ -307,6 +308,8 @@ export function AdminPanel({
   initialOfficeLocation,
   initialOfficeConfig,
   initialOfficeHourRequirements,
+  tier = "full",
+  isEvp = false,
 }: {
   initialTerms: TermRow[];
   initialUsers: UserRow[];
@@ -319,11 +322,25 @@ export function AdminPanel({
   initialOfficeLocation: OfficeLocationRow | null;
   initialOfficeConfig: OfficeConfigRow | null;
   initialOfficeHourRequirements: OfficeHourRequirementRow[];
+  /** Admin tier: 'full' (advisor/president), 'partial' (executive with edit), 'read-only' (executive in training) */
+  tier?: "full" | "partial" | "read-only";
+  /** Whether the user is the Executive Vice President */
+  isEvp?: boolean;
 }) {
+  // Derived permission flags
+  // canEdit is intentionally computed but used sparingly - API routes enforce actual permissions
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const canEdit = tier !== "read-only";
+  const canSeeAccessTab = tier === "full";
+  const canSeeRolesTab = tier === "full";
+  const canSeeOfficeConfig = tier === "full" || isEvp;
+
   const [terms, setTerms] = useState<TermRow[]>(initialTerms);
   const [users, setUsers] = useState<UserRow[]>(initialUsers);
   const [selectedTermId, setSelectedTermId] = useState<string>(initialSelectedTermId);
-  const [adminTab, setAdminTab] = useState<"access" | "office_hours" | "roles" | "meetings">("access");
+  // Default tab based on permissions
+  const defaultTab = canSeeAccessTab ? "access" : canSeeOfficeConfig ? "office_hours" : "meetings";
+  const [adminTab, setAdminTab] = useState<"access" | "office_hours" | "roles" | "meetings">(defaultTab);
 
   const [globalAdvisorAssignments, setGlobalAdvisorAssignments] = useState<AssignmentRow[]>(
     initialGlobalAdvisorAssignments,
@@ -460,9 +477,12 @@ export function AdminPanel({
         },
       );
       setOfficeHourRequirements(data.requirements);
-      setStatus("Office hour requirements saved.");
+      setStatus("");
+      toast.success("Office hour requirements saved");
     } catch (e) {
-      setStatus(e instanceof Error ? e.message : "Failed to save office hour requirements");
+      const msg = e instanceof Error ? e.message : "Failed to save office hour requirements";
+      setStatus(msg);
+      toast.error(msg);
     }
   }
 
@@ -812,9 +832,12 @@ export function AdminPanel({
         }),
       });
       await loadMeetings();
-      setStatus("Meeting saved.");
+      setStatus("");
+      toast.success("Meeting saved");
     } catch (e) {
-      setStatus(e instanceof Error ? e.message : "Failed to save meeting");
+      const msg = e instanceof Error ? e.message : "Failed to save meeting";
+      setStatus(msg);
+      toast.error(msg);
     }
   }
 
@@ -824,9 +847,12 @@ export function AdminPanel({
     try {
       await fetchJson(`/api/admin/meetings/${encodeURIComponent(meeting.id)}`, { method: "DELETE" });
       await loadMeetings();
-      setStatus("Meeting cancelled.");
+      setStatus("");
+      toast.success("Meeting cancelled");
     } catch (e) {
-      setStatus(e instanceof Error ? e.message : "Failed to cancel meeting");
+      const msg = e instanceof Error ? e.message : "Failed to cancel meeting";
+      setStatus(msg);
+      toast.error(msg);
     }
   }
 
@@ -936,6 +962,7 @@ export function AdminPanel({
     const normalized = invite.email_normalized;
     if (!normalized || normalized.startsWith("@")) {
       setStatus("Role grants require an exact email (not a domain).");
+      toast.error("Role grants require an exact email (not a domain)");
       return;
     }
 
@@ -945,6 +972,7 @@ export function AdminPanel({
 
     if (scope === "term" && !termId) {
       setStatus("Select a term to grant this role.");
+      toast.error("Select a term to grant this role");
       return;
     }
 
@@ -962,8 +990,11 @@ export function AdminPanel({
 
       setBootstrapRoleGrants((prev) => [data.grant, ...prev.filter((g) => g.id !== data.grant.id)]);
       setStatus("");
+      toast.success("Role granted");
     } catch (e) {
-      setStatus(e instanceof Error ? e.message : "Failed to grant role");
+      const msg = e instanceof Error ? e.message : "Failed to grant role";
+      setStatus(msg);
+      toast.error(msg);
     }
   }
 
@@ -982,8 +1013,11 @@ export function AdminPanel({
 
       setBootstrapRoleGrants((prev) => prev.filter((g) => g.id !== grant.id));
       setStatus("");
+      toast.success("Role grant revoked");
     } catch (e) {
-      setStatus(e instanceof Error ? e.message : "Failed to revoke role grant");
+      const msg = e instanceof Error ? e.message : "Failed to revoke role grant";
+      setStatus(msg);
+      toast.error(msg);
     }
   }
 
@@ -1006,9 +1040,12 @@ export function AdminPanel({
       setInviteNotesDraftById({});
       setNewInviteEmail("");
       setNewInviteNotes("");
-      setStatus("Invite added.");
+      setStatus("");
+      toast.success("Invite added");
     } catch (e) {
-      setStatus(e instanceof Error ? e.message : "Failed to add invite");
+      const msg = e instanceof Error ? e.message : "Failed to add invite";
+      setStatus(msg);
+      toast.error(msg);
     }
   }
 
@@ -1032,8 +1069,11 @@ export function AdminPanel({
         return next;
       });
       setStatus("");
+      toast.success("Allowlist entry deleted");
     } catch (e) {
-      setStatus(e instanceof Error ? e.message : "Failed to delete allowlist entry");
+      const msg = e instanceof Error ? e.message : "Failed to delete allowlist entry";
+      setStatus(msg);
+      toast.error(msg);
     }
   }
 
@@ -1048,7 +1088,9 @@ export function AdminPanel({
       await loadInvitesAllowlist();
       setStatus("");
     } catch (e) {
-      setStatus(e instanceof Error ? e.message : "Failed to reorder allowlist");
+      const msg = e instanceof Error ? e.message : "Failed to reorder allowlist";
+      setStatus(msg);
+      toast.error(msg);
     }
   }
 
@@ -1068,8 +1110,11 @@ export function AdminPanel({
 
       setInvitesBlocklist((prev) => [data.ban, ...prev.filter((r) => r.id !== data.ban.id)]);
       setStatus("");
+      toast.success("Pattern banned");
     } catch (e) {
-      setStatus(e instanceof Error ? e.message : "Failed to ban pattern");
+      const msg = e instanceof Error ? e.message : "Failed to ban pattern";
+      setStatus(msg);
+      toast.error(msg);
     }
   }
 
@@ -1097,12 +1142,16 @@ export function AdminPanel({
         return next;
       });
       if (!isActive && !showInactiveInvites) {
-        setStatus("Revoked. Turn on “Show inactive” to view revoked entries.");
+        setStatus("Revoked. Turn on \"Show inactive\" to view revoked entries.");
+        toast.success("Invite revoked");
       } else {
         setStatus("");
+        toast.success(isActive ? "Invite reactivated" : "Invite revoked");
       }
     } catch (e) {
-      setStatus(e instanceof Error ? e.message : "Failed to update invite");
+      const msg = e instanceof Error ? e.message : "Failed to update invite";
+      setStatus(msg);
+      toast.error(msg);
     }
   }
 
@@ -1125,8 +1174,11 @@ export function AdminPanel({
         return next;
       });
       setStatus("");
+      toast.success("Name saved");
     } catch (e) {
-      setStatus(e instanceof Error ? e.message : "Failed to save name");
+      const msg = e instanceof Error ? e.message : "Failed to save name";
+      setStatus(msg);
+      toast.error(msg);
     }
   }
 
@@ -1134,10 +1186,12 @@ export function AdminPanel({
     if (!invite.email_normalized || invite.email_normalized.startsWith("@")) return;
     if (!invite.is_active) {
       setStatus("Invite is inactive. Reactivate it before sending a sign-in link.");
+      toast.error("Invite is inactive. Reactivate it first.");
       return;
     }
     if (isInviteBlocked(invite)) {
       setStatus("Invite is blocked. Remove the ban before sending a sign-in link.");
+      toast.error("Invite is blocked. Remove the ban first.");
       return;
     }
 
@@ -1148,9 +1202,12 @@ export function AdminPanel({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: invite.email }),
       });
-      setStatus(`Sign-in link sent to ${invite.email}.`);
+      setStatus("");
+      toast.success(`Sign-in link sent to ${invite.email}`);
     } catch (e) {
-      setStatus(e instanceof Error ? e.message : "Failed to send sign-in link");
+      const msg = e instanceof Error ? e.message : "Failed to send sign-in link";
+      setStatus(msg);
+      toast.error(msg);
     }
   }
 
@@ -1313,8 +1370,11 @@ export function AdminPanel({
       setNewBanPattern("");
       setNewBanNotes("");
       setStatus("");
+      toast.success("Ban added");
     } catch (e) {
-      setStatus(e instanceof Error ? e.message : "Failed to add ban");
+      const msg = e instanceof Error ? e.message : "Failed to add ban";
+      setStatus(msg);
+      toast.error(msg);
     }
   }
 
@@ -1336,8 +1396,11 @@ export function AdminPanel({
 
       setInvitesBlocklist((prev) => prev.map((r) => (r.id === ban.id ? data.ban : r)));
       setStatus("");
+      toast.success(isActive ? "Ban reactivated" : "Ban disabled");
     } catch (e) {
-      setStatus(e instanceof Error ? e.message : "Failed to update ban");
+      const msg = e instanceof Error ? e.message : "Failed to update ban";
+      setStatus(msg);
+      toast.error(msg);
     }
   }
 
@@ -1355,8 +1418,11 @@ export function AdminPanel({
 
       setInvitesBlocklist((prev) => prev.filter((r) => r.id !== ban.id));
       setStatus("");
+      toast.success("Ban deleted");
     } catch (e) {
-      setStatus(e instanceof Error ? e.message : "Failed to delete ban");
+      const msg = e instanceof Error ? e.message : "Failed to delete ban";
+      setStatus(msg);
+      toast.error(msg);
     }
   }
 
@@ -1449,8 +1515,11 @@ export function AdminPanel({
       setNewTermEnd("");
 
       await loadTermsAndUsers();
+      toast.success("Term created");
     } catch (e) {
-      setStatus(e instanceof Error ? e.message : "Failed to create term");
+      const msg = e instanceof Error ? e.message : "Failed to create term";
+      setStatus(msg);
+      toast.error(msg);
     }
   }
 
@@ -1465,8 +1534,11 @@ export function AdminPanel({
       });
 
       await loadTermsAndUsers();
+      toast.success("Current term updated");
     } catch (e) {
-      setStatus(e instanceof Error ? e.message : "Failed to set current term");
+      const msg = e instanceof Error ? e.message : "Failed to set current term";
+      setStatus(msg);
+      toast.error(msg);
     }
   }
 
@@ -1490,9 +1562,12 @@ export function AdminPanel({
       });
 
       await loadTermsAndUsers();
-      setStatus("Term rollover complete.");
+      setStatus("");
+      toast.success("Term rollover complete");
     } catch (e) {
-      setStatus(e instanceof Error ? e.message : "Failed to rollover term");
+      const msg = e instanceof Error ? e.message : "Failed to rollover term";
+      setStatus(msg);
+      toast.error(msg);
     }
   }
 
@@ -1504,6 +1579,7 @@ export function AdminPanel({
 
     if (selectedRole.scope === "term" && !selectedTermId) {
       setStatus("Pick a term first.");
+      toast.error("Pick a term first");
       return;
     }
 
@@ -1522,8 +1598,11 @@ export function AdminPanel({
 
       await loadAssignments(selectedTermId);
       setStatus("");
+      toast.success("Role assigned");
     } catch (e) {
-      setStatus(e instanceof Error ? e.message : "Failed to assign role");
+      const msg = e instanceof Error ? e.message : "Failed to assign role";
+      setStatus(msg);
+      toast.error(msg);
     }
   }
 
@@ -1553,13 +1632,19 @@ export function AdminPanel({
 
       if (data.already_ended) {
         setStatus("Role assignment was already ended.");
+        toast.info("Role assignment was already ended");
       } else if (notify) {
-        setStatus(data.notify_error ? `Role ended. Email failed: ${data.notify_error}` : "Role ended and email sent.");
+        const emailMsg = data.notify_error ? `Role ended. Email failed: ${data.notify_error}` : "Role ended and email sent.";
+        setStatus(emailMsg);
+        toast.success(data.notify_error ? "Role ended (email failed)" : "Role ended and email sent");
       } else {
         setStatus("");
+        toast.success("Role ended");
       }
     } catch (e) {
-      setStatus(e instanceof Error ? e.message : "Failed to end role assignment");
+      const msg = e instanceof Error ? e.message : "Failed to end role assignment";
+      setStatus(msg);
+      toast.error(msg);
     }
   }
 
@@ -1630,30 +1715,49 @@ export function AdminPanel({
 
   return (
     <div className="space-y-6">
+      {tier === "read-only" && (
+        <div className="rounded-md border border-yellow-500/50 bg-yellow-500/10 px-3 py-2 text-sm text-yellow-700 dark:text-yellow-400" role="alert">
+          <strong>Read-only mode</strong> — You can view admin settings but cannot make changes.
+        </div>
+      )}
+
       {status ? (
         <div className="rounded-md border px-3 py-2 text-sm text-foreground/80" role="status" aria-live="polite">
           {status}
         </div>
       ) : null}
 
-      <div className="rounded-md border p-3">
+      <div className="rounded-md border p-3 sticky top-0 z-40 bg-background">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div className="flex flex-wrap items-center gap-2">
-            <Button variant={adminTab === "access" ? "default" : "outline"} onClick={() => onSelectAdminTab("access")}>
-              Access
-            </Button>
-            <Button
-              variant={adminTab === "office_hours" ? "default" : "outline"}
-              onClick={() => onSelectAdminTab("office_hours")}
-            >
-              Office Hours
-            </Button>
-            <Button variant={adminTab === "roles" ? "default" : "outline"} onClick={() => onSelectAdminTab("roles")}>
-              Roles
-            </Button>
+            {canSeeAccessTab && (
+              <Button variant={adminTab === "access" ? "default" : "outline"} onClick={() => onSelectAdminTab("access")}>
+                Access
+              </Button>
+            )}
+            {canSeeOfficeConfig && (
+              <Button
+                variant={adminTab === "office_hours" ? "default" : "outline"}
+                onClick={() => onSelectAdminTab("office_hours")}
+              >
+                Office Hours
+              </Button>
+            )}
+            {canSeeRolesTab && (
+              <Button variant={adminTab === "roles" ? "default" : "outline"} onClick={() => onSelectAdminTab("roles")}>
+                Roles
+              </Button>
+            )}
             <Button variant={adminTab === "meetings" ? "default" : "outline"} onClick={() => onSelectAdminTab("meetings")}>
               Meetings
             </Button>
+            {canSeeAccessTab && (
+              <a href="/admin/audit">
+                <Button variant="ghost" className="text-foreground/70">
+                  Audit Log →
+                </Button>
+              </a>
+            )}
           </div>
 
           <div className="flex flex-wrap items-end gap-3">
@@ -2792,20 +2896,34 @@ export function AdminPanel({
                   const lat = parseOptionalNumber(officeLatText);
                   const lon = parseOptionalNumber(officeLonText);
                   if (officeLatText.trim() && lat === null) {
+                    toast.error("Latitude must be a valid number");
                     setStatus("Latitude must be a valid number.");
                     return;
                   }
+                  if (lat !== null && (lat < -90 || lat > 90)) {
+                    toast.error("Latitude must be between -90 and 90");
+                    setStatus("Latitude must be between -90 and 90.");
+                    return;
+                  }
                   if (officeLonText.trim() && lon === null) {
+                    toast.error("Longitude must be a valid number");
                     setStatus("Longitude must be a valid number.");
+                    return;
+                  }
+                  if (lon !== null && (lon < -180 || lon > 180)) {
+                    toast.error("Longitude must be between -180 and 180");
+                    setStatus("Longitude must be between -180 and 180.");
                     return;
                   }
                   const radius = officeLocation.radius_m;
                   if (radius !== null && (!Number.isFinite(radius) || radius <= 0)) {
+                    toast.error("Radius must be greater than 0");
                     setStatus("Radius must be greater than 0.");
                     return;
                   }
                   const graceRadius = officeLocation.grace_radius_m;
                   if (graceRadius !== null && (!Number.isFinite(graceRadius) || graceRadius < 0)) {
+                    toast.error("Grace radius must be 0 or higher");
                     setStatus("Grace radius must be 0 or higher.");
                     return;
                   }
@@ -2841,9 +2959,12 @@ export function AdminPanel({
                     setOfficeLocation(data.officeLocation);
                     setOfficeLatText(typeof data.officeLocation.lat === "number" ? String(data.officeLocation.lat) : "");
                     setOfficeLonText(typeof data.officeLocation.lon === "number" ? String(data.officeLocation.lon) : "");
-                    setStatus("Office config saved.");
+                    setStatus("");
+                    toast.success("Office config saved");
                   } catch (e) {
-                    setStatus(e instanceof Error ? e.message : "Failed to save office config");
+                    const msg = e instanceof Error ? e.message : "Failed to save office config";
+                    setStatus(msg);
+                    toast.error(msg);
                   }
                 }}
               >
