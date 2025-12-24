@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
 import { sendEmail } from "@/lib/emailSender";
+import { generateSignInLink } from "@/lib/authLinks";
 import { normalizeEmail } from "@/lib/invitesAllowlist";
 import { POST_AUTH_REDIRECT_COOKIE, safePostAuthRedirectPath, safeRedirectPathOrNull } from "@/lib/redirects";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
@@ -57,25 +58,20 @@ export async function POST(request: NextRequest) {
     return response;
   }
 
-  const { data, error } = await admin.auth.admin.generateLink({
-    type: "magiclink",
-    email,
-    options: { redirectTo: emailRedirectTo },
-  });
-
-  if (error || !data?.properties?.hashed_token || !data?.properties?.verification_type) {
-    console.error("[auth] generateLink failed", { message: error?.message ?? "missing_link_data" });
+  let signInLink: Awaited<ReturnType<typeof generateSignInLink>>;
+  try {
+    signInLink = await generateSignInLink(admin, email, emailRedirectTo);
+  } catch (err) {
+    console.error("[auth] generateLink failed", { message: err instanceof Error ? err.message : "unknown_error" });
     return NextResponse.json({ ok: false }, { status: 500 });
   }
 
   const callbackLink = new URL(emailRedirectTo);
-  callbackLink.searchParams.set("token_hash", data.properties.hashed_token);
-  callbackLink.searchParams.set("type", data.properties.verification_type);
+  callbackLink.searchParams.set("token_hash", signInLink.hashedToken);
+  callbackLink.searchParams.set("type", signInLink.type);
 
   const subject = "ASGC OS sign-in link";
-  const otpLine = data.properties.email_otp
-    ? `\nOr use this one-time code:\n${data.properties.email_otp}\n`
-    : "";
+  const otpLine = signInLink.otp ? `\nOr use this one-time code:\n${signInLink.otp}\n` : "";
   const text = `Sign in to ASGC OS.\n\nOpen this link to continue:\n${callbackLink.toString()}\n${otpLine}\nIf you did not request this email, you can ignore it.`;
 
   try {

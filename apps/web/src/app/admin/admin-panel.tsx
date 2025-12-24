@@ -1087,6 +1087,30 @@ export function AdminPanel({
     }
   }
 
+  async function onSendInviteLink(invite: InviteAllowlistRow) {
+    if (!invite.email_normalized || invite.email_normalized.startsWith("@")) return;
+    if (!invite.is_active) {
+      setStatus("Invite is inactive. Reactivate it before sending a sign-in link.");
+      return;
+    }
+    if (isInviteBlocked(invite)) {
+      setStatus("Invite is blocked. Remove the ban before sending a sign-in link.");
+      return;
+    }
+
+    setStatus(`Sending sign-in link to ${invite.email}...`);
+    try {
+      await fetchJson<{ ok: true }>("/api/admin/invites-allowlist/send-link", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: invite.email }),
+      });
+      setStatus(`Sign-in link sent to ${invite.email}.`);
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : "Failed to send sign-in link");
+    }
+  }
+
   function setInviteSelected(inviteId: string, isSelected: boolean) {
     setSelectedInviteIds((prev) => {
       const next = { ...prev };
@@ -1722,6 +1746,9 @@ export function AdminPanel({
           <p className="text-sm text-foreground/70">
             Pre-login role grants let you assign term roles (President, Executive, Director, etc.) to an invited email before they sign in; grants are consumed on first login.
           </p>
+          <p className="text-sm text-foreground/70">
+            Adding an allowlist entry does not send an email. Use the <span className="font-medium">Send link</span> action to deliver a sign-in email.
+          </p>
         </div>
 
         <div className="flex flex-wrap items-end gap-3">
@@ -1985,6 +2012,23 @@ export function AdminPanel({
                         title={isDomain ? "Role grants require an exact email (not a domain entry)" : "Manage pre-login roles"}
                       >
                         Roles
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => void onSendInviteLink(inv)}
+                        disabled={isDomain || !inv.is_active || isInviteBlocked(inv)}
+                        title={
+                          isDomain
+                            ? "Sign-in links require an exact email (not a domain entry)"
+                            : !inv.is_active
+                              ? "Reactivate this invite before sending a sign-in link"
+                              : isInviteBlocked(inv)
+                                ? "Remove the ban before sending a sign-in link"
+                                : "Send a sign-in link"
+                        }
+                      >
+                        Send link
                       </Button>
                       <Button
                         variant="ghost"
