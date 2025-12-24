@@ -128,8 +128,12 @@ export default async function AdminPage() {
     redirect("/login");
   }
 
-  const { data: isAdmin, error: adminErr } = await supabase.rpc("is_admin", { _uid: user.id });
-  if (adminErr || !isAdmin) {
+  // Fetch admin tier info for tiered access
+  const { data: tierData, error: tierErr } = await supabase.rpc("get_admin_tier", { _uid: user.id });
+  const tier = tierData?.tier as "full" | "partial" | "read-only" | null;
+  const isEvp = tierData?.is_evp as boolean ?? false;
+
+  if (tierErr || !tier) {
     redirect("/unauthorized?reason=admin&redirectTo=/admin");
   }
 
@@ -262,6 +266,8 @@ export default async function AdminPage() {
   return (
     <PageShell title="Admin" description="Manage terms and role assignments.">
       <AdminPanel
+        tier={tier}
+        isEvp={isEvp}
         initialTerms={safeTerms}
         initialUsers={safeUsers}
         initialSelectedTermId={selectedTermId}

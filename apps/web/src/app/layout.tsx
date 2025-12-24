@@ -4,6 +4,8 @@ import "./globals.css";
 
 import { SiteNav } from "@/components/site-nav";
 import { OfficeHoursPresenceMonitor } from "@/components/office-hours-presence-monitor";
+import { RoleChangeListener } from "@/components/role-change-listener";
+import { Toaster } from "@/components/ui/toaster";
 
 const lato = Lato({
   variable: "--font-lato",
@@ -39,7 +41,9 @@ export default function RootLayout({
           </a>
           <SiteNav />
           <OfficeHoursPresenceMonitor />
+          <RoleChangeListener />
           {children}
+          <Toaster />
         </div>
       </body>
     </html>

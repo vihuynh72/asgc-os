@@ -1,41 +1,10 @@
-import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-import { getPublicEnv } from "@/lib/env";
+import { requireFullAdmin } from "@/lib/adminAuth";
 import { sendEmail } from "@/lib/emailSender";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
-
-async function isAdminForRequest(request: NextRequest): Promise<{ ok: true; userId: string } | { ok: false; response: NextResponse }> {
-  const env = getPublicEnv();
-
-  const supabase = createServerClient(env.NEXT_PUBLIC_SUPABASE_URL, env.NEXT_PUBLIC_SUPABASE_ANON_KEY, {
-    cookies: {
-      getAll() {
-        return request.cookies.getAll();
-      },
-      setAll() {
-        // No-op
-      },
-    },
-  });
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return { ok: false, response: NextResponse.json({ error: "unauthorized" }, { status: 401 }) };
-  }
-
-  const { data: isAdmin, error: adminErr } = await supabase.rpc("is_admin", { _uid: user.id });
-  if (adminErr || !isAdmin) {
-    return { ok: false, response: NextResponse.json({ error: "forbidden" }, { status: 403 }) };
-  }
-
-  return { ok: true, userId: user.id };
-}
 
 function isValidRoleKey(roleKey: string): roleKey is "advisor" | "president" | "executive" | "director" | "board_member" | "volunteer" {
   return ["advisor", "president", "executive", "director", "board_member", "volunteer"].includes(roleKey);
@@ -50,8 +19,9 @@ const ROLE_LABEL_BY_KEY: Record<string, string> = {
   volunteer: "Volunteer",
 };
 
+// GET: List role assignments (full admin only)
 export async function GET(request: NextRequest) {
-  const authz = await isAdminForRequest(request);
+  const authz = await requireFullAdmin(request);
   if (!authz.ok) return authz.response;
 
   const url = request.nextUrl;
@@ -90,19 +60,22 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({ assignments });
 }
 
+// POST: Create a role assignment (full admin only)
 export async function POST(request: NextRequest) {
-  const authz = await isAdminForRequest(request);
+  const authz = await requireFullAdmin(request);
   if (!authz.ok) return authz.response;
 
   const body = (await request.json().catch(() => null)) as null | {
     userId?: unknown;
     roleKey?: unknown;
     termId?: unknown;
+    displayTitle?: unknown;
   };
 
   const userId = typeof body?.userId === "string" ? body.userId : "";
   const roleKey = typeof body?.roleKey === "string" ? body.roleKey : "";
   const termId = typeof body?.termId === "string" ? body.termId : null;
+  const displayTitle = typeof body?.displayTitle === "string" ? body.displayTitle.trim() : null;
 
   if (!userId) return NextResponse.json({ error: "userId is required" }, { status: 400 });
   if (!roleKey || !isValidRoleKey(roleKey)) {
@@ -111,6 +84,11 @@ export async function POST(request: NextRequest) {
 
   if (roleKey !== "advisor" && !termId) {
     return NextResponse.json({ error: "termId is required for term-scoped roles" }, { status: 400 });
+  }
+
+  // Require display_title for executive role
+  if (roleKey === "executive" && !displayTitle) {
+    return NextResponse.json({ error: "displayTitle is required for executive role (e.g., 'Executive Vice President', 'VP Finance')" }, { status: 400 });
   }
 
   const admin = getSupabaseAdminClient();
@@ -122,19 +100,20 @@ export async function POST(request: NextRequest) {
     starts_at: new Date().toISOString(),
     ends_at: null,
     is_primary: false,
+    display_title: roleKey === "executive" ? displayTitle : null,
   };
 
   const { data: assignment, error } = await admin
     .from("role_assignments")
     .insert(insertRow)
-    .select("id,user_id,role_key,term_id,starts_at,ends_at,is_primary")
+    .select("id,user_id,role_key,term_id,starts_at,ends_at,is_primary,display_title")
     .single();
 
   if (error) {
     if (error.code === "23505") {
       let existingQuery = admin
         .from("role_assignments")
-        .select("id,user_id,role_key,term_id,starts_at,ends_at,is_primary")
+        .select("id,user_id,role_key,term_id,starts_at,ends_at,is_primary,display_title")
         .eq("user_id", userId)
         .eq("role_key", roleKey)
         .is("ends_at", null)
@@ -166,8 +145,9 @@ export async function POST(request: NextRequest) {
   return NextResponse.json({ assignment });
 }
 
+// DELETE: End a role assignment (full admin only)
 export async function DELETE(request: NextRequest) {
-  const authz = await isAdminForRequest(request);
+  const authz = await requireFullAdmin(request);
   if (!authz.ok) return authz.response;
 
   const body = (await request.json().catch(() => null)) as null | {
