@@ -2,6 +2,7 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
 import { getPublicEnv } from "@/lib/env";
+import { sendEmail } from "@/lib/emailSender";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
@@ -39,6 +40,15 @@ async function isAdminForRequest(request: NextRequest): Promise<{ ok: true; user
 function isValidRoleKey(roleKey: string): roleKey is "advisor" | "president" | "executive" | "director" | "board_member" | "volunteer" {
   return ["advisor", "president", "executive", "director", "board_member", "volunteer"].includes(roleKey);
 }
+
+const ROLE_LABEL_BY_KEY: Record<string, string> = {
+  advisor: "Advisor",
+  president: "President",
+  executive: "Executive",
+  director: "Director",
+  board_member: "Board member",
+  volunteer: "Volunteer",
+};
 
 export async function GET(request: NextRequest) {
   const authz = await isAdminForRequest(request);
@@ -162,6 +172,8 @@ export async function DELETE(request: NextRequest) {
 
   const body = (await request.json().catch(() => null)) as null | {
     assignmentId?: unknown;
+    notify?: unknown;
+    note?: unknown;
   };
 
   const assignmentId = typeof body?.assignmentId === "string" ? body.assignmentId : "";
@@ -169,15 +181,101 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ error: "assignmentId is required" }, { status: 400 });
   }
 
+  const notify = body?.notify === true;
+  const note = typeof body?.note === "string" ? body.note.trim() : "";
+  if (note.length > 500) {
+    return NextResponse.json({ error: "note_too_long" }, { status: 400 });
+  }
+
   const admin = getSupabaseAdminClient();
-  const { error } = await admin
+  const { data: updated, error } = await admin
     .from("role_assignments")
     .update({ ends_at: new Date().toISOString() })
     .eq("id", assignmentId)
-    .is("ends_at", null);
+    .is("ends_at", null)
+    .select("id,user_id,role_key,term_id")
+    .maybeSingle();
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  if (!updated) {
+    await admin.rpc("log_event", {
+      action_key: "role_assignment.ended",
+      actor_user_id: authz.userId,
+      target_type: "role_assignment",
+      target_id: assignmentId,
+      metadata: { already_ended: true, notify: false },
+    });
+    return NextResponse.json({ ok: true, already_ended: true });
+  }
+
+  let notifyError: string | null = null;
+  if (notify) {
+    const { data: privateRow, error: privateErr } = await admin
+      .from("profile_private")
+      .select("email")
+      .eq("id", updated.user_id)
+      .maybeSingle();
+
+    const toEmail = (privateRow as { email?: string | null } | null)?.email ?? null;
+    if (privateErr || !toEmail) {
+      notifyError = privateErr?.message || "no_email_on_file";
+    } else {
+      let termLabel = "Global";
+      if (updated.term_id) {
+        const { data: termRow } = await admin
+          .from("terms")
+          .select("name")
+          .eq("id", updated.term_id)
+          .maybeSingle();
+        termLabel = termRow?.name ? `${termRow.name}` : updated.term_id;
+      }
+
+      const roleLabel = ROLE_LABEL_BY_KEY[updated.role_key] ?? updated.role_key;
+      const noteBlock = note ? `\nNote from admin:\n${note}\n` : "";
+      const subject = "ASGC OS role update";
+      const text =
+        `Your ${roleLabel} role (${termLabel}) was revoked in ASGC OS.\n\n` +
+        `If you have questions, contact your ASGC admin.` +
+        noteBlock;
+
+      const { data: queuedRow } = await admin
+        .from("notification_log")
+        .insert({
+          actor_user_id: authz.userId,
+          user_id: updated.user_id,
+          type: "role_revoked",
+          channel: "email",
+          provider: "resend",
+          to_email: toEmail,
+          subject,
+          status: "queued",
+          metadata: { role_key: updated.role_key, term_id: updated.term_id, note: note || null },
+        })
+        .select("id")
+        .maybeSingle();
+
+      try {
+        const result = await sendEmail({ to: toEmail, subject, text });
+
+        if (queuedRow?.id) {
+          await admin
+            .from("notification_log")
+            .update({ status: "sent", provider_message_id: result.providerMessageId, error_message: null })
+            .eq("id", queuedRow.id);
+        }
+      } catch (err) {
+        notifyError = err instanceof Error ? err.message : "send_email_failed";
+        if (queuedRow?.id) {
+          await admin
+            .from("notification_log")
+            .update({ status: "failed", error_message: notifyError })
+            .eq("id", queuedRow.id);
+        }
+      }
+    }
   }
 
   // Best-effort audit log (server-only)
@@ -186,8 +284,12 @@ export async function DELETE(request: NextRequest) {
     actor_user_id: authz.userId,
     target_type: "role_assignment",
     target_id: assignmentId,
-    metadata: {},
+    metadata: {
+      notify,
+      note: note || null,
+      notified: notify && !notifyError,
+    },
   });
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, notify_error: notifyError || undefined });
 }
