@@ -75,7 +75,8 @@ export async function POST(request: NextRequest) {
   const userId = typeof body?.userId === "string" ? body.userId : "";
   const roleKey = typeof body?.roleKey === "string" ? body.roleKey : "";
   const termId = typeof body?.termId === "string" ? body.termId : null;
-  const displayTitle = typeof body?.displayTitle === "string" ? body.displayTitle.trim() : null;
+  const displayTitleRaw = typeof body?.displayTitle === "string" ? body.displayTitle.trim() : "";
+  const displayTitle = displayTitleRaw.length > 0 ? displayTitleRaw : null;
 
   if (!userId) return NextResponse.json({ error: "userId is required" }, { status: 400 });
   if (!roleKey || !isValidRoleKey(roleKey)) {
@@ -84,11 +85,6 @@ export async function POST(request: NextRequest) {
 
   if (roleKey !== "advisor" && !termId) {
     return NextResponse.json({ error: "termId is required for term-scoped roles" }, { status: 400 });
-  }
-
-  // Require display_title for executive role
-  if (roleKey === "executive" && !displayTitle) {
-    return NextResponse.json({ error: "displayTitle is required for executive role (e.g., 'Executive Vice President', 'VP Finance')" }, { status: 400 });
   }
 
   const admin = getSupabaseAdminClient();

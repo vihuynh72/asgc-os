@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 
 /**
- * RoleChangeListener - Polls profile_private.roles_updated_at to detect role changes.
+ * RoleChangeListener - Polls profile_private.roles_updated_at and role_assignments updates to detect role changes.
  * Shows modal prompting re-authentication when roles are granted or revoked.
  */
 export function RoleChangeListener() {
@@ -30,43 +30,74 @@ export function RoleChangeListener() {
     let interval: NodeJS.Timeout | null = null;
     let cancelled = false;
 
+    async function fetchRoleChangeToken(userId: string) {
+      const [profileResult, assignmentResult] = await Promise.all([
+        supabase
+          .from("profile_private")
+          .select("roles_updated_at")
+          .eq("id", userId)
+          .maybeSingle(),
+        supabase
+          .from("role_assignments")
+          .select("updated_at")
+          .eq("user_id", userId)
+          .order("updated_at", { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+      ]);
+
+      if (profileResult.error) {
+        console.error("[RoleChangeListener] profile_private error:", profileResult.error.message);
+      }
+
+      if (assignmentResult.error) {
+        console.error("[RoleChangeListener] role_assignments error:", assignmentResult.error.message);
+      }
+
+      if (profileResult.error && assignmentResult.error) {
+        return null;
+      }
+
+      const rolesUpdatedAt = profileResult.data?.roles_updated_at ?? null;
+      const assignmentUpdatedAt = assignmentResult.data?.updated_at ?? null;
+
+      return {
+        rolesUpdatedAt,
+        assignmentUpdatedAt,
+        token: `${rolesUpdatedAt ?? ""}|${assignmentUpdatedAt ?? ""}`,
+      };
+    }
+
     async function checkRolesUpdated() {
       if (cancelled || hasShownModalRef.current) return;
 
-      const { data: { user } } = await supabase.auth.getUser();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
       if (!user) return;
 
-      // Query the roles_updated_at timestamp
-      const { data, error } = await supabase
-        .from("profile_private")
-        .select("roles_updated_at")
-        .eq("id", user.id)
-        .maybeSingle();
-
-      if (error) {
-        console.error("[RoleChangeListener] Error:", error.message);
-        return;
-      }
-
-      const currentTimestamp = data?.roles_updated_at ?? null;
+      const tokenResult = await fetchRoleChangeToken(user.id);
+      if (!tokenResult) return;
 
       if (baselineRef.current === null) {
         // First check - set baseline
-        baselineRef.current = currentTimestamp;
-        console.log("[RoleChangeListener] Baseline set:", currentTimestamp);
-      } else if (currentTimestamp !== baselineRef.current) {
-        // Timestamp changed - role was granted or revoked
+        baselineRef.current = tokenResult.token;
+        console.log("[RoleChangeListener] Baseline set:", {
+          roles_updated_at: tokenResult.rolesUpdatedAt,
+          role_assignments_updated_at: tokenResult.assignmentUpdatedAt,
+        });
+      } else if (tokenResult.token !== baselineRef.current) {
+        // Token changed - role was granted or revoked
         console.log("[RoleChangeListener] Role change detected!", {
           was: baselineRef.current,
-          now: currentTimestamp,
+          now: tokenResult.token,
+          roles_updated_at: tokenResult.rolesUpdatedAt,
+          role_assignments_updated_at: tokenResult.assignmentUpdatedAt,
         });
         hasShownModalRef.current = true;
         if (interval) clearInterval(interval);
         console.log("[RoleChangeListener] Setting showModal to true");
         setShowModal(true);
-        // Force immediate redirect as backup
-        alert("Your roles have been updated. You will be signed out.");
-        window.location.href = "/login?reason=role_changed";
       }
     }
 
