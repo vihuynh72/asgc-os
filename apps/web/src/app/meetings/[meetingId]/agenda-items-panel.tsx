@@ -27,6 +27,7 @@ type DeadlineInfo = {
   submission_deadline: string;
   posting_deadline: string;
   is_submission_open: boolean;
+  is_past_deadline: boolean;
   is_special: boolean;
   hours_until_deadline?: number | null;
 };
@@ -114,6 +115,7 @@ function buildAgendaCsv(items: AgendaItem[]): string {
     "Submitted By",
     "Recommended Motion",
     "Fiscal Impact",
+    "Attachments",
   ];
   const rows = items.map((item) => [
     item.title,
@@ -124,6 +126,7 @@ function buildAgendaCsv(items: AgendaItem[]): string {
     item.submitted_by,
     item.recommended_motion ?? "",
     item.fiscal_impact ?? "",
+    normalizeAttachments(item.attachments_json).join(" | "),
   ]);
   return [headers, ...rows].map((row) => row.map(toCsvValue).join(",")).join("\n");
 }
@@ -133,6 +136,45 @@ function buildAgendaText(items: AgendaItem[]): string {
   return items
     .map((item, idx) => `${idx + 1}. ${item.title} (${formatCategory(item.category)})`)
     .join("\n");
+}
+
+function normalizeAttachments(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const flat: string[] = [];
+  for (const entry of value) {
+    if (typeof entry === "string") {
+      const trimmed = entry.trim();
+      if (trimmed) flat.push(trimmed);
+      continue;
+    }
+    if (entry && typeof entry === "object" && "url" in entry && typeof (entry as { url: unknown }).url === "string") {
+      const trimmed = (entry as { url: string }).url.trim();
+      if (trimmed) flat.push(trimmed);
+    }
+  }
+  return flat;
+}
+
+function attachmentsToTextarea(value: unknown): string {
+  return normalizeAttachments(value).join("\n");
+}
+
+function parseAttachmentsInput(value: string): string[] {
+  return value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function isProbablyUrl(value: string): boolean {
+  return /^https?:\/\//i.test(value);
+}
+
+function formatDeadline(iso: string | null | undefined): string {
+  if (!iso) return "Not available";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "Not available";
+  return d.toLocaleString();
 }
 
 export function AgendaItemsPanel({
@@ -164,6 +206,7 @@ export function AgendaItemsPanel({
   const [newBackground, setNewBackground] = useState<string>("");
   const [newMotion, setNewMotion] = useState<string>("");
   const [newFiscal, setNewFiscal] = useState<string>("");
+  const [newAttachments, setNewAttachments] = useState<string>("");
 
   // Edit form
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -172,6 +215,7 @@ export function AgendaItemsPanel({
   const [editBackground, setEditBackground] = useState<string>("");
   const [editMotion, setEditMotion] = useState<string>("");
   const [editFiscal, setEditFiscal] = useState<string>("");
+  const [editAttachments, setEditAttachments] = useState<string>("");
 
   const reload = useCallback(async () => {
     const { items: i, deadline: d } = await fetchJson<{
@@ -182,8 +226,18 @@ export function AgendaItemsPanel({
     setDeadline(d);
   }, [meetingId]);
 
+  const submissionClosed = deadline ? deadline.is_past_deadline : false;
+  const submissionOpen = !submissionClosed;
+
+  const showNewFormResolved = showNewForm && submissionOpen;
+
   async function handleCreate(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+
+    if (submissionClosed) {
+      setStatus("Submission deadline has passed.");
+      return;
+    }
 
     if (!newTitle.trim()) {
       setStatus("Title required");
@@ -201,15 +255,17 @@ export function AgendaItemsPanel({
           background: newBackground.trim() || null,
           recommended_motion: newMotion.trim() || null,
           fiscal_impact: newFiscal.trim() || null,
+          attachments_json: parseAttachmentsInput(newAttachments),
         }),
       });
 
-      setStatus("");
+      setStatus("Draft saved.");
       setNewTitle("");
       setNewCategory("discussion");
       setNewBackground("");
       setNewMotion("");
       setNewFiscal("");
+      setNewAttachments("");
       setShowNewForm(false);
       await reload();
     } catch (err) {
@@ -224,14 +280,21 @@ export function AgendaItemsPanel({
     setEditBackground(item.background ?? "");
     setEditMotion(item.recommended_motion ?? "");
     setEditFiscal(item.fiscal_impact ?? "");
+    setEditAttachments(attachmentsToTextarea(item.attachments_json));
   }
 
   function cancelEdit() {
     setEditingId(null);
+    setEditAttachments("");
   }
 
   async function handleUpdate(e: FormEvent<HTMLFormElement>, itemId: string) {
     e.preventDefault();
+
+    if (submissionClosed) {
+      setStatus("Submission deadline has passed.");
+      return;
+    }
 
     if (!editTitle.trim()) {
       setStatus("Title required");
@@ -251,11 +314,12 @@ export function AgendaItemsPanel({
             background: editBackground.trim() || null,
             recommended_motion: editMotion.trim() || null,
             fiscal_impact: editFiscal.trim() || null,
+            attachments_json: parseAttachmentsInput(editAttachments),
           }),
         },
       );
 
-      setStatus("");
+      setStatus("Draft updated.");
       setEditingId(null);
       await reload();
     } catch (err) {
@@ -264,6 +328,11 @@ export function AgendaItemsPanel({
   }
 
   async function handleSubmit(itemId: string) {
+    if (submissionClosed) {
+      setStatus("Submission deadline has passed.");
+      return;
+    }
+
     if (!confirm("Submit this item for review? You won't be able to edit it after submission.")) {
       return;
     }
@@ -415,20 +484,73 @@ export function AgendaItemsPanel({
         </div>
       ) : null}
 
-      <div className="rounded-lg border border-foreground/10 p-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="text-sm font-medium">Agenda filters</div>
-          <div className="text-xs text-foreground/60">
+      <div className="grid gap-4 lg:grid-cols-[1.2fr_1fr]">
+        <div className="rounded-lg border border-foreground/10 p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="text-sm font-medium">Submission status</div>
+              <div className="text-xs text-foreground/60">
+                Deadlines are based on the meeting start time.
+              </div>
+            </div>
+            <span
+              className={`rounded px-2 py-0.5 text-xs ${
+                submissionOpen ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
+              }`}
+            >
+              {submissionOpen ? "Open" : "Closed"}
+            </span>
+          </div>
+          <div className="mt-3 space-y-2 text-sm">
+            <div>
+              <div className="text-xs text-foreground/70">Submission deadline</div>
+              <div className="text-sm">
+                {formatDeadline(deadline?.submission_deadline)}
+                {deadline?.is_special ? " (Special Meeting)" : ""}
+              </div>
+            </div>
+            <div>
+              <div className="text-xs text-foreground/70">Agenda posting deadline</div>
+              <div className="text-sm">{formatDeadline(deadline?.posting_deadline)}</div>
+            </div>
+            {typeof deadline?.hours_until_deadline === "number" ? (
+              <div className="text-xs text-foreground/70">
+                {deadline.hours_until_deadline >= 0
+                  ? `${deadline.hours_until_deadline.toFixed(1)} hours left to submit`
+                  : `${Math.abs(deadline.hours_until_deadline).toFixed(1)} hours past the deadline`}
+              </div>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-foreground/10 p-4">
+          <div className="text-sm font-medium">Quick actions</div>
+          <div className="mt-2 text-xs text-foreground/60">
             Total {agendaSummary.total} • Submitted {agendaSummary.submitted} • Accepted {agendaSummary.accepted} • Late{" "}
             {agendaSummary.late}
           </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <Button variant="outline" size="sm" onClick={handleCopyAccepted} disabled={acceptedItems.length === 0}>
+              Copy accepted agenda
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleDownloadCsv} disabled={exportItems.length === 0}>
+              Download CSV
+            </Button>
+          </div>
+          {!submissionOpen ? (
+            <div className="mt-3 text-xs text-foreground/60">Submissions are closed.</div>
+          ) : null}
         </div>
-        <div className="mt-3 grid gap-2 sm:grid-cols-5">
+      </div>
+
+      <details className="rounded-lg border border-foreground/10 p-4">
+        <summary className="cursor-pointer text-sm font-medium">Filters & export</summary>
+        <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
           <label className="space-y-1 text-xs text-foreground/70 sm:col-span-2">
             <span>Search</span>
             <input
               type="search"
-              className="h-8 w-full rounded border border-foreground/20 bg-background px-2 text-sm"
+              className="h-9 w-full rounded border border-foreground/20 bg-background px-2 text-sm"
               value={agendaSearch}
               onChange={(e: ChangeEvent<HTMLInputElement>) => setAgendaSearch(e.target.value)}
               placeholder="Title, background, motion..."
@@ -437,7 +559,7 @@ export function AgendaItemsPanel({
           <label className="space-y-1 text-xs text-foreground/70">
             <span>State</span>
             <select
-              className="h-8 w-full rounded border border-foreground/20 bg-background px-2 text-sm"
+              className="h-9 w-full rounded border border-foreground/20 bg-background px-2 text-sm"
               value={agendaStateFilter}
               onChange={(e) => setAgendaStateFilter(e.target.value)}
             >
@@ -453,7 +575,7 @@ export function AgendaItemsPanel({
           <label className="space-y-1 text-xs text-foreground/70">
             <span>Category</span>
             <select
-              className="h-8 w-full rounded border border-foreground/20 bg-background px-2 text-sm"
+              className="h-9 w-full rounded border border-foreground/20 bg-background px-2 text-sm"
               value={agendaCategoryFilter}
               onChange={(e) => setAgendaCategoryFilter(e.target.value)}
             >
@@ -468,7 +590,7 @@ export function AgendaItemsPanel({
           <label className="space-y-1 text-xs text-foreground/70">
             <span>Sort</span>
             <select
-              className="h-8 w-full rounded border border-foreground/20 bg-background px-2 text-sm"
+              className="h-9 w-full rounded border border-foreground/20 bg-background px-2 text-sm"
               value={agendaSort}
               onChange={(e) => setAgendaSort(e.target.value as "recent" | "title")}
             >
@@ -477,7 +599,7 @@ export function AgendaItemsPanel({
             </select>
           </label>
         </div>
-        <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-foreground/70">
+        <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-foreground/70">
           <label className="flex items-center gap-2">
             <input
               type="checkbox"
@@ -489,125 +611,110 @@ export function AgendaItemsPanel({
           <Button variant="ghost" size="sm" onClick={resetAgendaFilters} disabled={!agendaFiltersActive}>
             Reset filters
           </Button>
-          <Button variant="outline" size="sm" onClick={handleCopyAccepted} disabled={acceptedItems.length === 0}>
-            Copy accepted agenda
-          </Button>
-          <Button variant="outline" size="sm" onClick={handleDownloadCsv} disabled={exportItems.length === 0}>
-            Download CSV
-          </Button>
         </div>
-      </div>
+      </details>
 
-      {/* Deadline info */}
-      {deadline ? (
-        <div className="rounded-lg border border-foreground/10 bg-foreground/5 p-4">
-          <div className="text-sm font-medium">Submission Deadline</div>
-          <div className="mt-1 text-sm text-foreground/80">
-            {new Date(deadline.submission_deadline).toLocaleString()}
-            {deadline.is_special ? " (Special Meeting)" : ""}
-          </div>
-          {deadline.posting_deadline ? (
-            <div className="mt-2 text-xs text-foreground/70">
-              Agenda posting deadline: {new Date(deadline.posting_deadline).toLocaleString()}
-            </div>
-          ) : null}
-          {typeof deadline.hours_until_deadline === "number" ? (
-            <div className="mt-1 text-xs text-foreground/70">
-              {deadline.hours_until_deadline >= 0
-                ? `${deadline.hours_until_deadline.toFixed(1)} hours left to submit`
-                : `${Math.abs(deadline.hours_until_deadline).toFixed(1)} hours past the deadline`}
-            </div>
-          ) : null}
-          <div className="mt-1 text-xs text-foreground/70">
-            {deadline.is_submission_open ? (
-              <span className="text-green-600">Submissions are open</span>
-            ) : (
-              <span className="text-red-600">Submissions are closed</span>
-            )}
-          </div>
-        </div>
-      ) : null}
-
-      {/* New item form toggle */}
-      {deadline?.is_submission_open !== false ? (
-        <Button type="button" size="sm" onClick={() => setShowNewForm(!showNewForm)}>
-          {showNewForm ? "Cancel" : "New Agenda Item"}
-        </Button>
-      ) : null}
-
-      {/* New item form */}
-      {showNewForm ? (
-        <form onSubmit={handleCreate} className="space-y-3 rounded-lg border border-foreground/10 p-4">
-          <div className="text-sm font-medium">New Agenda Item</div>
-
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="sm:col-span-2">
-              <label className="mb-1 block text-xs text-foreground/70">Title *</label>
-              <input
-                type="text"
-                value={newTitle}
-                onChange={(e: ChangeEvent<HTMLInputElement>) => setNewTitle(e.target.value)}
-                placeholder="Agenda item title"
-                className="w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
-              />
-            </div>
-
-            <div>
-              <label className="mb-1 block text-xs text-foreground/70">Category</label>
-              <select
-                value={newCategory}
-                onChange={(e) => setNewCategory(e.target.value)}
-                className="w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
-              >
-                <option value="action">Action</option>
-                <option value="discussion">Discussion</option>
-                <option value="information">Information</option>
-                <option value="consent">Consent</option>
-                <option value="other">Other</option>
-              </select>
-            </div>
-
-            <div className="sm:col-span-2">
-              <label className="mb-1 block text-xs text-foreground/70">Background</label>
-              <textarea
-                value={newBackground}
-                onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setNewBackground(e.target.value)}
-                placeholder="Context and background information..."
-                rows={3}
-                className="w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
-              />
-            </div>
-
-            <div className="sm:col-span-2">
-              <label className="mb-1 block text-xs text-foreground/70">Recommended Motion</label>
-              <textarea
-                value={newMotion}
-                onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setNewMotion(e.target.value)}
-                placeholder="Motion language if this is an action item..."
-                rows={2}
-                className="w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
-              />
-            </div>
-
-            <div className="sm:col-span-2">
-              <label className="mb-1 block text-xs text-foreground/70">Fiscal Impact</label>
-              <input
-                type="text"
-                value={newFiscal}
-                onChange={(e: ChangeEvent<HTMLInputElement>) => setNewFiscal(e.target.value)}
-                placeholder="e.g., $500 from ASGC Budget"
-                className="w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
-              />
-            </div>
-          </div>
-
-          <div className="flex justify-end">
-            <Button type="submit" size="sm">
-              Save Draft
+      <div className="rounded-lg border border-foreground/10 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="text-sm font-medium">New agenda item</div>
+          {submissionOpen ? (
+            <Button type="button" size="sm" onClick={() => setShowNewForm(!showNewForm)}>
+              {showNewFormResolved ? "Hide form" : "Start new item"}
             </Button>
-          </div>
-        </form>
-      ) : null}
+          ) : (
+            <span className="text-xs text-foreground/60">Submissions are closed</span>
+          )}
+        </div>
+
+        {showNewFormResolved ? (
+          <form onSubmit={handleCreate} className="mt-4 space-y-3">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="sm:col-span-2">
+                <label className="mb-1 block text-xs text-foreground/70">Title *</label>
+                <input
+                  type="text"
+                  value={newTitle}
+                  onChange={(e: ChangeEvent<HTMLInputElement>) => setNewTitle(e.target.value)}
+                  placeholder="Agenda item title"
+                  className="w-full rounded border border-foreground/20 bg-background px-2 py-2 text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs text-foreground/70">Category</label>
+                <select
+                  value={newCategory}
+                  onChange={(e) => setNewCategory(e.target.value)}
+                  className="w-full rounded border border-foreground/20 bg-background px-2 py-2 text-sm"
+                >
+                  <option value="action">Action</option>
+                  <option value="discussion">Discussion</option>
+                  <option value="information">Information</option>
+                  <option value="consent">Consent</option>
+                  <option value="other">Other</option>
+                </select>
+              </div>
+            </div>
+
+            <details className="rounded-md border border-foreground/10 bg-foreground/5 px-3 py-2">
+              <summary className="cursor-pointer text-xs font-medium text-foreground/70">
+                Add details (optional)
+              </summary>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <div className="sm:col-span-2">
+                  <label className="mb-1 block text-xs text-foreground/70">Background</label>
+                  <textarea
+                    value={newBackground}
+                    onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setNewBackground(e.target.value)}
+                    placeholder="Context and background information..."
+                    rows={3}
+                    className="w-full rounded border border-foreground/20 bg-background px-2 py-2 text-sm"
+                  />
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label className="mb-1 block text-xs text-foreground/70">Recommended Motion</label>
+                  <textarea
+                    value={newMotion}
+                    onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setNewMotion(e.target.value)}
+                    placeholder="Motion language if this is an action item..."
+                    rows={2}
+                    className="w-full rounded border border-foreground/20 bg-background px-2 py-2 text-sm"
+                  />
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label className="mb-1 block text-xs text-foreground/70">Fiscal Impact</label>
+                  <input
+                    type="text"
+                    value={newFiscal}
+                    onChange={(e: ChangeEvent<HTMLInputElement>) => setNewFiscal(e.target.value)}
+                    placeholder="e.g., $500 from ASGC Budget"
+                    className="w-full rounded border border-foreground/20 bg-background px-2 py-2 text-sm"
+                  />
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label className="mb-1 block text-xs text-foreground/70">Supporting documents (URLs)</label>
+                  <textarea
+                    value={newAttachments}
+                    onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setNewAttachments(e.target.value)}
+                    placeholder="One URL per line"
+                    rows={2}
+                    className="w-full rounded border border-foreground/20 bg-background px-2 py-2 text-sm"
+                  />
+                </div>
+              </div>
+            </details>
+
+            <div className="flex justify-end">
+              <Button type="submit" size="sm" disabled={!submissionOpen}>
+                Save Draft
+              </Button>
+            </div>
+          </form>
+        ) : null}
+      </div>
 
       {/* My items section */}
       <div>
@@ -619,7 +726,7 @@ export function AgendaItemsPanel({
             {agendaFiltersActive ? "No submissions match the current filters." : "You have not submitted any items for this meeting."}
           </div>
         ) : (
-          <div className="space-y-3">
+          <div className="grid gap-3 sm:grid-cols-2">
             {filteredMyItems.map((item) => (
               <div key={item.id} className="rounded-lg border border-foreground/10 p-4">
                 {editingId === item.id ? (
@@ -662,8 +769,15 @@ export function AgendaItemsPanel({
                       placeholder="Fiscal Impact"
                       className="w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
                     />
+                    <textarea
+                      value={editAttachments}
+                      onChange={(e) => setEditAttachments(e.target.value)}
+                      placeholder="Supporting documents (one URL per line)"
+                      rows={2}
+                      className="w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
+                    />
                     <div className="flex gap-2">
-                      <Button type="submit" size="sm">
+                      <Button type="submit" size="sm" disabled={!submissionOpen}>
                         Save
                       </Button>
                       <Button type="button" variant="outline" size="sm" onClick={cancelEdit}>
@@ -709,14 +823,44 @@ export function AgendaItemsPanel({
                         {item.fiscal_impact}
                       </div>
                     ) : null}
+                    {normalizeAttachments(item.attachments_json).length > 0 ? (
+                      <div className="mt-2 text-sm">
+                        <div className="text-xs text-foreground/60">Supporting documents</div>
+                        <ul className="mt-1 space-y-1 text-xs text-foreground/70">
+                          {normalizeAttachments(item.attachments_json).map((attachment) => (
+                            <li key={attachment}>
+                              {isProbablyUrl(attachment) ? (
+                                <a className="underline underline-offset-2" href={attachment} target="_blank" rel="noreferrer">
+                                  {attachment}
+                                </a>
+                              ) : (
+                                <span>{attachment}</span>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null}
 
                     {/* Actions for own items */}
                     {item.state === "draft" ? (
                       <div className="mt-3 flex gap-2">
-                        <Button type="button" size="sm" onClick={() => startEdit(item)}>
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={() => startEdit(item)}
+                          disabled={!submissionOpen}
+                          title={submissionOpen ? "Edit draft" : "Submission deadline has passed"}
+                        >
                           Edit
                         </Button>
-                        <Button type="button" size="sm" onClick={() => handleSubmit(item.id)}>
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={() => handleSubmit(item.id)}
+                          disabled={!submissionOpen}
+                          title={submissionOpen ? "Submit for review" : "Submission deadline has passed"}
+                        >
                           Submit
                         </Button>
                         <Button
@@ -759,7 +903,7 @@ export function AgendaItemsPanel({
               {agendaFiltersActive ? "No submissions match the current filters." : "No submissions for this meeting."}
             </div>
           ) : (
-            <div className="space-y-3">
+            <div className="grid gap-3 sm:grid-cols-2">
               {filteredAllItems.map((item) => (
                 <div key={item.id} className="rounded-lg border border-foreground/10 p-4">
                   <div className="flex flex-wrap items-start justify-between gap-2">
@@ -796,6 +940,24 @@ export function AgendaItemsPanel({
                     <div className="mt-1 text-sm">
                       <span className="font-medium">Fiscal: </span>
                       {item.fiscal_impact}
+                    </div>
+                  ) : null}
+                  {normalizeAttachments(item.attachments_json).length > 0 ? (
+                    <div className="mt-2 text-sm">
+                      <div className="text-xs text-foreground/60">Supporting documents</div>
+                      <ul className="mt-1 space-y-1 text-xs text-foreground/70">
+                        {normalizeAttachments(item.attachments_json).map((attachment) => (
+                          <li key={attachment}>
+                            {isProbablyUrl(attachment) ? (
+                              <a className="underline underline-offset-2" href={attachment} target="_blank" rel="noreferrer">
+                                {attachment}
+                              </a>
+                            ) : (
+                              <span>{attachment}</span>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
                     </div>
                   ) : null}
 

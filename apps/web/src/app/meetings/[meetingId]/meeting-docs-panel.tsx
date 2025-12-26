@@ -64,19 +64,104 @@ function formatVisibility(value: string): string {
   }
 }
 
+const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
+const ALLOWED_EXTENSIONS = [".pdf", ".doc", ".docx", ".txt", ".csv"];
+const ALLOWED_MIME_TYPES = new Set([
+  "application/pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "text/plain",
+  "text/csv",
+]);
+
+function validateUploadFile(file: File): string | null {
+  const name = file.name.toLowerCase();
+  const hasAllowedExtension = ALLOWED_EXTENSIONS.some((ext) => name.endsWith(ext));
+  const mimeType = inferMimeType(file);
+  const hasAllowedMime = ALLOWED_MIME_TYPES.has(mimeType);
+
+  if (!hasAllowedExtension && !hasAllowedMime) {
+    return "Unsupported file type. Use PDF, DOC, DOCX, TXT, or CSV.";
+  }
+
+  if (file.size > MAX_UPLOAD_BYTES) {
+    return "File is too large. Max size is 20 MB.";
+  }
+
+  return null;
+}
+
+function uploadWithProgress(
+  uploadUrl: string,
+  file: File,
+  contentType: string,
+  onProgress: (pct: number) => void,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", uploadUrl);
+    xhr.setRequestHeader("Content-Type", contentType);
+
+    xhr.upload.onprogress = (event) => {
+      if (!event.lengthComputable) return;
+      const pct = Math.round((event.loaded / event.total) * 100);
+      onProgress(pct);
+    };
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve();
+      } else {
+        reject(new Error(xhr.responseText || "Upload failed"));
+      }
+    };
+
+    xhr.onerror = () => reject(new Error("Upload failed"));
+
+    xhr.send(file);
+  });
+}
+
+function groupDocsByVersion(docs: DocRow[]): Array<{ rootId: string; docs: DocRow[] }> {
+  const groups = new Map<string, DocRow[]>();
+  for (const doc of docs) {
+    const rootId = doc.version_of_doc_id ?? doc.id;
+    const existing = groups.get(rootId) ?? [];
+    existing.push(doc);
+    groups.set(rootId, existing);
+  }
+
+  const grouped = [...groups.entries()].map(([rootId, groupDocs]) => {
+    const sorted = [...groupDocs].sort(
+      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+    );
+    return { rootId, docs: sorted };
+  });
+
+  return grouped.sort(
+    (a, b) => new Date(b.docs[0].created_at).getTime() - new Date(a.docs[0].created_at).getTime(),
+  );
+}
+
 export function MeetingDocsPanel({
   meetingId,
   committeeId,
   isAdmin,
   initialDocs,
+  acceptedAgendaCount,
 }: {
   meetingId: string;
   committeeId: string | null;
   isAdmin: boolean;
   initialDocs: DocRow[];
+  acceptedAgendaCount: number;
 }) {
   const [docs, setDocs] = useState<DocRow[]>(initialDocs);
   const [status, setStatus] = useState<string>("");
+  const [minutesUploadProgress, setMinutesUploadProgress] = useState<number | null>(null);
+  const [agendaUploadProgress, setAgendaUploadProgress] = useState<number | null>(null);
+  const minutesUploading = minutesUploadProgress !== null;
+  const agendaUploading = agendaUploadProgress !== null;
 
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [minutesTitle, setMinutesTitle] = useState<string>("");
@@ -94,6 +179,10 @@ export function MeetingDocsPanel({
 
   const minutesDocs = useMemo(() => docs.filter((d) => d.doc_type === "minutes"), [docs]);
   const agendaDocs = useMemo(() => docs.filter((d) => d.doc_type === "agenda"), [docs]);
+  const minutesGroups = useMemo(() => groupDocsByVersion(minutesDocs), [minutesDocs]);
+  const agendaGroups = useMemo(() => groupDocsByVersion(agendaDocs), [agendaDocs]);
+  const latestAgendaDoc = agendaGroups[0]?.docs[0] ?? null;
+  const canGenerateAgenda = isAdmin && acceptedAgendaCount > 0;
 
   const reload = useCallback(async () => {
     const qs = new URLSearchParams({ meeting_id: meetingId });
@@ -122,6 +211,12 @@ export function MeetingDocsPanel({
       return;
     }
 
+    const fileError = validateUploadFile(uploadFile);
+    if (fileError) {
+      setStatus(fileError);
+      return;
+    }
+
     if (!minutesTitle.trim()) {
       setStatus("Title required");
       return;
@@ -147,16 +242,8 @@ export function MeetingDocsPanel({
       });
 
       setStatus("Uploading minutes...");
-      const uploadRes = await fetch(uploadUrl, {
-        method: "PUT",
-        headers: { "Content-Type": contentType },
-        body: uploadFile,
-      });
-
-      if (!uploadRes.ok) {
-        const errText = await uploadRes.text().catch(() => "");
-        throw new Error(errText ? `Failed to upload minutes: ${errText}` : "Failed to upload minutes");
-      }
+      setMinutesUploadProgress(0);
+      await uploadWithProgress(uploadUrl, uploadFile, contentType, (pct) => setMinutesUploadProgress(pct));
 
       setStatus("Saving minutes...");
       await fetchJson("/api/docs", {
@@ -189,6 +276,8 @@ export function MeetingDocsPanel({
       await reload();
     } catch (err) {
       setStatus(err instanceof Error ? err.message : "Minutes upload failed");
+    } finally {
+      setMinutesUploadProgress(null);
     }
   }
 
@@ -197,6 +286,12 @@ export function MeetingDocsPanel({
 
     if (!agendaFile) {
       setStatus("Select an agenda file");
+      return;
+    }
+
+    const fileError = validateUploadFile(agendaFile);
+    if (fileError) {
+      setStatus(fileError);
       return;
     }
 
@@ -225,16 +320,8 @@ export function MeetingDocsPanel({
       });
 
       setStatus("Uploading agenda...");
-      const uploadRes = await fetch(uploadUrl, {
-        method: "PUT",
-        headers: { "Content-Type": contentType },
-        body: agendaFile,
-      });
-
-      if (!uploadRes.ok) {
-        const errText = await uploadRes.text().catch(() => "");
-        throw new Error(errText ? `Failed to upload agenda: ${errText}` : "Failed to upload agenda");
-      }
+      setAgendaUploadProgress(0);
+      await uploadWithProgress(uploadUrl, agendaFile, contentType, (pct) => setAgendaUploadProgress(pct));
 
       setStatus("Saving agenda...");
       await fetchJson("/api/docs", {
@@ -267,6 +354,8 @@ export function MeetingDocsPanel({
       await reload();
     } catch (err) {
       setStatus(err instanceof Error ? err.message : "Agenda upload failed");
+    } finally {
+      setAgendaUploadProgress(null);
     }
   }
 
@@ -306,6 +395,10 @@ export function MeetingDocsPanel({
   }
 
   async function handleGenerateAgenda() {
+    if (!canGenerateAgenda) {
+      setStatus("Add at least one accepted agenda item before generating a PDF.");
+      return;
+    }
     if (!confirm("Generate a new agenda PDF?")) return;
     setStatus("Generating agenda PDF...");
     try {
@@ -335,116 +428,172 @@ export function MeetingDocsPanel({
           </div>
         </div>
 
-        <form onSubmit={handleMinutesUpload} className="mt-4 space-y-3">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div>
-              <label className="mb-1 block text-xs text-foreground/70">Title *</label>
-              <input
-                type="text"
-                value={minutesTitle}
-                onChange={(e: ChangeEvent<HTMLInputElement>) => setMinutesTitle(e.target.value)}
-                placeholder="Meeting minutes"
-                className="w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs text-foreground/70">Replace version (optional)</label>
-              <select
-                value={versionSourceId}
-                onChange={(e) => setVersionSourceId(e.target.value)}
-                className="w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
-              >
-                <option value="">New version group</option>
-                {minutesDocs.map((doc) => (
-                  <option key={doc.id} value={doc.id}>
-                    {doc.title}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="sm:col-span-2">
-              <label className="mb-1 block text-xs text-foreground/70">Description (optional)</label>
-              <textarea
-                value={minutesDescription}
-                onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setMinutesDescription(e.target.value)}
-                rows={2}
-                className="w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
-              />
-            </div>
-            <div className="sm:col-span-2">
-              <label className="mb-1 block text-xs text-foreground/70">File *</label>
-              <input
-                type="file"
-                onChange={(e: ChangeEvent<HTMLInputElement>) => {
-                  const f = e.target.files?.[0] ?? null;
-                  setUploadFile(f);
-                  if (f && !minutesTitle.trim()) {
-                    setMinutesTitle(f.name.replace(/\.[^.]+$/, ""));
-                  }
-                }}
-                className="text-sm"
-              />
-              {uploadFile ? (
-                <div className="mt-1 text-xs text-foreground/70">
-                  {uploadFile.name} ({formatBytes(uploadFile.size)})
+        {isAdmin ? (
+          <details className="mt-4 rounded-md border border-foreground/10 bg-foreground/5 px-3 py-2" open={minutesDocs.length === 0}>
+            <summary className="cursor-pointer text-sm font-medium text-foreground/80">
+              Upload minutes
+            </summary>
+            <form onSubmit={handleMinutesUpload} className="mt-3 space-y-3">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-xs text-foreground/70">Title *</label>
+                  <input
+                    type="text"
+                    value={minutesTitle}
+                    onChange={(e: ChangeEvent<HTMLInputElement>) => setMinutesTitle(e.target.value)}
+                    placeholder="Meeting minutes"
+                    className="w-full rounded border border-foreground/20 bg-background px-2 py-2 text-sm"
+                  />
                 </div>
-              ) : null}
-            </div>
-            {isAdmin ? (
-              <label className="flex items-center gap-2 text-xs text-foreground/70 sm:col-span-2">
-                <input
-                  type="checkbox"
-                  checked={minutesMarkPosted}
-                  onChange={(e) => setMinutesMarkPosted(e.target.checked)}
-                />
-                Mark minutes posted now
-              </label>
-            ) : null}
-          </div>
-          <div className="flex justify-end">
-            <Button type="submit" size="sm">
-              Upload Minutes
-            </Button>
-          </div>
-        </form>
+                <div>
+                  <label className="mb-1 block text-xs text-foreground/70">Replace version (optional)</label>
+                  <select
+                    value={versionSourceId}
+                    onChange={(e) => setVersionSourceId(e.target.value)}
+                    className="w-full rounded border border-foreground/20 bg-background px-2 py-2 text-sm"
+                  >
+                    <option value="">New version group</option>
+                    {minutesDocs.map((doc) => (
+                      <option key={doc.id} value={doc.id}>
+                        {doc.title}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="sm:col-span-2">
+                  <label className="mb-1 block text-xs text-foreground/70">Description (optional)</label>
+                  <textarea
+                    value={minutesDescription}
+                    onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setMinutesDescription(e.target.value)}
+                    rows={2}
+                    className="w-full rounded border border-foreground/20 bg-background px-2 py-2 text-sm"
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <label className="mb-1 block text-xs text-foreground/70">File *</label>
+                  <input
+                    type="file"
+                    onChange={(e: ChangeEvent<HTMLInputElement>) => {
+                      const f = e.target.files?.[0] ?? null;
+                      if (f) {
+                        const error = validateUploadFile(f);
+                        if (error) {
+                          setStatus(error);
+                          e.target.value = "";
+                          setUploadFile(null);
+                          return;
+                        }
+                      }
+                      setUploadFile(f);
+                      if (f && !minutesTitle.trim()) {
+                        setMinutesTitle(f.name.replace(/\.[^.]+$/, ""));
+                      }
+                    }}
+                    className="text-sm"
+                  />
+                  <div className="mt-1 text-xs text-foreground/60">PDF, DOC, DOCX, TXT, or CSV. Max 20 MB.</div>
+                  {uploadFile ? (
+                    <div className="mt-1 text-xs text-foreground/70">
+                      {uploadFile.name} ({formatBytes(uploadFile.size)})
+                    </div>
+                  ) : null}
+                  {minutesUploadProgress !== null ? (
+                    <div className="mt-2">
+                      <div className="h-2 w-full rounded bg-foreground/10">
+                        <div
+                          className="h-2 rounded bg-primary"
+                          style={{ width: `${minutesUploadProgress}%` }}
+                        />
+                      </div>
+                      <div className="mt-1 text-xs text-foreground/70">{minutesUploadProgress}%</div>
+                    </div>
+                  ) : null}
+                </div>
+                <label className="flex items-center gap-2 text-xs text-foreground/70 sm:col-span-2">
+                  <input
+                    type="checkbox"
+                    checked={minutesMarkPosted}
+                    onChange={(e) => setMinutesMarkPosted(e.target.checked)}
+                  />
+                  Mark minutes posted now
+                </label>
+              </div>
+              <div className="flex justify-end">
+                <Button type="submit" size="sm" disabled={minutesUploading}>
+                  Upload Minutes
+                </Button>
+              </div>
+            </form>
+          </details>
+        ) : (
+          <div className="mt-4 text-sm text-foreground/70">Only admins can upload minutes.</div>
+        )}
 
-        {minutesDocs.length === 0 ? (
+        {minutesGroups.length === 0 ? (
           <div className="mt-4 text-sm text-foreground/70">No minutes uploaded yet.</div>
         ) : (
           <div className="mt-4 space-y-2">
-            {minutesDocs.map((doc) => (
-              <div key={doc.id} className="flex flex-wrap items-center justify-between gap-2 rounded border border-foreground/10 p-3 text-sm">
-                <div>
-                  <div className="font-medium">{doc.title}</div>
-                  <div className="text-xs text-foreground/70">
-                    {new Date(doc.created_at).toLocaleString()} - {formatBytes(doc.size_bytes)}
-                    {doc.version_of_doc_id ? " - Versioned" : ""} - {formatVisibility(doc.visibility)}
+            {minutesGroups.map((group) => {
+              const latest = group.docs[0];
+              const versionCount = group.docs.length;
+              return (
+                <div
+                  key={group.rootId}
+                  className="flex flex-wrap items-start justify-between gap-2 rounded border border-foreground/10 p-3 text-sm"
+                >
+                  <div className="space-y-2">
+                    <div>
+                      <div className="font-medium">{latest.title}</div>
+                      <div className="text-xs text-foreground/70">
+                        {new Date(latest.created_at).toLocaleString()} - {formatBytes(latest.size_bytes)} -{" "}
+                        {formatVisibility(latest.visibility)}
+                        {versionCount > 1 ? ` - ${versionCount} versions` : ""}
+                      </div>
+                    </div>
+                    {versionCount > 1 ? (
+                      <div className="space-y-1 text-xs text-foreground/70">
+                        <div className="text-foreground/60">Version history</div>
+                        {group.docs.map((doc, index) => (
+                          <div key={doc.id} className="flex flex-wrap items-center justify-between gap-2">
+                            <span>
+                              {index === 0 ? "Latest" : `Version ${versionCount - index}`}
+                            </span>
+                            <span>
+                              {new Date(doc.created_at).toLocaleString()} - {formatBytes(doc.size_bytes)}
+                            </span>
+                            <Button type="button" variant="ghost" size="sm" onClick={() => handleDownload(doc)}>
+                              Download
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {isAdmin ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => void handleToggleVisibility(latest)}
+                      >
+                        {latest.visibility === "public"
+                          ? `Make ${formatVisibility(fallbackVisibility)}`
+                          : "Publish"}
+                      </Button>
+                    ) : null}
+                    {isAdmin ? (
+                      <Button type="button" variant="ghost" size="sm" onClick={() => void markMeetingPosted("minutes")}>
+                        Mark posted now
+                      </Button>
+                    ) : null}
+                    <Button type="button" variant="outline" size="sm" onClick={() => handleDownload(latest)}>
+                      Download
+                    </Button>
                   </div>
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  {isAdmin ? (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => void handleToggleVisibility(doc)}
-                    >
-                      {doc.visibility === "public"
-                        ? `Make ${formatVisibility(fallbackVisibility)}`
-                        : "Publish"}
-                    </Button>
-                  ) : null}
-                  {isAdmin ? (
-                    <Button type="button" variant="ghost" size="sm" onClick={() => void markMeetingPosted("minutes")}>
-                      Mark posted now
-                    </Button>
-                  ) : null}
-                  <Button type="button" variant="outline" size="sm" onClick={() => handleDownload(doc)}>
-                    Download
-                  </Button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
@@ -456,122 +605,198 @@ export function MeetingDocsPanel({
             <div className="text-xs text-foreground/70">Upload or generate agendas for public posting.</div>
           </div>
           {isAdmin ? (
-            <Button type="button" size="sm" onClick={() => void handleGenerateAgenda()}>
-              Generate Agenda PDF
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => void handleGenerateAgenda()}
+                disabled={!canGenerateAgenda}
+                title={
+                  canGenerateAgenda
+                    ? "Generate agenda PDF"
+                    : "Add at least one accepted agenda item to enable PDF generation"
+                }
+              >
+                Generate Agenda PDF
+              </Button>
+              {latestAgendaDoc ? (
+                <Button type="button" variant="ghost" size="sm" onClick={() => handleDownload(latestAgendaDoc)}>
+                  Preview latest
+                </Button>
+              ) : null}
+            </div>
           ) : null}
         </div>
-
-        {isAdmin ? (
-          <form onSubmit={handleAgendaUpload} className="mt-4 space-y-3">
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div>
-                <label className="mb-1 block text-xs text-foreground/70">Title *</label>
-                <input
-                  type="text"
-                  value={agendaTitle}
-                  onChange={(e: ChangeEvent<HTMLInputElement>) => setAgendaTitle(e.target.value)}
-                  placeholder="Meeting agenda"
-                  className="w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-xs text-foreground/70">Replace version (optional)</label>
-                <select
-                  value={agendaVersionSourceId}
-                  onChange={(e) => setAgendaVersionSourceId(e.target.value)}
-                  className="w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
-                >
-                  <option value="">New version group</option>
-                  {agendaDocs.map((doc) => (
-                    <option key={doc.id} value={doc.id}>
-                      {doc.title}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="sm:col-span-2">
-                <label className="mb-1 block text-xs text-foreground/70">Description (optional)</label>
-                <textarea
-                  value={agendaDescription}
-                  onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setAgendaDescription(e.target.value)}
-                  rows={2}
-                  className="w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
-                />
-              </div>
-              <div className="sm:col-span-2">
-                <label className="mb-1 block text-xs text-foreground/70">File *</label>
-                <input
-                  type="file"
-                  onChange={(e: ChangeEvent<HTMLInputElement>) => {
-                    const f = e.target.files?.[0] ?? null;
-                    setAgendaFile(f);
-                    if (f && !agendaTitle.trim()) {
-                      setAgendaTitle(f.name.replace(/\.[^.]+$/, ""));
-                    }
-                  }}
-                  className="text-sm"
-                />
-                {agendaFile ? (
-                  <div className="mt-1 text-xs text-foreground/70">
-                    {agendaFile.name} ({formatBytes(agendaFile.size)})
-                  </div>
-                ) : null}
-              </div>
-              <label className="flex items-center gap-2 text-xs text-foreground/70 sm:col-span-2">
-                <input
-                  type="checkbox"
-                  checked={agendaMarkPosted}
-                  onChange={(e) => setAgendaMarkPosted(e.target.checked)}
-                />
-                Mark agenda posted now
-              </label>
-            </div>
-            <div className="flex justify-end">
-              <Button type="submit" size="sm">
-                Upload Agenda
-              </Button>
-            </div>
-          </form>
+        {!canGenerateAgenda && isAdmin ? (
+          <div className="mt-2 text-xs text-foreground/60">
+            Add at least one accepted agenda item to generate the PDF.
+          </div>
         ) : null}
 
-        {agendaDocs.length === 0 ? (
+        {isAdmin ? (
+          <details className="mt-4 rounded-md border border-foreground/10 bg-foreground/5 px-3 py-2" open={agendaDocs.length === 0}>
+            <summary className="cursor-pointer text-sm font-medium text-foreground/80">
+              Upload agenda
+            </summary>
+            <form onSubmit={handleAgendaUpload} className="mt-3 space-y-3">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-xs text-foreground/70">Title *</label>
+                  <input
+                    type="text"
+                    value={agendaTitle}
+                    onChange={(e: ChangeEvent<HTMLInputElement>) => setAgendaTitle(e.target.value)}
+                    placeholder="Meeting agenda"
+                    className="w-full rounded border border-foreground/20 bg-background px-2 py-2 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-foreground/70">Replace version (optional)</label>
+                  <select
+                    value={agendaVersionSourceId}
+                    onChange={(e) => setAgendaVersionSourceId(e.target.value)}
+                    className="w-full rounded border border-foreground/20 bg-background px-2 py-2 text-sm"
+                  >
+                    <option value="">New version group</option>
+                    {agendaDocs.map((doc) => (
+                      <option key={doc.id} value={doc.id}>
+                        {doc.title}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="sm:col-span-2">
+                  <label className="mb-1 block text-xs text-foreground/70">Description (optional)</label>
+                  <textarea
+                    value={agendaDescription}
+                    onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setAgendaDescription(e.target.value)}
+                    rows={2}
+                    className="w-full rounded border border-foreground/20 bg-background px-2 py-2 text-sm"
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <label className="mb-1 block text-xs text-foreground/70">File *</label>
+                  <input
+                    type="file"
+                    onChange={(e: ChangeEvent<HTMLInputElement>) => {
+                      const f = e.target.files?.[0] ?? null;
+                      if (f) {
+                        const error = validateUploadFile(f);
+                        if (error) {
+                          setStatus(error);
+                          e.target.value = "";
+                          setAgendaFile(null);
+                          return;
+                        }
+                      }
+                      setAgendaFile(f);
+                      if (f && !agendaTitle.trim()) {
+                        setAgendaTitle(f.name.replace(/\.[^.]+$/, ""));
+                      }
+                    }}
+                    className="text-sm"
+                  />
+                  <div className="mt-1 text-xs text-foreground/60">PDF, DOC, DOCX, TXT, or CSV. Max 20 MB.</div>
+                  {agendaFile ? (
+                    <div className="mt-1 text-xs text-foreground/70">
+                      {agendaFile.name} ({formatBytes(agendaFile.size)})
+                    </div>
+                  ) : null}
+                  {agendaUploadProgress !== null ? (
+                    <div className="mt-2">
+                      <div className="h-2 w-full rounded bg-foreground/10">
+                        <div
+                          className="h-2 rounded bg-primary"
+                          style={{ width: `${agendaUploadProgress}%` }}
+                        />
+                      </div>
+                      <div className="mt-1 text-xs text-foreground/70">{agendaUploadProgress}%</div>
+                    </div>
+                  ) : null}
+                </div>
+                <label className="flex items-center gap-2 text-xs text-foreground/70 sm:col-span-2">
+                  <input
+                    type="checkbox"
+                    checked={agendaMarkPosted}
+                    onChange={(e) => setAgendaMarkPosted(e.target.checked)}
+                  />
+                  Mark agenda posted now
+                </label>
+              </div>
+              <div className="flex justify-end">
+                <Button type="submit" size="sm" disabled={agendaUploading}>
+                  Upload Agenda
+                </Button>
+              </div>
+            </form>
+          </details>
+        ) : null}
+
+        {agendaGroups.length === 0 ? (
           <div className="mt-4 text-sm text-foreground/70">No agenda documents yet.</div>
         ) : (
           <div className="mt-4 space-y-2">
-            {agendaDocs.map((doc) => (
-              <div key={doc.id} className="flex flex-wrap items-center justify-between gap-2 rounded border border-foreground/10 p-3 text-sm">
-                <div>
-                  <div className="font-medium">{doc.title}</div>
-                  <div className="text-xs text-foreground/70">
-                    {new Date(doc.created_at).toLocaleString()} - {formatBytes(doc.size_bytes)}
-                    {doc.version_of_doc_id ? " - Versioned" : ""} - {formatVisibility(doc.visibility)}
+            {agendaGroups.map((group) => {
+              const latest = group.docs[0];
+              const versionCount = group.docs.length;
+              return (
+                <div
+                  key={group.rootId}
+                  className="flex flex-wrap items-start justify-between gap-2 rounded border border-foreground/10 p-3 text-sm"
+                >
+                  <div className="space-y-2">
+                    <div>
+                      <div className="font-medium">{latest.title}</div>
+                      <div className="text-xs text-foreground/70">
+                        {new Date(latest.created_at).toLocaleString()} - {formatBytes(latest.size_bytes)} -{" "}
+                        {formatVisibility(latest.visibility)}
+                        {versionCount > 1 ? ` - ${versionCount} versions` : ""}
+                      </div>
+                    </div>
+                    {versionCount > 1 ? (
+                      <div className="space-y-1 text-xs text-foreground/70">
+                        <div className="text-foreground/60">Version history</div>
+                        {group.docs.map((doc, index) => (
+                          <div key={doc.id} className="flex flex-wrap items-center justify-between gap-2">
+                            <span>
+                              {index === 0 ? "Latest" : `Version ${versionCount - index}`}
+                            </span>
+                            <span>
+                              {new Date(doc.created_at).toLocaleString()} - {formatBytes(doc.size_bytes)}
+                            </span>
+                            <Button type="button" variant="ghost" size="sm" onClick={() => handleDownload(doc)}>
+                              Download
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {isAdmin ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => void handleToggleVisibility(latest)}
+                      >
+                        {latest.visibility === "public"
+                          ? `Make ${formatVisibility(fallbackVisibility)}`
+                          : "Publish"}
+                      </Button>
+                    ) : null}
+                    {isAdmin ? (
+                      <Button type="button" variant="ghost" size="sm" onClick={() => void markMeetingPosted("agenda")}>
+                        Mark posted now
+                      </Button>
+                    ) : null}
+                    <Button type="button" variant="outline" size="sm" onClick={() => handleDownload(latest)}>
+                      Download
+                    </Button>
                   </div>
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  {isAdmin ? (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => void handleToggleVisibility(doc)}
-                    >
-                      {doc.visibility === "public"
-                        ? `Make ${formatVisibility(fallbackVisibility)}`
-                        : "Publish"}
-                    </Button>
-                  ) : null}
-                  {isAdmin ? (
-                    <Button type="button" variant="ghost" size="sm" onClick={() => void markMeetingPosted("agenda")}>
-                      Mark posted now
-                    </Button>
-                  ) : null}
-                  <Button type="button" variant="outline" size="sm" onClick={() => handleDownload(doc)}>
-                    Download
-                  </Button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

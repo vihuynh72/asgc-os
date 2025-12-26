@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 
+import { requirePartialAdmin } from "@/lib/adminAuth";
 import { getSupabaseRouteHandlerClient } from "@/lib/supabaseServer";
 
 export const runtime = "nodejs";
@@ -9,21 +10,9 @@ type Params = { params: Promise<{ id: string }> };
 // PATCH: Update a meeting (admin only)
 export async function PATCH(request: NextRequest, { params }: Params) {
   const { id } = await params;
+  const authz = await requirePartialAdmin(request);
+  if (!authz.ok) return authz.response;
   const supabase = await getSupabaseRouteHandlerClient();
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
-
-  // Check admin
-  const { data: isAdmin, error: adminErr } = await supabase.rpc("is_admin", { _uid: user.id });
-  if (adminErr || !isAdmin) {
-    return NextResponse.json({ error: "forbidden" }, { status: 403 });
-  }
 
   if (!id || typeof id !== "string") {
     return NextResponse.json({ error: "meeting_id_required" }, { status: 400 });
@@ -109,21 +98,9 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 // DELETE: Cancel a meeting (admin only)
 export async function DELETE(request: NextRequest, { params }: Params) {
   const { id } = await params;
+  const authz = await requirePartialAdmin(request);
+  if (!authz.ok) return authz.response;
   const supabase = await getSupabaseRouteHandlerClient();
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
-
-  // Check admin
-  const { data: isAdmin, error: adminErr } = await supabase.rpc("is_admin", { _uid: user.id });
-  if (adminErr || !isAdmin) {
-    return NextResponse.json({ error: "forbidden" }, { status: 403 });
-  }
 
   if (!id || typeof id !== "string") {
     return NextResponse.json({ error: "meeting_id_required" }, { status: 400 });

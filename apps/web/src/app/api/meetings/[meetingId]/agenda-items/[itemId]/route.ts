@@ -38,7 +38,7 @@ export async function GET(request: NextRequest, { params }: Params) {
 
 // PATCH: Update an agenda item
 export async function PATCH(request: NextRequest, { params }: Params) {
-  const { itemId } = await params;
+  const { meetingId, itemId } = await params;
   const supabase = await getSupabaseRouteHandlerClient();
 
   const {
@@ -47,6 +47,19 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 
   if (!user) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+
+  if (meetingId) {
+    const { data: deadlineInfo, error: deadlineErr } = await supabase.rpc("meeting_deadline_info", {
+      _meeting_id: meetingId,
+    });
+    if (deadlineErr) {
+      return NextResponse.json({ error: deadlineErr.message }, { status: 400 });
+    }
+    const deadline = Array.isArray(deadlineInfo) ? deadlineInfo[0] : deadlineInfo;
+    if (deadline?.is_past_deadline) {
+      return NextResponse.json({ error: "submission_closed" }, { status: 403 });
+    }
   }
 
   let body: {
