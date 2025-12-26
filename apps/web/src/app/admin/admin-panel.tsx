@@ -181,6 +181,13 @@ const ROLE_OPTIONS: Array<{ key: RoleKey; label: string; scope: "global" | "term
 ];
 
 const MEETING_STATUS_OPTIONS = ["scheduled", "cancelled", "completed"] as const;
+const WEEKDAY_LABELS: Record<number, string> = {
+  1: "Monday",
+  2: "Tuesday",
+  3: "Wednesday",
+  4: "Thursday",
+  5: "Friday",
+};
 
 const ROLE_LABEL_BY_KEY: Record<RoleKey, string> = {
   advisor: "Advisor",
@@ -213,6 +220,15 @@ function formatMeetingTypeLabel(type: string): string {
       return "Special";
     default:
       return type;
+  }
+}
+
+function isValidHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
   }
 }
 
@@ -299,6 +315,39 @@ function formatShortDateTime(iso: string | null): string {
     minute: "2-digit",
     hour12: true,
   });
+}
+
+function formatDateTimeInZone(iso: string | null, timeZone: string | null): string {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  if (!timeZone) return date.toLocaleString();
+  return new Intl.DateTimeFormat(undefined, {
+    timeZone,
+    weekday: "short",
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZoneName: "short",
+  }).format(date);
+}
+
+function formatShortDateTimeInZone(iso: string | null, timeZone: string | null): string {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  if (!timeZone) return formatShortDateTime(iso);
+  return new Intl.DateTimeFormat(undefined, {
+    timeZone,
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+    timeZoneName: "short",
+  }).format(date);
 }
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -525,6 +574,7 @@ export function AdminPanel({
   >("name");
   const [exportPreviewActionStatus, setExportPreviewActionStatus] = useState<string>("");
   const exportPreviewActionTimerRef = useRef<number | null>(null);
+  const meetingCreateRef = useRef<HTMLDivElement | null>(null);
 
   const [shiftUserId, setShiftUserId] = useState<string>("");
   const [shiftUserSearch, setShiftUserSearch] = useState<string>("");
@@ -1109,6 +1159,12 @@ export function AdminPanel({
   }
 
   async function onCreateMeeting() {
+    if (isReadOnly) {
+      const msg = "Read-only mode: updates are disabled.";
+      setStatus(msg);
+      toast.error(msg);
+      return;
+    }
     setStatus("Creating meeting...");
     try {
       if (!meetingTitle) {
@@ -1125,6 +1181,16 @@ export function AdminPanel({
       }
       if (meetingTimeError) {
         setStatus(meetingTimeError);
+        return;
+      }
+      if (meetingRemoteUrlError) {
+        setStatus(meetingRemoteUrlError);
+        toast.error(meetingRemoteUrlError);
+        return;
+      }
+      if (meetingLivestreamUrlError) {
+        setStatus(meetingLivestreamUrlError);
+        toast.error(meetingLivestreamUrlError);
         return;
       }
 
@@ -1149,6 +1215,7 @@ export function AdminPanel({
       });
 
       setStatus("Meeting created.");
+      toast.success("Meeting created");
       setMeetingTitle("");
       setMeetingDescription("");
       setMeetingLocation("");
@@ -1160,8 +1227,55 @@ export function AdminPanel({
       setMeetingCommitteeId("");
       await loadMeetings();
     } catch (e) {
-      setStatus(e instanceof Error ? e.message : "Failed to create meeting");
+      const msg = e instanceof Error ? e.message : "Failed to create meeting";
+      setStatus(msg);
+      toast.error(msg);
     }
+  }
+
+  function copyMeetingToCreateForm(meeting: AdminMeetingRow) {
+    setMeetingType(meeting.meeting_type);
+    setMeetingCommitteeId(meeting.meeting_type === "committee" ? meeting.committee_id ?? "" : "");
+    setMeetingTitle(meeting.title ? `Copy of ${meeting.title}` : "");
+    setMeetingDescription(meeting.description ?? "");
+    setMeetingLocation(meeting.location ?? "");
+    setMeetingRemoteUrl(meeting.remote_url ?? "");
+    setMeetingLivestreamUrl(meeting.livestream_url ?? "");
+    setMeetingPublicCommentInstructions(meeting.public_comment_instructions ?? "");
+    setMeetingStartsAtLocal(datetimeLocalFromIso(meeting.starts_at));
+    setMeetingEndsAtLocal(datetimeLocalFromIso(meeting.ends_at));
+    setStatus("Meeting copied to create form.");
+    toast.success("Meeting copied to create form");
+    meetingCreateRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  async function copyMeetingLink(meetingId: string) {
+    try {
+      const url = `${window.location.origin}/meetings/${meetingId}`;
+      await navigator.clipboard.writeText(url);
+      setStatus("Meeting link copied.");
+      toast.success("Meeting link copied");
+    } catch {
+      const msg = "Copy failed. Your browser may block clipboard access.";
+      setStatus(msg);
+      toast.error(msg);
+    }
+  }
+
+  function resetMeetingForm() {
+    setMeetingTitle("");
+    setMeetingDescription("");
+    setMeetingLocation("");
+    setMeetingRemoteUrl("");
+    setMeetingLivestreamUrl("");
+    setMeetingPublicCommentInstructions("");
+    setMeetingStartsAtLocal("");
+    setMeetingEndsAtLocal("");
+    if (meetingType === "committee") {
+      setMeetingCommitteeId("");
+    }
+    setStatus("Meeting form cleared.");
+    toast.success("Meeting form cleared");
   }
 
   async function loadCommittees() {
@@ -1221,6 +1335,24 @@ export function AdminPanel({
     const timeError = getMeetingTimeError(draft.starts_at_local, draft.ends_at_local);
     if (timeError) {
       setStatus(timeError);
+      return;
+    }
+    const draftRemoteUrlError =
+      draft.remote_url.trim().length > 0 && !isValidHttpUrl(draft.remote_url.trim())
+        ? "Remote access URL must start with http:// or https://"
+        : "";
+    if (draftRemoteUrlError) {
+      setStatus(draftRemoteUrlError);
+      toast.error(draftRemoteUrlError);
+      return;
+    }
+    const draftLivestreamUrlError =
+      draft.livestream_url.trim().length > 0 && !isValidHttpUrl(draft.livestream_url.trim())
+        ? "Livestream URL must start with http:// or https://"
+        : "";
+    if (draftLivestreamUrlError) {
+      setStatus(draftLivestreamUrlError);
+      toast.error(draftLivestreamUrlError);
       return;
     }
 
@@ -2256,14 +2388,57 @@ export function AdminPanel({
   }, [meetingStartsAtLocal, meetingEndsAtLocal]);
 
   const meetingTimeError = getMeetingTimeError(meetingStartsAtLocal, meetingEndsAtLocal);
+  const isReadOnly = tier === "read-only";
+  const officeTimezoneLabel = officeLocation?.timezone?.trim() || null;
+  const quietHoursStart = officeConfig?.quiet_hours_start_local.slice(0, 5) ?? "";
+  const quietHoursEnd = officeConfig?.quiet_hours_end_local.slice(0, 5) ?? "";
+  const quietHoursOvernight = !!quietHoursStart && !!quietHoursEnd && quietHoursEnd <= quietHoursStart;
+  const quietHoursSummary = (officeConfig?.quiet_hours_enabled ?? false)
+    ? `${quietHoursStart || "--:--"}-${quietHoursEnd || "--:--"}${quietHoursOvernight ? " (overnight)" : ""}`
+    : "Disabled";
+  const reminderDayLabel =
+    WEEKDAY_LABELS[officeConfig?.weekly_hours_reminder_weekday ?? 0] ?? "Weekday";
+  const reminderTimeLabel = officeConfig?.weekly_hours_reminder_time_local.slice(0, 5) ?? "";
+  const reminderSummary = (officeConfig?.weekly_hours_reminder_enabled ?? false)
+    ? `${reminderDayLabel}${reminderTimeLabel ? ` at ${reminderTimeLabel}` : ""}${officeTimezoneLabel ? ` (${officeTimezoneLabel})` : ""}`
+    : "Disabled";
+  const officeLatValue = parseOptionalNumber(officeLatText);
+  const officeLonValue = parseOptionalNumber(officeLonText);
+  const officeMapUrl =
+    officeLatValue !== null && officeLonValue !== null
+      ? `https://maps.google.com/?q=${officeLatValue},${officeLonValue}`
+      : "";
+  const geofenceSummary = officeLocation?.radius_m
+    ? `Radius ${officeLocation.radius_m}m${typeof officeLocation.grace_radius_m === "number" ? ` + grace ${officeLocation.grace_radius_m}m` : ""}`
+    : "Radius not set";
+  const meetingOfficePreview = useMemo(() => {
+    if (!officeTimezoneLabel) return "";
+    const startIso = toIsoFromDatetimeLocal(meetingStartsAtLocal);
+    if (!startIso) return "";
+    const endIso = toIsoFromDatetimeLocal(meetingEndsAtLocal);
+    const startLabel = formatDateTimeInZone(startIso, officeTimezoneLabel);
+    if (!endIso) return startLabel;
+    const endLabel = formatDateTimeInZone(endIso, officeTimezoneLabel);
+    return `${startLabel} → ${endLabel}`;
+  }, [meetingStartsAtLocal, meetingEndsAtLocal, officeTimezoneLabel]);
+  const meetingRemoteUrlError =
+    meetingRemoteUrl.trim().length > 0 && !isValidHttpUrl(meetingRemoteUrl.trim())
+      ? "Remote access URL must start with http:// or https://"
+      : "";
+  const meetingLivestreamUrlError =
+    meetingLivestreamUrl.trim().length > 0 && !isValidHttpUrl(meetingLivestreamUrl.trim())
+      ? "Livestream URL must start with http:// or https://"
+      : "";
 
   const canCreateMeeting =
+    !isReadOnly &&
     meetingTitle.trim().length > 0 &&
     meetingStartsAtLocal.trim().length > 0 &&
     meetingEndsAtLocal.trim().length > 0 &&
     !meetingTimeError &&
+    !meetingRemoteUrlError &&
+    !meetingLivestreamUrlError &&
     (meetingType !== "committee" || meetingCommitteeId.trim().length > 0);
-  const isReadOnly = tier === "read-only";
 
   function resetMeetingFilters() {
     setMeetingSearch("");
@@ -3550,7 +3725,28 @@ export function AdminPanel({
             </label>
 
             <label className="space-y-1 text-sm md:col-span-2">
-              <div className="text-foreground/70">Timezone</div>
+              <div className="flex items-center justify-between text-foreground/70">
+                <span>Timezone</span>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 px-2 text-xs"
+                  onClick={() => {
+                    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+                    if (!tz) {
+                      const msg = "Could not detect browser timezone.";
+                      setStatus(msg);
+                      toast.error(msg);
+                      return;
+                    }
+                    setOfficeLocation({ ...officeLocation, timezone: tz });
+                    toast.success("Timezone set to browser timezone");
+                  }}
+                >
+                  Use browser timezone
+                </Button>
+              </div>
               <input
                 className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
                 value={officeLocation.timezone}
@@ -3615,6 +3811,25 @@ export function AdminPanel({
               />
             </label>
 
+            <div className="text-xs text-foreground/60 md:col-span-2">
+              Geofence: {geofenceSummary}.
+              {officeMapUrl ? (
+                <>
+                  {" "}
+                  <a
+                    className="underline underline-offset-2"
+                    href={officeMapUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    View map
+                  </a>
+                </>
+              ) : (
+                " Add coordinates to enable the map link."
+              )}
+            </div>
+
             <label className="flex items-center gap-2 text-sm md:col-span-2">
               <input
                 type="checkbox"
@@ -3660,6 +3875,11 @@ export function AdminPanel({
                 }
               />
             </label>
+
+            <div className="text-xs text-foreground/60 md:col-span-2">
+              Quiet hours: {quietHoursSummary}
+              {officeTimezoneLabel ? ` (${officeTimezoneLabel})` : ""}
+            </div>
 
             <div className="md:col-span-4 border-t border-foreground/10 pt-3">
               <div className="text-sm font-medium">Weekly hours reminder</div>
@@ -3710,6 +3930,10 @@ export function AdminPanel({
                 }
               />
             </label>
+
+            <div className="text-xs text-foreground/60 md:col-span-2">
+              Reminder schedule: {reminderSummary}
+            </div>
 
             <div className="flex items-end gap-3 md:col-span-4">
               <Button
@@ -3828,7 +4052,7 @@ export function AdminPanel({
         </div>
 
         <div className="grid gap-4 xl:grid-cols-[1fr_1.6fr]">
-          <div className="rounded-lg border border-foreground/10 p-4">
+          <div className="rounded-lg border border-foreground/10 p-4" ref={meetingCreateRef}>
             <div className="text-sm font-medium">Create meeting</div>
             <div className="mt-1 text-xs text-foreground/60">
               Workflow: create the meeting → collect agenda items → publish agenda & minutes in the Meeting hub.
@@ -3906,6 +4130,9 @@ export function AdminPanel({
                   onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingRemoteUrl(e.target.value)}
                   placeholder="https://zoom.us/j/..."
                 />
+                {meetingRemoteUrlError ? (
+                  <div className="text-xs text-red-600">{meetingRemoteUrlError}</div>
+                ) : null}
               </label>
 
               <label className="space-y-1 text-sm sm:col-span-2">
@@ -3917,6 +4144,9 @@ export function AdminPanel({
                   onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingLivestreamUrl(e.target.value)}
                   placeholder="https://youtube.com/..."
                 />
+                {meetingLivestreamUrlError ? (
+                  <div className="text-xs text-red-600">{meetingLivestreamUrlError}</div>
+                ) : null}
               </label>
 
               <label className="space-y-1 text-sm">
@@ -3958,6 +4188,13 @@ export function AdminPanel({
                 ) : null}
               </label>
 
+              {officeTimezoneLabel ? (
+                <div className="text-xs text-foreground/60 sm:col-span-2 lg:col-span-4">
+                  Office timezone: {officeTimezoneLabel}. Times are entered in your local time.
+                  {meetingOfficePreview ? ` Office time preview: ${meetingOfficePreview}.` : ""}
+                </div>
+              ) : null}
+
               <label className="space-y-1 text-sm sm:col-span-2 lg:col-span-4">
                 <div className="text-foreground/70">Description (optional)</div>
                 <input
@@ -3980,9 +4217,18 @@ export function AdminPanel({
                 />
               </label>
 
-              <div className="flex items-end sm:col-span-2 lg:col-span-4">
+              <div className="flex items-end gap-2 sm:col-span-2 lg:col-span-4">
                 <Button onClick={() => void onCreateMeeting()} disabled={!canCreateMeeting}>
                   Create meeting
+                </Button>
+                <Button
+                  variant="ghost"
+                  type="button"
+                  onClick={resetMeetingForm}
+                  disabled={isReadOnly}
+                  title={isReadOnly ? "Read-only mode: updates are disabled." : "Clear the meeting form"}
+                >
+                  Clear form
                 </Button>
               </div>
             </div>
@@ -3993,6 +4239,9 @@ export function AdminPanel({
               <div>
                 <div className="text-sm font-medium">Existing meetings</div>
                 <div className="text-xs text-foreground/60">Edit details, update status, or cancel meetings.</div>
+                <div className="text-xs text-foreground/60">
+                  Times shown in {officeTimezoneLabel ?? "your local time"}.
+                </div>
               </div>
               <div className="flex flex-wrap items-end gap-2">
                 <label className="space-y-1 text-sm">
@@ -4111,18 +4360,19 @@ export function AdminPanel({
                 const draftTimeError = getMeetingTimeError(draft.starts_at_local, draft.ends_at_local);
                 const canSaveMeeting =
                   isDirty &&
+                  !isReadOnly &&
                   !draftTitleError &&
                   draft.starts_at_local.trim().length > 0 &&
                   draft.ends_at_local.trim().length > 0 &&
                   !draftTimeError;
                 const agendaPostedLabel = meeting.agenda_posted_at
-                  ? formatShortDateTime(meeting.agenda_posted_at)
+                  ? formatShortDateTimeInZone(meeting.agenda_posted_at, officeTimezoneLabel)
                   : "Not posted";
                 const minutesPostedLabel = meeting.minutes_posted_at
-                  ? formatShortDateTime(meeting.minutes_posted_at)
+                  ? formatShortDateTimeInZone(meeting.minutes_posted_at, officeTimezoneLabel)
                   : "Not posted";
                 const noticePostedLabel = meeting.notice_posted_at
-                  ? formatShortDateTime(meeting.notice_posted_at)
+                  ? formatShortDateTimeInZone(meeting.notice_posted_at, officeTimezoneLabel)
                   : "Not posted";
 
                 const statusBadgeClass =
@@ -4146,7 +4396,8 @@ export function AdminPanel({
                           {meeting.location ? ` • ${meeting.location}` : ""}
                         </div>
                         <div className="text-xs text-foreground/60">
-                          {new Date(meeting.starts_at).toLocaleString()} → {new Date(meeting.ends_at).toLocaleString()}
+                          {formatDateTimeInZone(meeting.starts_at, officeTimezoneLabel)} →{" "}
+                          {formatDateTimeInZone(meeting.ends_at, officeTimezoneLabel)}
                         </div>
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
@@ -4162,17 +4413,53 @@ export function AdminPanel({
                         </Button>
                         <Button
                           size="sm"
+                          variant="ghost"
+                          onClick={() => void copyMeetingLink(meeting.id)}
+                        >
+                          Copy link
+                        </Button>
+                        {meeting.remote_url ? (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => window.open(meeting.remote_url!, "_blank", "noopener")}
+                          >
+                            Remote link
+                          </Button>
+                        ) : null}
+                        {meeting.livestream_url ? (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => window.open(meeting.livestream_url!, "_blank", "noopener")}
+                          >
+                            Livestream
+                          </Button>
+                        ) : null}
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => copyMeetingToCreateForm(meeting)}
+                          disabled={isReadOnly}
+                          title={isReadOnly ? "Read-only mode: updates are disabled." : "Copy to the create form"}
+                        >
+                          Duplicate
+                        </Button>
+                        <Button
+                          size="sm"
                           variant="outline"
                           onClick={() => void saveMeeting(meeting)}
                           disabled={!canSaveMeeting}
                           title={
-                            !isDirty
-                              ? "No changes to save"
-                              : draftTitleError
-                                ? draftTitleError
-                                : draftTimeError
-                                  ? draftTimeError
-                                  : "Save changes"
+                            isReadOnly
+                              ? "Read-only mode: updates are disabled."
+                              : !isDirty
+                                ? "No changes to save"
+                                : draftTitleError
+                                  ? draftTitleError
+                                  : draftTimeError
+                                    ? draftTimeError
+                                    : "Save changes"
                           }
                         >
                           Save
@@ -4190,6 +4477,8 @@ export function AdminPanel({
                           variant="ghost"
                           onClick={() => void cancelMeeting(meeting)}
                           className="text-red-600 hover:bg-red-500/10"
+                          disabled={isReadOnly}
+                          title={isReadOnly ? "Read-only mode: updates are disabled." : "Cancel meeting"}
                         >
                           Cancel
                         </Button>

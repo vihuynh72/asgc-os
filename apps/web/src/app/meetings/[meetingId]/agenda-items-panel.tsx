@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useState, type ChangeEvent, type FormEvent } from "react";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 
@@ -170,11 +171,47 @@ function isProbablyUrl(value: string): boolean {
   return /^https?:\/\//i.test(value);
 }
 
-function formatDeadline(iso: string | null | undefined): string {
+function isValidIso(value: string | null | undefined): value is string {
+  if (!value) return false;
+  const d = new Date(value);
+  return !Number.isNaN(d.getTime());
+}
+
+function formatDeadline(iso: string | null | undefined, timeZone?: string | null): string {
   if (!iso) return "Not available";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "Not available";
-  return d.toLocaleString();
+  if (!timeZone) return d.toLocaleString();
+  return new Intl.DateTimeFormat(undefined, {
+    timeZone,
+    weekday: "short",
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZoneName: "short",
+  }).format(d);
+}
+
+function buildFallbackDeadline(meetingId: string, meetingStartsAt: string, meetingType?: string | null): DeadlineInfo | null {
+  if (!isValidIso(meetingStartsAt)) return null;
+  const start = new Date(meetingStartsAt);
+  const submitMs = start.getTime() - 84 * 60 * 60 * 1000;
+  const postHours = meetingType === "special" ? 24 : 72;
+  const postMs = start.getTime() - postHours * 60 * 60 * 1000;
+  const now = Date.now();
+
+  return {
+    meeting_id: meetingId,
+    starts_at: meetingStartsAt,
+    submission_deadline: new Date(submitMs).toISOString(),
+    posting_deadline: new Date(postMs).toISOString(),
+    is_submission_open: now <= submitMs,
+    is_past_deadline: now > submitMs,
+    hours_until_deadline: (submitMs - now) / 3600000,
+    is_special: meetingType === "special",
+  };
 }
 
 export function AgendaItemsPanel({
@@ -183,12 +220,18 @@ export function AgendaItemsPanel({
   initialDeadline,
   isAdmin,
   userId,
+  meetingStartsAt,
+  meetingType,
+  officeTz,
 }: {
   meetingId: string;
   initialItems: AgendaItem[];
   initialDeadline: DeadlineInfo | null;
   isAdmin: boolean;
   userId: string;
+  meetingStartsAt?: string | null;
+  meetingType?: string | null;
+  officeTz?: string | null;
 }) {
   const [items, setItems] = useState<AgendaItem[]>(initialItems);
   const [deadline, setDeadline] = useState<DeadlineInfo | null>(initialDeadline);
@@ -207,6 +250,8 @@ export function AgendaItemsPanel({
   const [newMotion, setNewMotion] = useState<string>("");
   const [newFiscal, setNewFiscal] = useState<string>("");
   const [newAttachments, setNewAttachments] = useState<string>("");
+  const [createBusy, setCreateBusy] = useState<boolean>(false);
+  const [actionBusy, setActionBusy] = useState<string | null>(null);
 
   // Edit form
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -226,14 +271,32 @@ export function AgendaItemsPanel({
     setDeadline(d);
   }, [meetingId]);
 
-  const submissionClosed = deadline ? deadline.is_past_deadline : false;
-  const submissionOpen = !submissionClosed;
+  const fallbackDeadline = useMemo(
+    () => (meetingStartsAt ? buildFallbackDeadline(meetingId, meetingStartsAt, meetingType) : null),
+    [meetingId, meetingStartsAt, meetingType],
+  );
+
+  const effectiveDeadline = useMemo(() => {
+    if (deadline && isValidIso(deadline.submission_deadline) && isValidIso(deadline.posting_deadline)) {
+      return deadline;
+    }
+    return fallbackDeadline ?? deadline ?? null;
+  }, [deadline, fallbackDeadline]);
+
+  const submissionOpen = effectiveDeadline ? effectiveDeadline.is_submission_open : true;
+  const submissionClosed = !submissionOpen;
+  const hoursUntilDeadline =
+    typeof effectiveDeadline?.hours_until_deadline === "number" ? effectiveDeadline.hours_until_deadline : null;
+  const submissionDeadlineLabel = effectiveDeadline && isValidIso(effectiveDeadline.submission_deadline)
+    ? formatDeadline(effectiveDeadline.submission_deadline, officeTz)
+    : null;
+  const lateSubmissionsAllowed =
+    !!effectiveDeadline?.is_past_deadline && !!effectiveDeadline?.is_submission_open;
+  const canCreateNewItem = submissionOpen && newTitle.trim().length > 0 && !createBusy && !actionBusy;
 
   const showNewFormResolved = showNewForm && submissionOpen;
 
-  async function handleCreate(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-
+  async function createItem(submitImmediately: boolean) {
     if (submissionClosed) {
       setStatus("Submission deadline has passed.");
       return;
@@ -244,7 +307,10 @@ export function AgendaItemsPanel({
       return;
     }
 
-    setStatus("Creating...");
+    if (createBusy || actionBusy) return;
+
+    setCreateBusy(true);
+    setStatus(submitImmediately ? "Submitting..." : "Creating...");
     try {
       await fetchJson(`/api/meetings/${encodeURIComponent(meetingId)}/agenda-items`, {
         method: "POST",
@@ -256,10 +322,12 @@ export function AgendaItemsPanel({
           recommended_motion: newMotion.trim() || null,
           fiscal_impact: newFiscal.trim() || null,
           attachments_json: parseAttachmentsInput(newAttachments),
+          submit_immediately: submitImmediately,
         }),
       });
 
-      setStatus("Draft saved.");
+      setStatus(submitImmediately ? "Submitted for review." : "Draft saved.");
+      toast.success(submitImmediately ? "Agenda item submitted" : "Agenda item drafted");
       setNewTitle("");
       setNewCategory("discussion");
       setNewBackground("");
@@ -269,8 +337,17 @@ export function AgendaItemsPanel({
       setShowNewForm(false);
       await reload();
     } catch (err) {
-      setStatus(err instanceof Error ? err.message : "Failed to create");
+      const msg = err instanceof Error ? err.message : "Failed to create";
+      setStatus(msg);
+      toast.error(msg);
+    } finally {
+      setCreateBusy(false);
     }
+  }
+
+  async function handleCreate(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    await createItem(false);
   }
 
   function startEdit(item: AgendaItem) {
@@ -301,6 +378,8 @@ export function AgendaItemsPanel({
       return;
     }
 
+    if (actionBusy) return;
+    setActionBusy(`update:${itemId}`);
     setStatus("Updating...");
     try {
       await fetchJson(
@@ -320,10 +399,15 @@ export function AgendaItemsPanel({
       );
 
       setStatus("Draft updated.");
+      toast.success("Agenda item updated");
       setEditingId(null);
       await reload();
     } catch (err) {
-      setStatus(err instanceof Error ? err.message : "Failed to update");
+      const msg = err instanceof Error ? err.message : "Failed to update";
+      setStatus(msg);
+      toast.error(msg);
+    } finally {
+      setActionBusy(null);
     }
   }
 
@@ -337,6 +421,8 @@ export function AgendaItemsPanel({
       return;
     }
 
+    if (actionBusy) return;
+    setActionBusy(`submit:${itemId}`);
     setStatus("Submitting...");
     try {
       await fetchJson(
@@ -345,15 +431,22 @@ export function AgendaItemsPanel({
       );
 
       setStatus("");
+      toast.success("Agenda item submitted");
       await reload();
     } catch (err) {
-      setStatus(err instanceof Error ? err.message : "Failed to submit");
+      const msg = err instanceof Error ? err.message : "Failed to submit";
+      setStatus(msg);
+      toast.error(msg);
+    } finally {
+      setActionBusy(null);
     }
   }
 
   async function handleWithdraw(itemId: string) {
     if (!confirm("Withdraw this item?")) return;
 
+    if (actionBusy) return;
+    setActionBusy(`withdraw:${itemId}`);
     setStatus("Withdrawing...");
     try {
       await fetchJson(
@@ -362,9 +455,14 @@ export function AgendaItemsPanel({
       );
 
       setStatus("");
+      toast.success("Agenda item withdrawn");
       await reload();
     } catch (err) {
-      setStatus(err instanceof Error ? err.message : "Failed to withdraw");
+      const msg = err instanceof Error ? err.message : "Failed to withdraw";
+      setStatus(msg);
+      toast.error(msg);
+    } finally {
+      setActionBusy(null);
     }
   }
 
@@ -372,6 +470,8 @@ export function AgendaItemsPanel({
     const stateLabel = newState === "accepted" ? "accept" : newState === "rejected" ? "reject" : "table";
     if (!confirm(`Are you sure you want to ${stateLabel} this item?`)) return;
 
+    if (actionBusy) return;
+    setActionBusy(`review:${itemId}`);
     setStatus("Reviewing...");
     try {
       await fetchJson(
@@ -384,9 +484,14 @@ export function AgendaItemsPanel({
       );
 
       setStatus("");
+      toast.success(`Agenda item ${stateLabel}ed`);
       await reload();
     } catch (err) {
-      setStatus(err instanceof Error ? err.message : "Failed to review");
+      const msg = err instanceof Error ? err.message : "Failed to review";
+      setStatus(msg);
+      toast.error(msg);
+    } finally {
+      setActionBusy(null);
     }
   }
 
@@ -453,14 +558,17 @@ export function AgendaItemsPanel({
     try {
       await navigator.clipboard.writeText(buildAgendaText(acceptedItems));
       setStatus("Accepted agenda copied.");
+      toast.success("Accepted agenda copied");
     } catch {
       setStatus("Copy failed. Your browser may block clipboard access.");
+      toast.error("Copy failed");
     }
   }
 
   function handleDownloadCsv() {
     if (exportItems.length === 0) {
       setStatus("No agenda items to export.");
+      toast.error("No agenda items to export");
       return;
     }
     const csv = buildAgendaCsv(exportItems);
@@ -474,6 +582,7 @@ export function AgendaItemsPanel({
     link.remove();
     URL.revokeObjectURL(url);
     setStatus("CSV downloaded.");
+    toast.success("CSV downloaded");
   }
 
   return (
@@ -495,29 +604,38 @@ export function AgendaItemsPanel({
             </div>
             <span
               className={`rounded px-2 py-0.5 text-xs ${
-                submissionOpen ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
+                lateSubmissionsAllowed
+                  ? "bg-orange-100 text-orange-700"
+                  : submissionOpen
+                    ? "bg-green-100 text-green-700"
+                    : "bg-red-100 text-red-700"
               }`}
             >
-              {submissionOpen ? "Open" : "Closed"}
+              {lateSubmissionsAllowed ? "Late submissions" : submissionOpen ? "Open" : "Closed"}
             </span>
           </div>
           <div className="mt-3 space-y-2 text-sm">
             <div>
               <div className="text-xs text-foreground/70">Submission deadline</div>
               <div className="text-sm">
-                {formatDeadline(deadline?.submission_deadline)}
-                {deadline?.is_special ? " (Special Meeting)" : ""}
+                {formatDeadline(effectiveDeadline?.submission_deadline, officeTz)}
+                {effectiveDeadline?.is_special ? " (Special Meeting)" : ""}
               </div>
             </div>
             <div>
               <div className="text-xs text-foreground/70">Agenda posting deadline</div>
-              <div className="text-sm">{formatDeadline(deadline?.posting_deadline)}</div>
+              <div className="text-sm">{formatDeadline(effectiveDeadline?.posting_deadline, officeTz)}</div>
             </div>
-            {typeof deadline?.hours_until_deadline === "number" ? (
+            {typeof hoursUntilDeadline === "number" ? (
               <div className="text-xs text-foreground/70">
-                {deadline.hours_until_deadline >= 0
-                  ? `${deadline.hours_until_deadline.toFixed(1)} hours left to submit`
-                  : `${Math.abs(deadline.hours_until_deadline).toFixed(1)} hours past the deadline`}
+                {hoursUntilDeadline >= 0
+                  ? `${hoursUntilDeadline.toFixed(1)} hours left to submit`
+                  : `${Math.abs(hoursUntilDeadline).toFixed(1)} hours past the deadline`}
+              </div>
+            ) : null}
+            {lateSubmissionsAllowed ? (
+              <div className="text-xs text-foreground/70">
+                Late submissions are allowed. Items will be marked late.
               </div>
             ) : null}
           </div>
@@ -538,7 +656,9 @@ export function AgendaItemsPanel({
             </Button>
           </div>
           {!submissionOpen ? (
-            <div className="mt-3 text-xs text-foreground/60">Submissions are closed.</div>
+            <div className="mt-3 text-xs text-foreground/60">
+              Submissions closed{submissionDeadlineLabel ? ` on ${submissionDeadlineLabel}` : "."}
+            </div>
           ) : null}
         </div>
       </div>
@@ -622,7 +742,9 @@ export function AgendaItemsPanel({
               {showNewFormResolved ? "Hide form" : "Start new item"}
             </Button>
           ) : (
-            <span className="text-xs text-foreground/60">Submissions are closed</span>
+            <span className="text-xs text-foreground/60">
+              Submissions closed{submissionDeadlineLabel ? ` on ${submissionDeadlineLabel}` : ""}
+            </span>
           )}
         </div>
 
@@ -707,9 +829,17 @@ export function AgendaItemsPanel({
               </div>
             </details>
 
-            <div className="flex justify-end">
-              <Button type="submit" size="sm" disabled={!submissionOpen}>
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button type="submit" size="sm" variant="outline" disabled={!canCreateNewItem}>
                 Save Draft
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => void createItem(true)}
+                disabled={!canCreateNewItem}
+              >
+                Submit for review
               </Button>
             </div>
           </form>
@@ -777,7 +907,7 @@ export function AgendaItemsPanel({
                       className="w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
                     />
                     <div className="flex gap-2">
-                      <Button type="submit" size="sm" disabled={!submissionOpen}>
+                      <Button type="submit" size="sm" disabled={!submissionOpen || !editTitle.trim() || !!actionBusy}>
                         Save
                       </Button>
                       <Button type="button" variant="outline" size="sm" onClick={cancelEdit}>
@@ -798,7 +928,10 @@ export function AgendaItemsPanel({
                             {formatState(item.state)}
                           </span>
                           {item.is_late ? (
-                            <span className="rounded bg-orange-100 px-1.5 py-0.5 text-orange-700">
+                            <span
+                              className="rounded bg-orange-100 px-1.5 py-0.5 text-orange-700"
+                              title="Submitted after the deadline"
+                            >
                               Late
                             </span>
                           ) : null}
@@ -849,7 +982,7 @@ export function AgendaItemsPanel({
                           type="button"
                           size="sm"
                           onClick={() => startEdit(item)}
-                          disabled={!submissionOpen}
+                          disabled={!submissionOpen || !!actionBusy}
                           title={submissionOpen ? "Edit draft" : "Submission deadline has passed"}
                         >
                           Edit
@@ -858,7 +991,7 @@ export function AgendaItemsPanel({
                           type="button"
                           size="sm"
                           onClick={() => handleSubmit(item.id)}
-                          disabled={!submissionOpen}
+                          disabled={!submissionOpen || !!actionBusy}
                           title={submissionOpen ? "Submit for review" : "Submission deadline has passed"}
                         >
                           Submit
@@ -868,6 +1001,7 @@ export function AgendaItemsPanel({
                           variant="outline"
                           size="sm"
                           onClick={() => handleWithdraw(item.id)}
+                          disabled={!!actionBusy}
                         >
                           Withdraw
                         </Button>
@@ -879,6 +1013,7 @@ export function AgendaItemsPanel({
                           variant="outline"
                           size="sm"
                           onClick={() => handleWithdraw(item.id)}
+                          disabled={!!actionBusy}
                         >
                           Withdraw
                         </Button>
@@ -917,7 +1052,10 @@ export function AgendaItemsPanel({
                           {formatState(item.state)}
                         </span>
                         {item.is_late ? (
-                          <span className="rounded bg-orange-100 px-1.5 py-0.5 text-orange-700">
+                          <span
+                            className="rounded bg-orange-100 px-1.5 py-0.5 text-orange-700"
+                            title="Submitted after the deadline"
+                          >
                             Late
                           </span>
                         ) : null}
@@ -968,6 +1106,7 @@ export function AgendaItemsPanel({
                         type="button"
                         size="sm"
                         onClick={() => handleReview(item.id, "accepted")}
+                        disabled={!!actionBusy}
                       >
                         Accept
                       </Button>
@@ -976,6 +1115,7 @@ export function AgendaItemsPanel({
                         variant="outline"
                         size="sm"
                         onClick={() => handleReview(item.id, "rejected")}
+                        disabled={!!actionBusy}
                       >
                         Reject
                       </Button>
@@ -984,6 +1124,7 @@ export function AgendaItemsPanel({
                         variant="outline"
                         size="sm"
                         onClick={() => handleReview(item.id, "tabled")}
+                        disabled={!!actionBusy}
                       >
                         Table
                       </Button>

@@ -15,6 +15,7 @@ type AgendaItem = {
   background: string | null;
   recommended_motion: string | null;
   fiscal_impact: string | null;
+  attachments_json?: unknown;
   state: string;
 };
 
@@ -27,6 +28,38 @@ type Meeting = {
   location: string | null;
   committee_id: string | null;
 };
+
+function formatMeetingTypeLabel(type: string): string {
+  switch (type) {
+    case "board":
+      return "Board";
+    case "committee":
+      return "Committee";
+    case "icc":
+      return "ICC";
+    case "special":
+      return "Special";
+    default:
+      return type;
+  }
+}
+
+function normalizeAttachments(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const flat: string[] = [];
+  for (const entry of value) {
+    if (typeof entry === "string") {
+      const trimmed = entry.trim();
+      if (trimmed) flat.push(trimmed);
+      continue;
+    }
+    if (entry && typeof entry === "object" && "url" in entry && typeof (entry as { url: unknown }).url === "string") {
+      const trimmed = (entry as { url: string }).url.trim();
+      if (trimmed) flat.push(trimmed);
+    }
+  }
+  return flat;
+}
 
 function wrapLines(text: string, font: Awaited<ReturnType<PDFDocument["embedFont"]>>, size: number, maxWidth: number) {
   const words = text.replace(/\s+/g, " ").trim().split(" ");
@@ -87,6 +120,9 @@ export async function POST(request: NextRequest, { params }: Params) {
     return NextResponse.json({ error: agendaErr.message }, { status: 500 });
   }
 
+  const { data: officeTzData } = await supabase.rpc("office_timezone");
+  const officeTz = typeof officeTzData === "string" && officeTzData.length > 0 ? officeTzData : null;
+
   const acceptedItems = ((agendaItems ?? []) as AgendaItem[]).filter((item) =>
     ["accepted", "tabled"].includes(item.state),
   );
@@ -129,8 +165,43 @@ export async function POST(request: NextRequest, { params }: Params) {
   drawLine("Agenda", 18, true);
   drawLine((meeting as Meeting).title, 14, true);
 
-  const startLabel = new Date((meeting as Meeting).starts_at).toLocaleString();
-  const endLabel = new Date((meeting as Meeting).ends_at).toLocaleTimeString();
+  const startDate = new Date((meeting as Meeting).starts_at);
+  const endDate = new Date((meeting as Meeting).ends_at);
+  const startLabel = officeTz
+    ? new Intl.DateTimeFormat(undefined, {
+        timeZone: officeTz,
+        weekday: "short",
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        timeZoneName: "short",
+      }).format(startDate)
+    : startDate.toLocaleString();
+  const endLabel = officeTz
+    ? new Intl.DateTimeFormat(undefined, {
+        timeZone: officeTz,
+        hour: "2-digit",
+        minute: "2-digit",
+        timeZoneName: "short",
+      }).format(endDate)
+    : endDate.toLocaleTimeString();
+  const admin = getSupabaseAdminClient();
+  let committeeLabel: string | null = null;
+  if ((meeting as Meeting).committee_id) {
+    const { data: committeeRow } = await admin
+      .from("committees")
+      .select("name")
+      .eq("id", (meeting as Meeting).committee_id)
+      .maybeSingle();
+    committeeLabel = committeeRow?.name ?? null;
+  }
+
+  drawLine(`Type: ${formatMeetingTypeLabel((meeting as Meeting).meeting_type)}`, 11, false);
+  if (committeeLabel) {
+    drawLine(`Committee: ${committeeLabel}`, 11, false);
+  }
   drawLine(`${startLabel} - ${endLabel}`, 11, false);
   if ((meeting as Meeting).location) {
     drawLine(`Location: ${(meeting as Meeting).location}`, 11, false);
@@ -152,6 +223,10 @@ export async function POST(request: NextRequest, { params }: Params) {
       if (item.fiscal_impact) {
         drawParagraph(`Fiscal impact: ${item.fiscal_impact}`, 10, false);
       }
+      const attachments = normalizeAttachments(item.attachments_json);
+      if (attachments.length > 0) {
+        drawParagraph(`Attachments: ${attachments.join(", ")}`, 10, false);
+      }
       y -= 6;
     });
   }
@@ -161,7 +236,6 @@ export async function POST(request: NextRequest, { params }: Params) {
   const timestamp = Date.now();
   const storagePath = `agenda/${meetingId}/${timestamp}.pdf`;
 
-  const admin = getSupabaseAdminClient();
   const uploadRes = await admin.storage
     .from(bucket)
     .upload(storagePath, Buffer.from(pdfBytes), {

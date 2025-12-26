@@ -15,6 +15,7 @@ type MeetingActionsProps = {
     remote_url: string | null;
     livestream_url: string | null;
   };
+  officeTz?: string | null;
 };
 
 function escapeIcsText(text: string): string {
@@ -71,8 +72,36 @@ function buildIcs(meeting: MeetingActionsProps["meeting"]): string {
   return lines.join("\r\n");
 }
 
-export function MeetingActions({ meeting }: MeetingActionsProps) {
+export function MeetingActions({ meeting, officeTz }: MeetingActionsProps) {
   const [status, setStatus] = useState("");
+
+  function formatSummaryDate(iso: string): string {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "";
+    if (!officeTz) return d.toLocaleString();
+    return new Intl.DateTimeFormat(undefined, {
+      timeZone: officeTz,
+      weekday: "short",
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZoneName: "short",
+    }).format(d);
+  }
+
+  function formatSummaryTime(iso: string): string {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "";
+    if (!officeTz) return d.toLocaleTimeString();
+    return new Intl.DateTimeFormat(undefined, {
+      timeZone: officeTz,
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZoneName: "short",
+    }).format(d);
+  }
 
   async function copyText(label: string, text: string) {
     try {
@@ -84,8 +113,8 @@ export function MeetingActions({ meeting }: MeetingActionsProps) {
   }
 
   function buildSummary() {
-    const start = new Date(meeting.starts_at).toLocaleString();
-    const end = new Date(meeting.ends_at).toLocaleTimeString();
+    const start = formatSummaryDate(meeting.starts_at);
+    const end = formatSummaryTime(meeting.ends_at);
     const lines = [
       meeting.title,
       `${start} - ${end}`,

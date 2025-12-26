@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useState, type ChangeEvent, type FormEvent } from "react";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 
@@ -73,6 +74,7 @@ const ALLOWED_MIME_TYPES = new Set([
   "text/plain",
   "text/csv",
 ]);
+const FILE_ACCEPT = ALLOWED_EXTENSIONS.join(",");
 
 function validateUploadFile(file: File): string | null {
   const name = file.name.toLowerCase();
@@ -162,6 +164,8 @@ export function MeetingDocsPanel({
   const [agendaUploadProgress, setAgendaUploadProgress] = useState<number | null>(null);
   const minutesUploading = minutesUploadProgress !== null;
   const agendaUploading = agendaUploadProgress !== null;
+  const canUploadMinutes = !!uploadFile && minutesTitle.trim().length > 0 && !minutesUploading;
+  const canUploadAgenda = !!agendaFile && agendaTitle.trim().length > 0 && !agendaUploading;
 
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [minutesTitle, setMinutesTitle] = useState<string>("");
@@ -196,11 +200,18 @@ export function MeetingDocsPanel({
       type === "agenda"
         ? { agenda_posted_at: new Date().toISOString() }
         : { minutes_posted_at: new Date().toISOString() };
-    await fetchJson(`/api/admin/meetings/${encodeURIComponent(meetingId)}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
+    try {
+      await fetchJson(`/api/admin/meetings/${encodeURIComponent(meetingId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      toast.success(`${type === "agenda" ? "Agenda" : "Minutes"} marked posted`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to mark posted";
+      setStatus(msg);
+      toast.error(msg);
+    }
   }
 
   async function handleMinutesUpload(e: FormEvent<HTMLFormElement>) {
@@ -274,8 +285,11 @@ export function MeetingDocsPanel({
       setVersionSourceId("");
       setMinutesMarkPosted(true);
       await reload();
+      toast.success("Minutes uploaded");
     } catch (err) {
-      setStatus(err instanceof Error ? err.message : "Minutes upload failed");
+      const msg = err instanceof Error ? err.message : "Minutes upload failed";
+      setStatus(msg);
+      toast.error(msg);
     } finally {
       setMinutesUploadProgress(null);
     }
@@ -352,8 +366,11 @@ export function MeetingDocsPanel({
       setAgendaVersionSourceId("");
       setAgendaMarkPosted(true);
       await reload();
+      toast.success("Agenda uploaded");
     } catch (err) {
-      setStatus(err instanceof Error ? err.message : "Agenda upload failed");
+      const msg = err instanceof Error ? err.message : "Agenda upload failed";
+      setStatus(msg);
+      toast.error(msg);
     } finally {
       setAgendaUploadProgress(null);
     }
@@ -373,7 +390,9 @@ export function MeetingDocsPanel({
       window.open(signedUrl, "_blank");
       setStatus("");
     } catch (err) {
-      setStatus(err instanceof Error ? err.message : "Failed to download");
+      const msg = err instanceof Error ? err.message : "Failed to download";
+      setStatus(msg);
+      toast.error(msg);
     }
   }
 
@@ -389,8 +408,11 @@ export function MeetingDocsPanel({
       });
       setStatus("");
       await reload();
+      toast.success("Visibility updated");
     } catch (err) {
-      setStatus(err instanceof Error ? err.message : "Failed to update visibility");
+      const msg = err instanceof Error ? err.message : "Failed to update visibility";
+      setStatus(msg);
+      toast.error(msg);
     }
   }
 
@@ -407,8 +429,11 @@ export function MeetingDocsPanel({
       });
       setStatus("");
       await reload();
+      toast.success("Agenda PDF generated");
     } catch (err) {
-      setStatus(err instanceof Error ? err.message : "Agenda generation failed");
+      const msg = err instanceof Error ? err.message : "Agenda generation failed";
+      setStatus(msg);
+      toast.error(msg);
     }
   }
 
@@ -473,6 +498,7 @@ export function MeetingDocsPanel({
                   <label className="mb-1 block text-xs text-foreground/70">File *</label>
                   <input
                     type="file"
+                    accept={FILE_ACCEPT}
                     onChange={(e: ChangeEvent<HTMLInputElement>) => {
                       const f = e.target.files?.[0] ?? null;
                       if (f) {
@@ -519,7 +545,7 @@ export function MeetingDocsPanel({
                 </label>
               </div>
               <div className="flex justify-end">
-                <Button type="submit" size="sm" disabled={minutesUploading}>
+                <Button type="submit" size="sm" disabled={!canUploadMinutes}>
                   Upload Minutes
                 </Button>
               </div>
@@ -603,6 +629,7 @@ export function MeetingDocsPanel({
           <div>
             <div className="text-sm font-medium">Agenda documents</div>
             <div className="text-xs text-foreground/70">Upload or generate agendas for public posting.</div>
+            <div className="text-xs text-foreground/60">Accepted items: {acceptedAgendaCount}</div>
           </div>
           {isAdmin ? (
             <div className="flex flex-wrap items-center gap-2">
@@ -627,6 +654,13 @@ export function MeetingDocsPanel({
             </div>
           ) : null}
         </div>
+        {!isAdmin ? (
+          <div className="mt-2 text-xs text-foreground/60">
+            {acceptedAgendaCount > 0
+              ? "Agenda PDF generation is restricted to admins."
+              : "No accepted agenda items yet. The agenda PDF will be available once items are accepted by an admin."}
+          </div>
+        ) : null}
         {!canGenerateAgenda && isAdmin ? (
           <div className="mt-2 text-xs text-foreground/60">
             Add at least one accepted agenda item to generate the PDF.
@@ -678,6 +712,7 @@ export function MeetingDocsPanel({
                   <label className="mb-1 block text-xs text-foreground/70">File *</label>
                   <input
                     type="file"
+                    accept={FILE_ACCEPT}
                     onChange={(e: ChangeEvent<HTMLInputElement>) => {
                       const f = e.target.files?.[0] ?? null;
                       if (f) {
@@ -724,7 +759,7 @@ export function MeetingDocsPanel({
                 </label>
               </div>
               <div className="flex justify-end">
-                <Button type="submit" size="sm" disabled={agendaUploading}>
+                <Button type="submit" size="sm" disabled={!canUploadAgenda}>
                   Upload Agenda
                 </Button>
               </div>
