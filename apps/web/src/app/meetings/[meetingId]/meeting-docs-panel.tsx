@@ -164,8 +164,6 @@ export function MeetingDocsPanel({
   const [agendaUploadProgress, setAgendaUploadProgress] = useState<number | null>(null);
   const minutesUploading = minutesUploadProgress !== null;
   const agendaUploading = agendaUploadProgress !== null;
-  const canUploadMinutes = !!uploadFile && minutesTitle.trim().length > 0 && !minutesUploading;
-  const canUploadAgenda = !!agendaFile && agendaTitle.trim().length > 0 && !agendaUploading;
 
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [minutesTitle, setMinutesTitle] = useState<string>("");
@@ -178,6 +176,8 @@ export function MeetingDocsPanel({
   const [agendaDescription, setAgendaDescription] = useState<string>("");
   const [agendaVersionSourceId, setAgendaVersionSourceId] = useState<string>("");
   const [agendaMarkPosted, setAgendaMarkPosted] = useState<boolean>(true);
+  const canUploadMinutes = !!uploadFile && minutesTitle.trim().length > 0 && !minutesUploading;
+  const canUploadAgenda = !!agendaFile && agendaTitle.trim().length > 0 && !agendaUploading;
 
   const fallbackVisibility = committeeId ? "committee_only" : "internal";
 
