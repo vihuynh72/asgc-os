@@ -53,7 +53,13 @@ export default async function AdminOfficeHoursPage() {
     }) ?? [];
 
   return (
-    <PageShell title="Office Hours (Admin)" description="Day/week/month calendar view with filters." containerClassName="max-w-7xl">
+    <PageShell
+      title="Office Hours (Admin)"
+      description="Day/week/month calendar view with filters."
+      containerClassName="max-w-7xl"
+      backHref="/admin"
+      backLabel="Back to Admin"
+    >
       <AdminOfficeHoursPanel initialUsers={users as UserRow[]} />
     </PageShell>
   );

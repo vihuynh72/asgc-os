@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState, type ChangeEvent, type FormEvent } from "react";
+import { useCallback, useMemo, useState, type ChangeEvent, type FormEvent } from "react";
 
 import { Button } from "@/components/ui/button";
 
@@ -9,6 +9,7 @@ type AgendaItem = {
   meeting_id: string;
   submitted_by: string;
   title: string;
+  submitted_at?: string | null;
   category: string;
   background: string | null;
   recommended_motion: string | null;
@@ -27,6 +28,7 @@ type DeadlineInfo = {
   posting_deadline: string;
   is_submission_open: boolean;
   is_special: boolean;
+  hours_until_deadline?: number | null;
 };
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -94,6 +96,45 @@ function stateColor(state: string): string {
   }
 }
 
+function toCsvValue(value: string | number | boolean | null | undefined): string {
+  const stringValue = value === null || value === undefined ? "" : String(value);
+  if (/[",\n]/.test(stringValue)) {
+    return `"${stringValue.replace(/"/g, "\"\"")}"`;
+  }
+  return stringValue;
+}
+
+function buildAgendaCsv(items: AgendaItem[]): string {
+  const headers = [
+    "Title",
+    "Category",
+    "State",
+    "Late",
+    "Submitted At",
+    "Submitted By",
+    "Recommended Motion",
+    "Fiscal Impact",
+  ];
+  const rows = items.map((item) => [
+    item.title,
+    item.category,
+    item.state,
+    item.is_late ? "yes" : "no",
+    item.submitted_at ?? item.created_at,
+    item.submitted_by,
+    item.recommended_motion ?? "",
+    item.fiscal_impact ?? "",
+  ]);
+  return [headers, ...rows].map((row) => row.map(toCsvValue).join(",")).join("\n");
+}
+
+function buildAgendaText(items: AgendaItem[]): string {
+  if (items.length === 0) return "No accepted agenda items.";
+  return items
+    .map((item, idx) => `${idx + 1}. ${item.title} (${formatCategory(item.category)})`)
+    .join("\n");
+}
+
 export function AgendaItemsPanel({
   meetingId,
   initialItems,
@@ -110,6 +151,11 @@ export function AgendaItemsPanel({
   const [items, setItems] = useState<AgendaItem[]>(initialItems);
   const [deadline, setDeadline] = useState<DeadlineInfo | null>(initialDeadline);
   const [status, setStatus] = useState<string>("");
+  const [agendaSearch, setAgendaSearch] = useState<string>("");
+  const [agendaStateFilter, setAgendaStateFilter] = useState<string>("all");
+  const [agendaCategoryFilter, setAgendaCategoryFilter] = useState<string>("all");
+  const [agendaLateOnly, setAgendaLateOnly] = useState<boolean>(false);
+  const [agendaSort, setAgendaSort] = useState<"recent" | "title">("recent");
 
   // New item form
   const [showNewForm, setShowNewForm] = useState<boolean>(false);
@@ -277,6 +323,89 @@ export function AgendaItemsPanel({
 
   const myItems = items.filter((i) => i.submitted_by === userId);
   const allItems = items;
+  const agendaFiltersActive =
+    agendaSearch.trim().length > 0 ||
+    agendaStateFilter !== "all" ||
+    agendaCategoryFilter !== "all" ||
+    agendaLateOnly ||
+    agendaSort !== "recent";
+
+  const agendaSummary = useMemo(() => {
+    const total = items.length;
+    const submitted = items.filter((i) => i.state === "submitted").length;
+    const accepted = items.filter((i) => i.state === "accepted").length;
+    const late = items.filter((i) => i.is_late).length;
+    return { total, submitted, accepted, late };
+  }, [items]);
+
+  function resetAgendaFilters() {
+    setAgendaSearch("");
+    setAgendaStateFilter("all");
+    setAgendaCategoryFilter("all");
+    setAgendaLateOnly(false);
+    setAgendaSort("recent");
+  }
+
+  const applyAgendaFilters = useCallback(
+    (list: AgendaItem[]) => {
+      const query = agendaSearch.trim().toLowerCase();
+      let filtered = list.filter((item) => {
+        if (agendaStateFilter !== "all" && item.state !== agendaStateFilter) return false;
+        if (agendaCategoryFilter !== "all" && item.category !== agendaCategoryFilter) return false;
+        if (agendaLateOnly && !item.is_late) return false;
+        if (!query) return true;
+        const haystack = `${item.title} ${item.background ?? ""} ${item.recommended_motion ?? ""}`.toLowerCase();
+        return haystack.includes(query);
+      });
+
+      filtered = [...filtered].sort((a, b) => {
+        if (agendaSort === "title") return a.title.localeCompare(b.title);
+        const aTime = new Date(a.submitted_at ?? a.created_at).getTime();
+        const bTime = new Date(b.submitted_at ?? b.created_at).getTime();
+        return bTime - aTime;
+      });
+      return filtered;
+    },
+    [agendaSearch, agendaStateFilter, agendaCategoryFilter, agendaLateOnly, agendaSort],
+  );
+
+  const filteredMyItems = useMemo(() => applyAgendaFilters(myItems), [applyAgendaFilters, myItems]);
+
+  const filteredAllItems = useMemo(() => applyAgendaFilters(allItems), [applyAgendaFilters, allItems]);
+
+  const acceptedItems = useMemo(
+    () => items.filter((item) => item.state === "accepted" || item.state === "tabled"),
+    [items],
+  );
+
+  const exportItems = isAdmin ? filteredAllItems : filteredMyItems;
+
+  async function handleCopyAccepted() {
+    try {
+      await navigator.clipboard.writeText(buildAgendaText(acceptedItems));
+      setStatus("Accepted agenda copied.");
+    } catch {
+      setStatus("Copy failed. Your browser may block clipboard access.");
+    }
+  }
+
+  function handleDownloadCsv() {
+    if (exportItems.length === 0) {
+      setStatus("No agenda items to export.");
+      return;
+    }
+    const csv = buildAgendaCsv(exportItems);
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `agenda_items_${meetingId}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    setStatus("CSV downloaded.");
+  }
 
   return (
     <div className="space-y-6">
@@ -286,6 +415,89 @@ export function AgendaItemsPanel({
         </div>
       ) : null}
 
+      <div className="rounded-lg border border-foreground/10 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="text-sm font-medium">Agenda filters</div>
+          <div className="text-xs text-foreground/60">
+            Total {agendaSummary.total} • Submitted {agendaSummary.submitted} • Accepted {agendaSummary.accepted} • Late{" "}
+            {agendaSummary.late}
+          </div>
+        </div>
+        <div className="mt-3 grid gap-2 sm:grid-cols-5">
+          <label className="space-y-1 text-xs text-foreground/70 sm:col-span-2">
+            <span>Search</span>
+            <input
+              type="search"
+              className="h-8 w-full rounded border border-foreground/20 bg-background px-2 text-sm"
+              value={agendaSearch}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => setAgendaSearch(e.target.value)}
+              placeholder="Title, background, motion..."
+            />
+          </label>
+          <label className="space-y-1 text-xs text-foreground/70">
+            <span>State</span>
+            <select
+              className="h-8 w-full rounded border border-foreground/20 bg-background px-2 text-sm"
+              value={agendaStateFilter}
+              onChange={(e) => setAgendaStateFilter(e.target.value)}
+            >
+              <option value="all">All</option>
+              <option value="draft">Draft</option>
+              <option value="submitted">Submitted</option>
+              <option value="accepted">Accepted</option>
+              <option value="rejected">Rejected</option>
+              <option value="tabled">Tabled</option>
+              <option value="withdrawn">Withdrawn</option>
+            </select>
+          </label>
+          <label className="space-y-1 text-xs text-foreground/70">
+            <span>Category</span>
+            <select
+              className="h-8 w-full rounded border border-foreground/20 bg-background px-2 text-sm"
+              value={agendaCategoryFilter}
+              onChange={(e) => setAgendaCategoryFilter(e.target.value)}
+            >
+              <option value="all">All</option>
+              <option value="action">Action</option>
+              <option value="discussion">Discussion</option>
+              <option value="information">Information</option>
+              <option value="consent">Consent</option>
+              <option value="other">Other</option>
+            </select>
+          </label>
+          <label className="space-y-1 text-xs text-foreground/70">
+            <span>Sort</span>
+            <select
+              className="h-8 w-full rounded border border-foreground/20 bg-background px-2 text-sm"
+              value={agendaSort}
+              onChange={(e) => setAgendaSort(e.target.value as "recent" | "title")}
+            >
+              <option value="recent">Most recent</option>
+              <option value="title">Title</option>
+            </select>
+          </label>
+        </div>
+        <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-foreground/70">
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={agendaLateOnly}
+              onChange={(e) => setAgendaLateOnly(e.target.checked)}
+            />
+            Late only
+          </label>
+          <Button variant="ghost" size="sm" onClick={resetAgendaFilters} disabled={!agendaFiltersActive}>
+            Reset filters
+          </Button>
+          <Button variant="outline" size="sm" onClick={handleCopyAccepted} disabled={acceptedItems.length === 0}>
+            Copy accepted agenda
+          </Button>
+          <Button variant="outline" size="sm" onClick={handleDownloadCsv} disabled={exportItems.length === 0}>
+            Download CSV
+          </Button>
+        </div>
+      </div>
+
       {/* Deadline info */}
       {deadline ? (
         <div className="rounded-lg border border-foreground/10 bg-foreground/5 p-4">
@@ -294,6 +506,18 @@ export function AgendaItemsPanel({
             {new Date(deadline.submission_deadline).toLocaleString()}
             {deadline.is_special ? " (Special Meeting)" : ""}
           </div>
+          {deadline.posting_deadline ? (
+            <div className="mt-2 text-xs text-foreground/70">
+              Agenda posting deadline: {new Date(deadline.posting_deadline).toLocaleString()}
+            </div>
+          ) : null}
+          {typeof deadline.hours_until_deadline === "number" ? (
+            <div className="mt-1 text-xs text-foreground/70">
+              {deadline.hours_until_deadline >= 0
+                ? `${deadline.hours_until_deadline.toFixed(1)} hours left to submit`
+                : `${Math.abs(deadline.hours_until_deadline).toFixed(1)} hours past the deadline`}
+            </div>
+          ) : null}
           <div className="mt-1 text-xs text-foreground/70">
             {deadline.is_submission_open ? (
               <span className="text-green-600">Submissions are open</span>
@@ -387,12 +611,16 @@ export function AgendaItemsPanel({
 
       {/* My items section */}
       <div>
-        <h3 className="mb-3 text-sm font-medium">My Submissions ({myItems.length})</h3>
-        {myItems.length === 0 ? (
-          <div className="text-sm text-foreground/70">You have not submitted any items for this meeting.</div>
+        <h3 className="mb-3 text-sm font-medium">
+          My Submissions ({filteredMyItems.length} of {myItems.length})
+        </h3>
+        {filteredMyItems.length === 0 ? (
+          <div className="text-sm text-foreground/70">
+            {agendaFiltersActive ? "No submissions match the current filters." : "You have not submitted any items for this meeting."}
+          </div>
         ) : (
           <div className="space-y-3">
-            {myItems.map((item) => (
+            {filteredMyItems.map((item) => (
               <div key={item.id} className="rounded-lg border border-foreground/10 p-4">
                 {editingId === item.id ? (
                   <form onSubmit={(e) => handleUpdate(e, item.id)} className="space-y-3">
@@ -523,12 +751,16 @@ export function AgendaItemsPanel({
       {/* Admin review section */}
       {isAdmin ? (
         <div>
-          <h3 className="mb-3 text-sm font-medium">All Submissions ({allItems.length})</h3>
-          {allItems.length === 0 ? (
-            <div className="text-sm text-foreground/70">No submissions for this meeting.</div>
+          <h3 className="mb-3 text-sm font-medium">
+            All Submissions ({filteredAllItems.length} of {allItems.length})
+          </h3>
+          {filteredAllItems.length === 0 ? (
+            <div className="text-sm text-foreground/70">
+              {agendaFiltersActive ? "No submissions match the current filters." : "No submissions for this meeting."}
+            </div>
           ) : (
             <div className="space-y-3">
-              {allItems.map((item) => (
+              {filteredAllItems.map((item) => (
                 <div key={item.id} className="rounded-lg border border-foreground/10 p-4">
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div>

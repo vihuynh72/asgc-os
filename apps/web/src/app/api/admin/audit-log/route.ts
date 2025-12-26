@@ -27,8 +27,71 @@ export async function GET(request: NextRequest) {
   const offset = Math.max(parseInt(url.searchParams.get("offset") ?? "0", 10), 0);
   const actionKey = url.searchParams.get("action_key") ?? null;
   const actorId = url.searchParams.get("actor_id") ?? null;
+  const actorQuery = url.searchParams.get("actor")?.trim() ?? null;
+  const targetType = url.searchParams.get("target_type") ?? null;
+  const targetId = url.searchParams.get("target_id") ?? null;
   const startDate = url.searchParams.get("start") ?? null;
   const endDate = url.searchParams.get("end") ?? null;
+
+  async function fetchActionKeys() {
+    const { data: actionKeys } = await admin.from("audit_log").select("action_key").limit(1000);
+    return [...new Set((actionKeys ?? []).map((a: { action_key: string }) => a.action_key))].sort();
+  }
+
+  async function fetchTargetTypes() {
+    const { data: targetTypes } = await admin.from("audit_log").select("target_type").limit(1000);
+    return [...new Set((targetTypes ?? []).map((a: { target_type: string | null }) => a.target_type).filter(Boolean))].sort();
+  }
+
+  let resolvedActorIds: string[] | null = null;
+  if (actorQuery) {
+    const ids = new Set<string>();
+    const like = `%${actorQuery}%`;
+
+    if (/^[0-9a-f-]{36}$/i.test(actorQuery)) {
+      ids.add(actorQuery);
+    }
+
+    const { data: nameMatches, error: nameErr } = await admin
+      .from("profiles")
+      .select("id")
+      .ilike("display_name", like)
+      .limit(200);
+
+    if (nameErr) {
+      console.error("[audit-log] Error resolving actor names:", nameErr);
+      return NextResponse.json({ error: "internal_error" }, { status: 500 });
+    }
+
+    const { data: emailMatches, error: emailErr } = await admin
+      .from("profile_private")
+      .select("id")
+      .ilike("email", like)
+      .limit(200);
+
+    if (emailErr) {
+      console.error("[audit-log] Error resolving actor emails:", emailErr);
+      return NextResponse.json({ error: "internal_error" }, { status: 500 });
+    }
+
+    for (const row of nameMatches ?? []) ids.add(row.id);
+    for (const row of emailMatches ?? []) ids.add(row.id);
+
+    resolvedActorIds = [...ids];
+    if (resolvedActorIds.length === 0) {
+      const [actionKeys, targetTypes] = await Promise.all([fetchActionKeys(), fetchTargetTypes()]);
+      return NextResponse.json({
+        logs: [],
+        actionKeys,
+        targetTypes,
+        pagination: {
+          limit,
+          offset,
+          hasMore: false,
+        },
+      });
+    }
+  }
 
   let query = admin
     .from("audit_log")
@@ -41,6 +104,15 @@ export async function GET(request: NextRequest) {
   }
   if (actorId) {
     query = query.eq("actor_user_id", actorId);
+  }
+  if (resolvedActorIds) {
+    query = query.in("actor_user_id", resolvedActorIds);
+  }
+  if (targetType) {
+    query = query.eq("target_type", targetType);
+  }
+  if (targetId) {
+    query = query.eq("target_id", targetId);
   }
   if (startDate) {
     query = query.gte("occurred_at", startDate);
@@ -87,16 +159,12 @@ export async function GET(request: NextRequest) {
   });
 
   // Get distinct action keys for filter dropdown
-  const { data: actionKeys } = await admin
-    .from("audit_log")
-    .select("action_key")
-    .limit(1000);
-
-  const uniqueActionKeys = [...new Set((actionKeys ?? []).map((a: { action_key: string }) => a.action_key))].sort();
+  const [uniqueActionKeys, uniqueTargetTypes] = await Promise.all([fetchActionKeys(), fetchTargetTypes()]);
 
   return NextResponse.json({
     logs: enrichedLogs,
     actionKeys: uniqueActionKeys,
+    targetTypes: uniqueTargetTypes,
     pagination: {
       limit,
       offset,

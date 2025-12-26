@@ -17,7 +17,9 @@ export async function GET(request: NextRequest) {
 
   let query = supabase
     .from("meetings")
-    .select("id,committee_id,meeting_type,title,description,location,starts_at,ends_at,status,created_at,updated_at")
+    .select(
+      "id,committee_id,meeting_type,title,description,location,remote_url,livestream_url,public_comment_instructions,notice_posted_at,agenda_posted_at,minutes_posted_at,starts_at,ends_at,status,created_at,updated_at",
+    )
     .order("starts_at", { ascending: false })
     .limit(200);
 
@@ -49,6 +51,9 @@ export async function POST(request: NextRequest) {
     committee_id?: string;
     description?: string;
     location?: string;
+    remote_url?: string;
+    livestream_url?: string;
+    public_comment_instructions?: string;
   };
   try {
     body = (await request.json()) as typeof body;
@@ -77,6 +82,19 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "ends_at_required" }, { status: 400 });
   }
 
+  if (body.remote_url !== undefined && typeof body.remote_url !== "string") {
+    return NextResponse.json({ error: "invalid_remote_url" }, { status: 400 });
+  }
+  if (body.livestream_url !== undefined && typeof body.livestream_url !== "string") {
+    return NextResponse.json({ error: "invalid_livestream_url" }, { status: 400 });
+  }
+  if (
+    body.public_comment_instructions !== undefined &&
+    typeof body.public_comment_instructions !== "string"
+  ) {
+    return NextResponse.json({ error: "invalid_public_comment_instructions" }, { status: 400 });
+  }
+
   const { data, error } = await supabase.rpc("admin_create_meeting", {
     _meeting_type: meetingType,
     _title: title,
@@ -85,6 +103,9 @@ export async function POST(request: NextRequest) {
     _committee_id: body.committee_id ?? null,
     _description: body.description ?? null,
     _location: body.location ?? null,
+    _remote_url: body.remote_url ?? null,
+    _livestream_url: body.livestream_url ?? null,
+    _public_comment_instructions: body.public_comment_instructions ?? null,
   });
 
   if (error) {
