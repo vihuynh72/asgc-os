@@ -58,13 +58,10 @@ function buildIcs(meeting: MeetingActionsProps["meeting"]): string {
     lines.push(`LOCATION:${escapeIcsText(meeting.location)}`);
   }
 
-  const descriptionParts = [meeting.description ?? ""]
-    .filter(Boolean)
-    .concat(
-      meeting.remote_url ? `Remote: ${meeting.remote_url}` : null,
-      meeting.livestream_url ? `Livestream: ${meeting.livestream_url}` : null,
-    )
-    .filter(Boolean) as string[];
+  const descriptionParts: string[] = [];
+  if (meeting.description) descriptionParts.push(meeting.description);
+  if (meeting.remote_url) descriptionParts.push(`Remote: ${meeting.remote_url}`);
+  if (meeting.livestream_url) descriptionParts.push(`Livestream: ${meeting.livestream_url}`);
 
   if (descriptionParts.length > 0) {
     lines.push(`DESCRIPTION:${escapeIcsText(descriptionParts.join("\n"))}`);
