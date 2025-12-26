@@ -3,12 +3,12 @@ import { redirect } from "next/navigation";
 import { PageShell } from "@/components/page-shell";
 import { getSupabaseServerComponentClient } from "@/lib/supabaseServerComponent";
 
-import { OfficeHoursExportPanel } from "./office-hours-export-panel";
+import { OfficeHoursCsvPanel } from "./office-hours-csv-panel";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-export default async function AdminOfficeHoursExportPage({
+export default async function OfficeHoursCsvPage({
   searchParams,
 }: {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
@@ -20,12 +20,12 @@ export default async function AdminOfficeHoursExportPage({
   } = await supabase.auth.getUser();
 
   if (!user) {
-    redirect("/login?redirectTo=/admin/office-hours/export");
+    redirect("/login?redirectTo=/admin/office-hours/export/csv");
   }
 
   const { data: isAdmin, error: adminErr } = await supabase.rpc("is_admin", { _uid: user.id });
   if (adminErr || !isAdmin) {
-    redirect("/unauthorized?reason=admin&redirectTo=/admin/office-hours/export");
+    redirect("/unauthorized?reason=admin&redirectTo=/admin/office-hours/export/csv");
   }
 
   const resolvedSearchParams = await searchParams;
@@ -36,15 +36,19 @@ export default async function AdminOfficeHoursExportPage({
         ? resolvedSearchParams?.weekStart[0] ?? null
         : null;
 
+  const backHref = weekStart
+    ? `/admin/office-hours/export?weekStart=${encodeURIComponent(weekStart)}`
+    : "/admin/office-hours/export";
+
   return (
     <PageShell
-      title="Office Hours Export"
-      description="View weekly totals/deficits in the browser, with CSV download."
+      title="Office Hours CSV"
+      description="View CSV output in the browser."
       containerClassName="max-w-7xl"
-      backHref="/admin/office-hours"
-      backLabel="Back to Office Hours"
+      backHref={backHref}
+      backLabel="Back to Table View"
     >
-      <OfficeHoursExportPanel initialWeekStart={weekStart} />
+      <OfficeHoursCsvPanel initialWeekStart={weekStart} />
     </PageShell>
   );
 }

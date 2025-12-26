@@ -19,6 +19,7 @@ type AuditLogRow = {
 type AuditLogResponse = {
   logs: AuditLogRow[];
   actionKeys: string[];
+  targetTypes: string[];
   pagination: {
     limit: number;
     offset: number;
@@ -55,6 +56,7 @@ function formatMetadata(metadata: Record<string, unknown>): string {
 export function AuditLogPanel() {
   const [logs, setLogs] = useState<AuditLogRow[]>([]);
   const [actionKeys, setActionKeys] = useState<string[]>([]);
+  const [targetTypes, setTargetTypes] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [hasMore, setHasMore] = useState(false);
   const [offset, setOffset] = useState(0);
@@ -62,6 +64,9 @@ export function AuditLogPanel() {
 
   // Filters
   const [filterAction, setFilterAction] = useState<string>("");
+  const [filterActor, setFilterActor] = useState<string>("");
+  const [filterTargetType, setFilterTargetType] = useState<string>("");
+  const [filterTargetId, setFilterTargetId] = useState<string>("");
   const [filterStartDate, setFilterStartDate] = useState<string>("");
   const [filterEndDate, setFilterEndDate] = useState<string>("");
 
@@ -71,6 +76,9 @@ export function AuditLogPanel() {
       const currentOffset = reset ? 0 : offset;
       const params = new URLSearchParams({ limit: String(limit), offset: String(currentOffset) });
       if (filterAction) params.set("action_key", filterAction);
+      if (filterActor) params.set("actor", filterActor);
+      if (filterTargetType) params.set("target_type", filterTargetType);
+      if (filterTargetId) params.set("target_id", filterTargetId);
       if (filterStartDate) params.set("start", new Date(filterStartDate).toISOString());
       if (filterEndDate) params.set("end", new Date(filterEndDate + "T23:59:59").toISOString());
 
@@ -85,12 +93,13 @@ export function AuditLogPanel() {
       }
       setHasMore(data.pagination.hasMore);
       setActionKeys(data.actionKeys);
+      setTargetTypes(data.targetTypes);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to load audit logs");
     } finally {
       setLoading(false);
     }
-  }, [offset, filterAction, filterStartDate, filterEndDate]);
+  }, [offset, filterAction, filterActor, filterTargetType, filterTargetId, filterStartDate, filterEndDate]);
 
   useEffect(() => {
     void loadLogs(true);
@@ -102,8 +111,16 @@ export function AuditLogPanel() {
     void loadLogs(true);
   };
 
+  const handleRefresh = () => {
+    setOffset(0);
+    void loadLogs(true);
+  };
+
   const handleClearFilters = () => {
     setFilterAction("");
+    setFilterActor("");
+    setFilterTargetType("");
+    setFilterTargetId("");
     setFilterStartDate("");
     setFilterEndDate("");
     setOffset(0);
@@ -115,7 +132,7 @@ export function AuditLogPanel() {
       {/* Filters */}
       <div className="rounded-md border p-4 space-y-4">
         <h2 className="text-lg font-semibold">Filters</h2>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-7">
           <label className="space-y-1 text-sm">
             <div className="text-foreground/70">Action</div>
             <select
@@ -130,6 +147,42 @@ export function AuditLogPanel() {
                 </option>
               ))}
             </select>
+          </label>
+
+          <label className="space-y-1 text-sm">
+            <div className="text-foreground/70">Actor</div>
+            <input
+              className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+              value={filterActor}
+              onChange={(e) => setFilterActor(e.target.value)}
+              placeholder="Name or email..."
+            />
+          </label>
+
+          <label className="space-y-1 text-sm">
+            <div className="text-foreground/70">Target type</div>
+            <select
+              className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+              value={filterTargetType}
+              onChange={(e) => setFilterTargetType(e.target.value)}
+            >
+              <option value="">All targets</option>
+              {targetTypes.map((type) => (
+                <option key={type} value={type}>
+                  {type}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="space-y-1 text-sm">
+            <div className="text-foreground/70">Target ID</div>
+            <input
+              className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+              value={filterTargetId}
+              onChange={(e) => setFilterTargetId(e.target.value)}
+              placeholder="Exact ID..."
+            />
           </label>
 
           <label className="space-y-1 text-sm">
@@ -159,6 +212,9 @@ export function AuditLogPanel() {
             <Button variant="outline" onClick={handleClearFilters} disabled={loading}>
               Clear
             </Button>
+            <Button variant="ghost" onClick={handleRefresh} disabled={loading}>
+              Refresh
+            </Button>
           </div>
         </div>
       </div>
@@ -176,6 +232,13 @@ export function AuditLogPanel() {
             </tr>
           </thead>
           <tbody>
+            {loading && logs.length === 0 && (
+              <tr>
+                <td colSpan={5} className="px-4 py-8 text-center text-foreground/60">
+                  Loading audit log entries...
+                </td>
+              </tr>
+            )}
             {logs.length === 0 && !loading && (
               <tr>
                 <td colSpan={5} className="px-4 py-8 text-center text-foreground/60">
@@ -229,12 +292,15 @@ export function AuditLogPanel() {
       <div className="flex justify-center gap-4">
         {loading && <div className="text-foreground/60">Loading...</div>}
         {!loading && hasMore && (
-          <Button variant="outline" onClick={() => loadLogs(false)}>
+          <Button variant="outline" onClick={() => loadLogs(false)} disabled={loading}>
             Load more
           </Button>
         )}
         {!loading && !hasMore && logs.length > 0 && (
           <div className="text-foreground/60 text-sm">All entries loaded ({logs.length} total)</div>
+        )}
+        {!loading && logs.length > 0 && hasMore && (
+          <div className="text-foreground/60 text-sm">Loaded {logs.length} entries</div>
         )}
       </div>
     </div>

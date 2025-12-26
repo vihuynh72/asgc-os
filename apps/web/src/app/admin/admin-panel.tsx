@@ -1,7 +1,7 @@
 "use client";
 
 import type { ChangeEvent } from "react";
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -126,6 +126,12 @@ type AdminMeetingRow = {
   title: string;
   description: string | null;
   location: string | null;
+  remote_url: string | null;
+  livestream_url: string | null;
+  public_comment_instructions: string | null;
+  notice_posted_at: string | null;
+  agenda_posted_at: string | null;
+  minutes_posted_at: string | null;
   starts_at: string;
   ends_at: string;
   status: string;
@@ -140,6 +146,12 @@ type AdminMeetingDraft = {
   starts_at_local: string;
   ends_at_local: string;
   status: string;
+  remote_url: string;
+  livestream_url: string;
+  public_comment_instructions: string;
+  notice_posted_at_local: string;
+  agenda_posted_at_local: string;
+  minutes_posted_at_local: string;
 };
 
 type AdminAccessAuditRow = {
@@ -204,12 +216,15 @@ function formatMeetingTypeLabel(type: string): string {
   }
 }
 
-function datetimeLocalFromIso(iso: string | null): string {
-  if (!iso) return "";
-  const date = new Date(iso);
+function toLocalDatetimeInputValue(date: Date): string {
   if (Number.isNaN(date.getTime())) return "";
   const offset = date.getTimezoneOffset() * 60000;
   return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+}
+
+function datetimeLocalFromIso(iso: string | null): string {
+  if (!iso) return "";
+  return toLocalDatetimeInputValue(new Date(iso));
 }
 
 function toIsoFromDatetimeLocal(value: string): string | null {
@@ -217,6 +232,73 @@ function toIsoFromDatetimeLocal(value: string): string | null {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return null;
   return date.toISOString();
+}
+
+function formatDurationMinutes(totalMinutes: number): string {
+  if (!Number.isFinite(totalMinutes) || totalMinutes <= 0) return "";
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  const parts: string[] = [];
+  if (hours) parts.push(`${hours}h`);
+  if (minutes) parts.push(`${minutes}m`);
+  return parts.join(" ");
+}
+
+function getMeetingTimeError(startsAtLocal: string, endsAtLocal: string): string {
+  if (!startsAtLocal || !endsAtLocal) return "";
+  const start = new Date(startsAtLocal);
+  const end = new Date(endsAtLocal);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return "";
+  if (end.getTime() <= start.getTime()) return "End time must be after the start time.";
+  return "";
+}
+
+function buildMeetingDraft(meeting: AdminMeetingRow): AdminMeetingDraft {
+  return {
+    title: meeting.title,
+    description: meeting.description ?? "",
+    location: meeting.location ?? "",
+    remote_url: meeting.remote_url ?? "",
+    livestream_url: meeting.livestream_url ?? "",
+    public_comment_instructions: meeting.public_comment_instructions ?? "",
+    starts_at_local: datetimeLocalFromIso(meeting.starts_at),
+    ends_at_local: datetimeLocalFromIso(meeting.ends_at),
+    status: meeting.status,
+    notice_posted_at_local: datetimeLocalFromIso(meeting.notice_posted_at),
+    agenda_posted_at_local: datetimeLocalFromIso(meeting.agenda_posted_at),
+    minutes_posted_at_local: datetimeLocalFromIso(meeting.minutes_posted_at),
+  };
+}
+
+function isMeetingDraftDirty(meeting: AdminMeetingRow, draft: AdminMeetingDraft): boolean {
+  const base = buildMeetingDraft(meeting);
+  return (
+    base.title.trim() !== draft.title.trim() ||
+    base.description.trim() !== draft.description.trim() ||
+    base.location.trim() !== draft.location.trim() ||
+    base.remote_url.trim() !== draft.remote_url.trim() ||
+    base.livestream_url.trim() !== draft.livestream_url.trim() ||
+    base.public_comment_instructions.trim() !== draft.public_comment_instructions.trim() ||
+    base.starts_at_local !== draft.starts_at_local ||
+    base.ends_at_local !== draft.ends_at_local ||
+    base.status !== draft.status ||
+    base.notice_posted_at_local !== draft.notice_posted_at_local ||
+    base.agenda_posted_at_local !== draft.agenda_posted_at_local ||
+    base.minutes_posted_at_local !== draft.minutes_posted_at_local
+  );
+}
+
+function formatShortDateTime(iso: string | null): string {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
 }
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -252,6 +334,15 @@ function parseMinutesValue(value: number | string | null | undefined): number | 
 function formatMinutesValue(value: number | string | null | undefined): string {
   const n = parseMinutesValue(value);
   return n === null ? "—" : formatMinutes(n);
+}
+
+function toCsvValue(value: string | number | null | undefined): string {
+  if (value === null || value === undefined) return "";
+  const raw = String(value);
+  if (raw.includes(",") || raw.includes("\"") || raw.includes("\n")) {
+    return `"${raw.replace(/\"/g, "\"\"")}"`;
+  }
+  return raw;
 }
 
 type BulkInviteCandidate = { email: string; notes?: string };
@@ -365,6 +456,10 @@ export function AdminPanel({
   const [inviteNotesDraftById, setInviteNotesDraftById] = useState<Record<string, string>>({});
   const [inviteSearch, setInviteSearch] = useState<string>("");
   const [showInactiveInvites, setShowInactiveInvites] = useState<boolean>(false);
+  const [inviteShowDomainsOnly, setInviteShowDomainsOnly] = useState<boolean>(false);
+  const [inviteShowBlockedOnly, setInviteShowBlockedOnly] = useState<boolean>(false);
+  const [inviteShowPendingOnly, setInviteShowPendingOnly] = useState<boolean>(false);
+  const [inviteShowWithGrantsOnly, setInviteShowWithGrantsOnly] = useState<boolean>(false);
   const [selectedInviteIds, setSelectedInviteIds] = useState<Record<string, boolean>>({});
   const [roleGrantInviteId, setRoleGrantInviteId] = useState<string | null>(null);
   const [roleGrantRoleKey, setRoleGrantRoleKey] = useState<RoleKey>("volunteer");
@@ -391,6 +486,8 @@ export function AdminPanel({
   const [selectedUserId, setSelectedUserId] = useState<string>("");
   const [selectedRoleKey, setSelectedRoleKey] = useState<RoleKey>("volunteer");
   const [userSearch, setUserSearch] = useState<string>("");
+  const [userStatusFilter, setUserStatusFilter] = useState<"all" | "active" | "inactive">("all");
+  const [userRoleFilter, setUserRoleFilter] = useState<RoleKey | "">("");
   const [committees, setCommittees] = useState<CommitteeRow[]>([]);
 
   const [newTermName, setNewTermName] = useState<string>("");
@@ -420,6 +517,14 @@ export function AdminPanel({
 
   const [exportWeekStart, setExportWeekStart] = useState<string>(() => todayDateString());
   const [exportPreviewRows, setExportPreviewRows] = useState<AdminWeeklyHoursPreviewRow[] | null>(null);
+  const [exportPreviewSearch, setExportPreviewSearch] = useState<string>("");
+  const [exportPreviewDeficitOnly, setExportPreviewDeficitOnly] = useState<boolean>(false);
+  const [exportPreviewInOfficeDeficitOnly, setExportPreviewInOfficeDeficitOnly] = useState<boolean>(false);
+  const [exportPreviewSortKey, setExportPreviewSortKey] = useState<
+    "name" | "total" | "deficit" | "deficit_in_office"
+  >("name");
+  const [exportPreviewActionStatus, setExportPreviewActionStatus] = useState<string>("");
+  const exportPreviewActionTimerRef = useRef<number | null>(null);
 
   const [shiftUserId, setShiftUserId] = useState<string>("");
   const [shiftUserSearch, setShiftUserSearch] = useState<string>("");
@@ -434,9 +539,18 @@ export function AdminPanel({
   const [meetingTitle, setMeetingTitle] = useState<string>("");
   const [meetingDescription, setMeetingDescription] = useState<string>("");
   const [meetingLocation, setMeetingLocation] = useState<string>("");
+  const [meetingRemoteUrl, setMeetingRemoteUrl] = useState<string>("");
+  const [meetingLivestreamUrl, setMeetingLivestreamUrl] = useState<string>("");
+  const [meetingPublicCommentInstructions, setMeetingPublicCommentInstructions] = useState<string>("");
   const [meetingStartsAtLocal, setMeetingStartsAtLocal] = useState<string>("");
   const [meetingEndsAtLocal, setMeetingEndsAtLocal] = useState<string>("");
   const [meetingSearch, setMeetingSearch] = useState<string>("");
+  const [meetingStatusFilter, setMeetingStatusFilter] = useState<string>("all");
+  const [meetingTypeFilter, setMeetingTypeFilter] = useState<string>("all");
+  const [meetingUpcomingOnly, setMeetingUpcomingOnly] = useState<boolean>(false);
+  const [meetingCommitteeFilter, setMeetingCommitteeFilter] = useState<string>("all");
+  const [meetingSort, setMeetingSort] = useState<"recent" | "upcoming">("recent");
+  const [meetingsLastLoadedAt, setMeetingsLastLoadedAt] = useState<string | null>(null);
   const [adminMeetings, setAdminMeetings] = useState<AdminMeetingRow[]>([]);
   const [meetingDrafts, setMeetingDrafts] = useState<Record<string, AdminMeetingDraft>>({});
 
@@ -561,15 +675,6 @@ export function AdminPanel({
     return m;
   }, [users]);
 
-  const usersForRolePicker = useMemo(() => {
-    const q = userSearch.trim().toLowerCase();
-    if (!q) return users;
-    return users.filter((u) => {
-      const hay = `${u.display_name ?? ""} ${u.email ?? ""} ${u.id}`.toLowerCase();
-      return hay.includes(q);
-    });
-  }, [userSearch, users]);
-
   const activeAssignmentsByUserId = useMemo(() => {
     const m = new Map<string, AssignmentRow[]>();
     const add = (assignment: AssignmentRow) => {
@@ -594,6 +699,42 @@ export function AdminPanel({
 
     return m;
   }, [globalAdvisorAssignments, termAssignments]);
+
+  const usersForRolePicker = useMemo(() => {
+    const q = userSearch.trim().toLowerCase();
+    return users.filter((u) => {
+      if (userStatusFilter === "active" && u.status !== "active") return false;
+      if (userStatusFilter === "inactive" && u.status === "active") return false;
+
+      const assignments = activeAssignmentsByUserId.get(u.id) ?? [];
+      if (userRoleFilter && !assignments.some((a) => a.role_key === userRoleFilter)) {
+        return false;
+      }
+
+      if (!q) return true;
+
+      const roleLabels = assignments
+        .map((a) => ROLE_LABEL_BY_KEY[a.role_key] ?? a.role_key)
+        .join(" ");
+      const hay = `${u.display_name ?? ""} ${u.email ?? ""} ${u.id} ${u.status} ${roleLabels}`.toLowerCase();
+      return hay.includes(q);
+    });
+  }, [userSearch, userStatusFilter, userRoleFilter, users, activeAssignmentsByUserId]);
+  const filteredUserCount = usersForRolePicker.length;
+  const hasUserFilters =
+    userSearch.trim().length > 0 || userStatusFilter !== "all" || userRoleFilter !== "";
+  const selectedUser = selectedUserId ? usersById.get(selectedUserId) ?? null : null;
+  const selectedUserAssignments = selectedUserId ? activeAssignmentsByUserId.get(selectedUserId) ?? [] : [];
+  const selectedUserRolesLabel =
+    selectedUserAssignments.length > 0
+      ? selectedUserAssignments.map((a) => formatAssignmentLabel(a, true)).join(", ")
+      : "—";
+
+  function resetUserFilters() {
+    setUserSearch("");
+    setUserStatusFilter("all");
+    setUserRoleFilter("");
+  }
 
   const activeBanKeys = useMemo(() => {
     const s = new Set<string>();
@@ -644,38 +785,78 @@ export function AdminPanel({
     return m;
   }, [bootstrapRoleGrants]);
 
+  const isInviteBlocked = useCallback(
+    (inv: InviteAllowlistRow): boolean => {
+      const normalized = inv.email_normalized;
+      if (!normalized) return false;
+      if (normalized.startsWith("@")) return activeBanKeys.has(normalized);
+      const keys = allowlistKeysForNormalizedEmail(normalized);
+      return keys.some((k) => activeBanKeys.has(k));
+    },
+    [activeBanKeys],
+  );
+
   const filteredInvites = useMemo(() => {
     const q = inviteSearch.trim().toLowerCase();
     return invitesAllowlist.filter((inv) => {
       if (!showInactiveInvites && !inv.is_active) return false;
+      const isDomain = inv.email_normalized.startsWith("@");
+      if (inviteShowDomainsOnly && !isDomain) return false;
+      if (inviteShowBlockedOnly && !isInviteBlocked(inv)) return false;
+      const user = !isDomain ? usersByEmail.get(inv.email_normalized) ?? null : null;
+      const grants = !isDomain ? (bootstrapGrantsByEmail.get(inv.email_normalized) ?? []) : [];
+      if (inviteShowPendingOnly && (isDomain || user)) return false;
+      if (inviteShowWithGrantsOnly && (isDomain || grants.length === 0)) return false;
       if (!q) return true;
       const hay = `${inv.email} ${inv.notes ?? ""}`.toLowerCase();
       return hay.includes(q);
     });
-  }, [invitesAllowlist, inviteSearch, showInactiveInvites]);
+  }, [
+    invitesAllowlist,
+    inviteSearch,
+    showInactiveInvites,
+    inviteShowDomainsOnly,
+    inviteShowBlockedOnly,
+    inviteShowPendingOnly,
+    inviteShowWithGrantsOnly,
+    isInviteBlocked,
+    usersByEmail,
+    bootstrapGrantsByEmail,
+  ]);
 
   const selectedInvites = useMemo(
     () => invitesAllowlist.filter((inv) => Boolean(selectedInviteIds[inv.id])),
     [invitesAllowlist, selectedInviteIds],
   );
 
+  const filteredInvitesCount = filteredInvites.length;
+  const inviteFiltersActive =
+    inviteSearch.trim().length > 0 ||
+    showInactiveInvites ||
+    inviteShowDomainsOnly ||
+    inviteShowBlockedOnly ||
+    inviteShowPendingOnly ||
+    inviteShowWithGrantsOnly;
+
+  function resetInviteFilters() {
+    setInviteSearch("");
+    setShowInactiveInvites(false);
+    setInviteShowDomainsOnly(false);
+    setInviteShowBlockedOnly(false);
+    setInviteShowPendingOnly(false);
+    setInviteShowWithGrantsOnly(false);
+  }
+
   const allFilteredInvitesSelected = useMemo(
     () => filteredInvites.length > 0 && filteredInvites.every((inv) => Boolean(selectedInviteIds[inv.id])),
     [filteredInvites, selectedInviteIds],
   );
 
-  function isInviteBlocked(inv: InviteAllowlistRow): boolean {
-    const normalized = inv.email_normalized;
-    if (!normalized) return false;
-    if (normalized.startsWith("@")) return activeBanKeys.has(normalized);
-    const keys = allowlistKeysForNormalizedEmail(normalized);
-    return keys.some((k) => activeBanKeys.has(k));
-  }
-
   const selectedRole = useMemo(
     () => ROLE_OPTIONS.find((r) => r.key === selectedRoleKey) ?? ROLE_OPTIONS[0],
     [selectedRoleKey],
   );
+  const bulkImportTermDisabled = !bulkImportRoleKey || bulkImportRoleKey === "advisor";
   const termAssignmentsLabel = showAllTermAssignments ? "all terms" : "the selected term";
 
   const exportWeekStartResolved = useMemo(
@@ -683,24 +864,183 @@ export function AdminPanel({
     [exportWeekStart],
   );
 
+  const exportPreviewFilteredRows = useMemo(() => {
+    const base = exportPreviewRows ?? [];
+    const query = exportPreviewSearch.trim().toLowerCase();
+    const filtered = base.filter((row) => {
+      if (exportPreviewDeficitOnly) {
+        const deficit = parseMinutesValue(row.deficit_minutes) ?? 0;
+        if (deficit <= 0) return false;
+      }
+      if (exportPreviewInOfficeDeficitOnly) {
+        const deficit = parseMinutesValue(row.deficit_in_office_minutes) ?? 0;
+        if (deficit <= 0) return false;
+      }
+      if (!query) return true;
+      const hay = `${row.display_name ?? ""} ${row.email ?? ""}`.toLowerCase();
+      return hay.includes(query);
+    });
+
+    const toMinutes = (value: number | string | null | undefined): number => {
+      const parsed = parseMinutesValue(value);
+      return parsed === null ? -1 : parsed;
+    };
+    const sorted = [...filtered].sort((a, b) => {
+      if (exportPreviewSortKey === "name") {
+        const aName = (a.display_name || a.email || "").toLowerCase();
+        const bName = (b.display_name || b.email || "").toLowerCase();
+        return aName.localeCompare(bName);
+      }
+      if (exportPreviewSortKey === "total") {
+        return toMinutes(b.total_minutes) - toMinutes(a.total_minutes);
+      }
+      if (exportPreviewSortKey === "deficit_in_office") {
+        return toMinutes(b.deficit_in_office_minutes) - toMinutes(a.deficit_in_office_minutes);
+      }
+      return toMinutes(b.deficit_minutes) - toMinutes(a.deficit_minutes);
+    });
+
+    return sorted;
+  }, [
+    exportPreviewRows,
+    exportPreviewSearch,
+    exportPreviewDeficitOnly,
+    exportPreviewInOfficeDeficitOnly,
+    exportPreviewSortKey,
+  ]);
+
+  const exportPreviewFiltersActive =
+    exportPreviewSearch.trim().length > 0 ||
+    exportPreviewDeficitOnly ||
+    exportPreviewInOfficeDeficitOnly ||
+    exportPreviewSortKey !== "name";
+
+  const exportPreviewSummary = useMemo(() => {
+    const list = exportPreviewFilteredRows;
+    let deficitCount = 0;
+    let inOfficeDeficitCount = 0;
+    let totalDeficit = 0;
+    let totalInOfficeDeficit = 0;
+
+    for (const row of list) {
+      const deficit = parseMinutesValue(row.deficit_minutes) ?? 0;
+      const inOfficeDeficit = parseMinutesValue(row.deficit_in_office_minutes) ?? 0;
+      if (deficit > 0) deficitCount += 1;
+      if (inOfficeDeficit > 0) inOfficeDeficitCount += 1;
+      totalDeficit += Math.max(0, deficit);
+      totalInOfficeDeficit += Math.max(0, inOfficeDeficit);
+    }
+
+    return {
+      totalRows: list.length,
+      deficitCount,
+      inOfficeDeficitCount,
+      totalDeficit,
+      totalInOfficeDeficit,
+    };
+  }, [exportPreviewFilteredRows]);
+
   function downloadWeeklyHoursCsv() {
     const weekStart = startOfWeekMondayDateOnly(exportWeekStart) ?? startOfWeekMondayDateOnly(todayDateString());
     const qs = weekStart ? `?weekStart=${encodeURIComponent(weekStart)}` : "";
     window.location.href = `/api/admin/office-hours/export-week${qs}`;
   }
 
-  function openWeeklyHoursCsvInline() {
+  function openWeeklyHoursCsvView() {
     const weekStart = startOfWeekMondayDateOnly(exportWeekStart) ?? startOfWeekMondayDateOnly(todayDateString());
-    const qs = weekStart
-      ? `?weekStart=${encodeURIComponent(weekStart)}&disposition=inline`
-      : "?disposition=inline";
-    window.open(`/api/admin/office-hours/export-week${qs}`, "_blank", "noopener,noreferrer");
+    const qs = weekStart ? `?weekStart=${encodeURIComponent(weekStart)}` : "";
+    window.open(`/admin/office-hours/export/csv${qs}`, "_blank", "noopener,noreferrer");
   }
 
   function openWeeklyHoursPreviewPage() {
     const weekStart = startOfWeekMondayDateOnly(exportWeekStart) ?? startOfWeekMondayDateOnly(todayDateString());
     const qs = weekStart ? `?weekStart=${encodeURIComponent(weekStart)}` : "";
-    window.location.assign(`/admin/office-hours/export${qs}`);
+    window.open(`/admin/office-hours/export${qs}`, "_blank", "noopener,noreferrer");
+  }
+
+  function setTransientExportPreviewStatus(message: string) {
+    setExportPreviewActionStatus(message);
+    if (exportPreviewActionTimerRef.current) {
+      window.clearTimeout(exportPreviewActionTimerRef.current);
+    }
+    exportPreviewActionTimerRef.current = window.setTimeout(() => {
+      setExportPreviewActionStatus("");
+      exportPreviewActionTimerRef.current = null;
+    }, 2500);
+  }
+
+  async function copyExportPreviewEmails(kind: "all" | "deficit" | "in_office_deficit") {
+    const list = exportPreviewFilteredRows.filter((row) => {
+      if (kind === "deficit") {
+        const deficit = parseMinutesValue(row.deficit_minutes) ?? 0;
+        return deficit > 0;
+      }
+      if (kind === "in_office_deficit") {
+        const deficit = parseMinutesValue(row.deficit_in_office_minutes) ?? 0;
+        return deficit > 0;
+      }
+      return true;
+    });
+
+    const emails = list
+      .map((row) => row.email)
+      .filter((email): email is string => Boolean(email && email.trim()));
+
+    if (emails.length === 0) {
+      setTransientExportPreviewStatus("No emails to copy.");
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(emails.join("\n"));
+      setTransientExportPreviewStatus(`Copied ${emails.length} email${emails.length === 1 ? "" : "s"}.`);
+    } catch {
+      setTransientExportPreviewStatus("Copy failed.");
+    }
+  }
+
+  function downloadExportPreviewCsv() {
+    const header = [
+      "week_start",
+      "display_name",
+      "email",
+      "total_minutes",
+      "in_office_minutes",
+      "deficit_minutes",
+      "deficit_in_office_minutes",
+    ];
+    const lines = [
+      header.map(toCsvValue).join(","),
+      ...exportPreviewFilteredRows.map((row) => {
+        const values = [
+          row.week_start,
+          row.display_name ?? "",
+          row.email ?? "",
+          parseMinutesValue(row.total_minutes) ?? "",
+          parseMinutesValue(row.in_office_minutes) ?? "",
+          parseMinutesValue(row.deficit_minutes) ?? "",
+          parseMinutesValue(row.deficit_in_office_minutes) ?? "",
+        ];
+        return values.map(toCsvValue).join(",");
+      }),
+    ];
+
+    const csv = `${lines.join("\n")}\n`;
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `office-hours-${exportWeekStartResolved ?? "week"}-preview.csv`;
+    link.click();
+    window.URL.revokeObjectURL(url);
+    setTransientExportPreviewStatus("Preview CSV downloaded.");
+  }
+
+  function resetExportPreviewFilters() {
+    setExportPreviewSearch("");
+    setExportPreviewDeficitOnly(false);
+    setExportPreviewInOfficeDeficitOnly(false);
+    setExportPreviewSortKey("name");
   }
 
   async function previewWeeklyHours() {
@@ -723,6 +1063,14 @@ export function AdminPanel({
   function clearWeeklyHoursPreview() {
     setExportPreviewRows(null);
   }
+
+  useEffect(() => {
+    return () => {
+      if (exportPreviewActionTimerRef.current) {
+        window.clearTimeout(exportPreviewActionTimerRef.current);
+      }
+    };
+  }, []);
 
   async function onCreateShift() {
     setShiftStatus("Creating shift...");
@@ -790,6 +1138,9 @@ export function AdminPanel({
           committee_id: meetingType === "committee" && meetingCommitteeId ? meetingCommitteeId : undefined,
           description: meetingDescription.trim() || undefined,
           location: meetingLocation.trim() || undefined,
+          remote_url: meetingRemoteUrl.trim() || undefined,
+          livestream_url: meetingLivestreamUrl.trim() || undefined,
+          public_comment_instructions: meetingPublicCommentInstructions.trim() || undefined,
         }),
       });
 
@@ -797,6 +1148,9 @@ export function AdminPanel({
       setMeetingTitle("");
       setMeetingDescription("");
       setMeetingLocation("");
+      setMeetingRemoteUrl("");
+      setMeetingLivestreamUrl("");
+      setMeetingPublicCommentInstructions("");
       setMeetingStartsAtLocal("");
       setMeetingEndsAtLocal("");
       setMeetingCommitteeId("");
@@ -821,6 +1175,7 @@ export function AdminPanel({
       const { meetings } = await fetchJson<{ meetings: AdminMeetingRow[] }>("/api/admin/meetings");
       setAdminMeetings(meetings ?? []);
       setMeetingDrafts({});
+      setMeetingsLastLoadedAt(new Date().toISOString());
       setStatus("");
     } catch (e) {
       setStatus(e instanceof Error ? e.message : "Failed to load meetings");
@@ -830,14 +1185,7 @@ export function AdminPanel({
   function updateMeetingDraft(meetingId: string, patch: Partial<AdminMeetingDraft>) {
     const meeting = adminMeetings.find((m) => m.id === meetingId);
     if (!meeting) return;
-    const base: AdminMeetingDraft = {
-      title: meeting.title,
-      description: meeting.description ?? "",
-      location: meeting.location ?? "",
-      starts_at_local: datetimeLocalFromIso(meeting.starts_at),
-      ends_at_local: datetimeLocalFromIso(meeting.ends_at),
-      status: meeting.status,
-    };
+    const base = buildMeetingDraft(meeting);
 
     setMeetingDrafts((prev) => ({
       ...prev,
@@ -848,15 +1196,17 @@ export function AdminPanel({
     }));
   }
 
+  function resetMeetingDraft(meetingId: string) {
+    setMeetingDrafts((prev) => {
+      if (!prev[meetingId]) return prev;
+      const next = { ...prev };
+      delete next[meetingId];
+      return next;
+    });
+  }
+
   async function saveMeeting(meeting: AdminMeetingRow) {
-    const draft = meetingDrafts[meeting.id] ?? {
-      title: meeting.title,
-      description: meeting.description ?? "",
-      location: meeting.location ?? "",
-      starts_at_local: datetimeLocalFromIso(meeting.starts_at),
-      ends_at_local: datetimeLocalFromIso(meeting.ends_at),
-      status: meeting.status,
-    };
+    const draft = meetingDrafts[meeting.id] ?? buildMeetingDraft(meeting);
 
     const startsAtIso = toIsoFromDatetimeLocal(draft.starts_at_local);
     const endsAtIso = toIsoFromDatetimeLocal(draft.ends_at_local);
@@ -864,6 +1214,15 @@ export function AdminPanel({
       setStatus("Start and end times are required.");
       return;
     }
+    const timeError = getMeetingTimeError(draft.starts_at_local, draft.ends_at_local);
+    if (timeError) {
+      setStatus(timeError);
+      return;
+    }
+
+    const noticePostedAtIso = toIsoFromDatetimeLocal(draft.notice_posted_at_local);
+    const agendaPostedAtIso = toIsoFromDatetimeLocal(draft.agenda_posted_at_local);
+    const minutesPostedAtIso = toIsoFromDatetimeLocal(draft.minutes_posted_at_local);
 
     setStatus("Saving meeting...");
     try {
@@ -874,6 +1233,12 @@ export function AdminPanel({
           title: draft.title.trim(),
           description: draft.description.trim() || null,
           location: draft.location.trim() || null,
+          remote_url: draft.remote_url.trim() || null,
+          livestream_url: draft.livestream_url.trim() || null,
+          public_comment_instructions: draft.public_comment_instructions.trim() || null,
+          notice_posted_at: noticePostedAtIso,
+          agenda_posted_at: agendaPostedAtIso,
+          minutes_posted_at: minutesPostedAtIso,
           starts_at: startsAtIso,
           ends_at: endsAtIso,
           status: draft.status,
@@ -1513,6 +1878,12 @@ export function AdminPanel({
   const bulkInvitesPreview = useMemo(() => parseBulkInvites(bulkInviteText), [bulkInviteText]);
   const bulkImportPreview = useMemo(() => parseBulkInvites(bulkImportText), [bulkImportText]);
 
+  function buildBulkPreview(candidates: BulkInviteCandidate[], limit = 5): string {
+    const preview = candidates.slice(0, limit).map((c) => c.email).join("\n");
+    const remaining = candidates.length - Math.min(limit, candidates.length);
+    return remaining > 0 ? `${preview}\n...and ${remaining} more` : preview;
+  }
+
   async function onBulkAddInvites() {
     const candidates = bulkInvitesPreview;
     if (candidates.length === 0) {
@@ -1520,9 +1891,15 @@ export function AdminPanel({
       return;
     }
 
+    const preview = buildBulkPreview(candidates);
+    const confirmed = window.confirm(
+      `Add ${candidates.length} allowlist entr${candidates.length === 1 ? "y" : "ies"}?\n\n${preview}`,
+    );
+    if (!confirmed) return;
+
     setStatus(`Adding ${candidates.length} allowlist entries...`);
-    let ok = 0;
-    let fail = 0;
+    let okCount = 0;
+    let failCount = 0;
 
     for (let i = 0; i < candidates.length; i += 1) {
       const c = candidates[i];
@@ -1534,16 +1911,16 @@ export function AdminPanel({
           body: JSON.stringify({ email: c.email, notes: c.notes }),
         });
 
-        ok += 1;
+        okCount += 1;
         setInvitesAllowlist((prev) => [data.invite, ...prev.filter((r) => r.id !== data.invite.id)]);
       } catch {
-        fail += 1;
+        failCount += 1;
       }
     }
 
     setInviteNotesDraftById({});
     setBulkInviteText("");
-    setStatus(`Bulk add complete: ${ok} added, ${fail} failed.`);
+    setStatus(`Bulk add complete: ${okCount} added, ${failCount} failed.`);
   }
 
   async function onBulkImportMembers() {
@@ -1557,6 +1934,22 @@ export function AdminPanel({
       setStatus("Select a term for term-scoped roles.");
       return;
     }
+
+    const preview = buildBulkPreview(candidates);
+    const roleLabel = bulkImportRoleKey
+      ? ROLE_LABEL_BY_KEY[bulkImportRoleKey] ?? bulkImportRoleKey
+      : "No role";
+    const termLabel =
+      bulkImportRoleKey && bulkImportRoleKey !== "advisor"
+        ? termNameById.get(bulkImportTermId) ?? bulkImportTermId
+        : bulkImportRoleKey
+          ? "Global"
+          : null;
+    const confirmMessage = `Import ${candidates.length} member${candidates.length === 1 ? "" : "s"}?\nRole: ${roleLabel}${
+      termLabel ? `\nTerm: ${termLabel}` : ""
+    }\n\n${preview}`;
+    const confirmed = window.confirm(confirmMessage);
+    if (!confirmed) return;
 
     setStatus(`Importing ${candidates.length} members...`);
     try {
@@ -1758,15 +2151,10 @@ export function AdminPanel({
     return byRole;
   }, [officeHourRequirements, selectedTermId]);
 
-  /* eslint-disable react-hooks/preserve-manual-memoization */
-  const committeeById = useMemo(() => {
-    const map = new Map<string, CommitteeRow>();
-    for (const committee of committees) {
-      map.set(committee.id, committee);
-    }
-    return map;
-  }, [committees]);
-  /* eslint-enable react-hooks/preserve-manual-memoization */
+  const committeeById = new Map<string, CommitteeRow>();
+  for (const committee of committees) {
+    committeeById.set(committee.id, committee);
+  }
 
   const shiftUsers = useMemo(() => {
     const query = shiftUserSearch.trim().toLowerCase();
@@ -1779,11 +2167,23 @@ export function AdminPanel({
     [users, shiftUserId],
   );
 
-  /* eslint-disable react-hooks/preserve-manual-memoization */
-  const filteredMeetings = useMemo(() => {
+  const meetingsLastLoadedTs = (() => {
+    if (!meetingsLastLoadedAt) return 0;
+    const ts = new Date(meetingsLastLoadedAt).getTime();
+    return Number.isNaN(ts) ? 0 : ts;
+  })();
+
+  const filteredMeetings = (() => {
     const query = meetingSearch.trim().toLowerCase();
-    if (!query) return adminMeetings;
-    return adminMeetings.filter((m) => {
+    const filtered = adminMeetings.filter((m) => {
+      if (meetingStatusFilter !== "all" && m.status !== meetingStatusFilter) return false;
+      if (meetingTypeFilter !== "all" && m.meeting_type !== meetingTypeFilter) return false;
+      if (meetingCommitteeFilter !== "all" && m.committee_id !== meetingCommitteeFilter) return false;
+      if (meetingUpcomingOnly) {
+        const endTs = new Date(m.ends_at).getTime();
+        if (Number.isNaN(endTs) || (meetingsLastLoadedTs > 0 && endTs < meetingsLastLoadedTs)) return false;
+      }
+
       const haystack = [
         m.title,
         m.location ?? "",
@@ -1792,10 +2192,54 @@ export function AdminPanel({
       ]
         .join(" ")
         .toLowerCase();
-      return haystack.includes(query);
+      return query ? haystack.includes(query) : true;
     });
-  }, [adminMeetings, committeeById, meetingSearch]);
-  /* eslint-enable react-hooks/preserve-manual-memoization */
+    const fallback = meetingSort === "upcoming" ? Number.MAX_SAFE_INTEGER : Number.MIN_SAFE_INTEGER;
+    const toTime = (iso: string) => {
+      const ts = new Date(iso).getTime();
+      return Number.isNaN(ts) ? fallback : ts;
+    };
+    return [...filtered].sort((a, b) => {
+      const aTime = toTime(a.starts_at);
+      const bTime = toTime(b.starts_at);
+      return meetingSort === "upcoming" ? aTime - bTime : bTime - aTime;
+    });
+  })();
+
+  const meetingFiltersActive =
+    meetingSearch.trim().length > 0 ||
+    meetingStatusFilter !== "all" ||
+    meetingTypeFilter !== "all" ||
+    meetingUpcomingOnly ||
+    meetingCommitteeFilter !== "all";
+
+  const meetingDurationLabel = useMemo(() => {
+    if (!meetingStartsAtLocal || !meetingEndsAtLocal) return "";
+    const start = new Date(meetingStartsAtLocal);
+    const end = new Date(meetingEndsAtLocal);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return "";
+    const diffMinutes = Math.round((end.getTime() - start.getTime()) / 60000);
+    return formatDurationMinutes(diffMinutes);
+  }, [meetingStartsAtLocal, meetingEndsAtLocal]);
+
+  const meetingTimeError = useMemo(() => {
+    return getMeetingTimeError(meetingStartsAtLocal, meetingEndsAtLocal);
+  }, [meetingStartsAtLocal, meetingEndsAtLocal]);
+
+  const canCreateMeeting =
+    meetingTitle.trim().length > 0 &&
+    meetingStartsAtLocal.trim().length > 0 &&
+    meetingEndsAtLocal.trim().length > 0 &&
+    !meetingTimeError &&
+    (meetingType !== "committee" || meetingCommitteeId.trim().length > 0);
+
+  function resetMeetingFilters() {
+    setMeetingSearch("");
+    setMeetingStatusFilter("all");
+    setMeetingTypeFilter("all");
+    setMeetingCommitteeFilter("all");
+    setMeetingUpcomingOnly(false);
+  }
 
   return (
     <div className="space-y-6">
@@ -2003,20 +2447,20 @@ export function AdminPanel({
         </div>
 
         <div className="flex flex-wrap items-end gap-3">
-          <label className="space-y-1 text-sm">
+          <label className="w-full space-y-1 text-sm sm:w-72">
             <div className="text-foreground/70">Email or domain</div>
             <input
-              className="h-9 w-72 rounded-md border bg-transparent px-2 text-sm"
+              className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
               value={newInviteEmail}
               onChange={(e: ChangeEvent<HTMLInputElement>) => setNewInviteEmail(e.target.value)}
               placeholder="name@gcccd.edu or @gcccd.edu (or gcccd.edu)"
             />
           </label>
 
-          <label className="space-y-1 text-sm">
+          <label className="w-full space-y-1 text-sm sm:w-72">
             <div className="text-foreground/70">Member name (optional)</div>
             <input
-              className="h-9 w-72 rounded-md border bg-transparent px-2 text-sm"
+              className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
               value={newInviteNotes}
               onChange={(e: ChangeEvent<HTMLInputElement>) => setNewInviteNotes(e.target.value)}
               placeholder="e.g., Jane Doe (ASGC VP Finance)"
@@ -2035,15 +2479,25 @@ export function AdminPanel({
             Reload roles
           </Button>
 
-          <label className="space-y-1 text-sm">
+          <label className="w-full space-y-1 text-sm sm:w-60">
             <div className="text-foreground/70">Search</div>
             <input
-              className="h-9 w-60 rounded-md border bg-transparent px-2 text-sm"
+              type="search"
+              className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
               value={inviteSearch}
               onChange={(e: ChangeEvent<HTMLInputElement>) => setInviteSearch(e.target.value)}
               placeholder="Filter by email or name…"
             />
           </label>
+
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setInviteSearch("")}
+            disabled={!inviteSearch.trim()}
+          >
+            Clear search
+          </Button>
 
           <label className="flex items-center gap-2 text-sm">
             <input
@@ -2053,6 +2507,51 @@ export function AdminPanel({
             />
             <span className="text-foreground/70">Show inactive</span>
           </label>
+
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={inviteShowDomainsOnly}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => setInviteShowDomainsOnly(e.target.checked)}
+            />
+            <span className="text-foreground/70">Domains only</span>
+          </label>
+
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={inviteShowBlockedOnly}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => setInviteShowBlockedOnly(e.target.checked)}
+            />
+            <span className="text-foreground/70">Blocked only</span>
+          </label>
+
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={inviteShowPendingOnly}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => setInviteShowPendingOnly(e.target.checked)}
+            />
+            <span className="text-foreground/70">Pending sign-in only</span>
+          </label>
+
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={inviteShowWithGrantsOnly}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => setInviteShowWithGrantsOnly(e.target.checked)}
+            />
+            <span className="text-foreground/70">Has pre-login roles</span>
+          </label>
+
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={resetInviteFilters}
+            disabled={!inviteFiltersActive}
+          >
+            Reset filters
+          </Button>
         </div>
 
         <div className="rounded-md border p-3">
@@ -2116,6 +2615,7 @@ export function AdminPanel({
                 className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
                 value={bulkImportTermId}
                 onChange={(e: ChangeEvent<HTMLSelectElement>) => setBulkImportTermId(e.target.value)}
+                disabled={bulkImportTermDisabled}
               >
                 {terms.map((t: TermRow) => (
                   <option key={t.id} value={t.id}>
@@ -2124,6 +2624,9 @@ export function AdminPanel({
                   </option>
                 ))}
               </select>
+              <div className="text-xs text-foreground/60">
+                {bulkImportTermDisabled ? "Term applies only to term-scoped roles." : "Applied to all imported members."}
+              </div>
             </label>
 
             <div className="flex items-end gap-2">
@@ -2185,6 +2688,9 @@ export function AdminPanel({
         </div>
 
         <div className="rounded-md border">
+          <div className="border-b px-3 py-2 text-xs text-foreground/60">
+            Showing {filteredInvitesCount} of {invitesAllowlist.length} allowlist entries.
+          </div>
           {filteredInvites.length === 0 ? (
             <div className="px-3 py-2 text-sm text-foreground/70">No allowlist entries found.</div>
           ) : (
@@ -2669,10 +3175,10 @@ export function AdminPanel({
         <div className="flex flex-wrap items-end gap-2">
           <Button onClick={previewWeeklyHours}>Preview</Button>
           <Button variant="outline" onClick={openWeeklyHoursPreviewPage}>
-            Open preview
+            Open table view
           </Button>
-          <Button variant="outline" onClick={openWeeklyHoursCsvInline}>
-            Open CSV
+          <Button variant="outline" onClick={openWeeklyHoursCsvView}>
+            View CSV
           </Button>
           <Button variant="outline" onClick={() => window.location.assign("/admin/office-hours")}>
             Calendar view
@@ -2687,36 +3193,153 @@ export function AdminPanel({
           ) : null}
         </div>
 
+        {exportPreviewActionStatus ? (
+          <div className="rounded-md border px-3 py-2 text-sm text-foreground/80" role="status" aria-live="polite">
+            {exportPreviewActionStatus}
+          </div>
+        ) : null}
+
         {exportPreviewRows ? (
           <div className="rounded-md border">
             <div className="flex flex-wrap items-center justify-between gap-3 px-3 py-2 text-sm">
-              <div className="text-foreground/70">Preview rows: {exportPreviewRows.length}</div>
+              <div className="text-foreground/70">
+                Rows: {exportPreviewSummary.totalRows} of {exportPreviewRows.length}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <label className="space-y-1 text-xs">
+                  <div className="text-foreground/70">Search</div>
+                  <input
+                    type="search"
+                    className="h-8 w-full rounded-md border bg-transparent px-2 text-xs sm:w-48"
+                    value={exportPreviewSearch}
+                    onChange={(e: ChangeEvent<HTMLInputElement>) => setExportPreviewSearch(e.target.value)}
+                    placeholder="Name or email..."
+                  />
+                </label>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setExportPreviewSearch("")}
+                  disabled={!exportPreviewSearch.trim()}
+                >
+                  Clear search
+                </Button>
+                <label className="flex items-center gap-2 text-xs">
+                  <input
+                    type="checkbox"
+                    checked={exportPreviewDeficitOnly}
+                    onChange={(e: ChangeEvent<HTMLInputElement>) => setExportPreviewDeficitOnly(e.target.checked)}
+                  />
+                  <span className="text-foreground/70">Deficit only</span>
+                </label>
+                <label className="flex items-center gap-2 text-xs">
+                  <input
+                    type="checkbox"
+                    checked={exportPreviewInOfficeDeficitOnly}
+                    onChange={(e: ChangeEvent<HTMLInputElement>) => setExportPreviewInOfficeDeficitOnly(e.target.checked)}
+                  />
+                  <span className="text-foreground/70">In-office deficit only</span>
+                </label>
+                <label className="space-y-1 text-xs">
+                  <div className="text-foreground/70">Sort</div>
+                  <select
+                    className="h-8 w-full rounded-md border bg-transparent px-2 text-xs sm:w-44"
+                    value={exportPreviewSortKey}
+                    onChange={(e: ChangeEvent<HTMLSelectElement>) =>
+                      setExportPreviewSortKey(e.target.value as "name" | "total" | "deficit" | "deficit_in_office")
+                    }
+                  >
+                    <option value="name">Name (A-Z)</option>
+                    <option value="total">Total (high to low)</option>
+                    <option value="deficit">Deficit (high to low)</option>
+                    <option value="deficit_in_office">In-office deficit (high to low)</option>
+                  </select>
+                </label>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={resetExportPreviewFilters}
+                  disabled={!exportPreviewFiltersActive}
+                >
+                  Reset filters
+                </Button>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-3 border-t px-3 py-2 text-xs text-foreground/70">
+              <span>Deficit: {exportPreviewSummary.deficitCount}</span>
+              <span>Total deficit: {formatMinutes(exportPreviewSummary.totalDeficit)}</span>
+              <span>In-office deficit: {exportPreviewSummary.inOfficeDeficitCount}</span>
+              <span>In-office total: {formatMinutes(exportPreviewSummary.totalInOfficeDeficit)}</span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void copyExportPreviewEmails("all")}
+                disabled={exportPreviewSummary.totalRows === 0}
+              >
+                Copy emails
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void copyExportPreviewEmails("deficit")}
+                disabled={exportPreviewSummary.totalRows === 0}
+              >
+                Copy deficit emails
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void copyExportPreviewEmails("in_office_deficit")}
+                disabled={exportPreviewSummary.totalRows === 0}
+              >
+                Copy in-office deficit emails
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={downloadExportPreviewCsv}
+                disabled={exportPreviewSummary.totalRows === 0}
+              >
+                Download filtered CSV
+              </Button>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full min-w-[920px] text-sm">
                 <thead className="border-t bg-foreground/5 text-left text-xs text-foreground/70">
-	                  <tr>
-	                    <th className="px-3 py-2">Name</th>
-	                    <th className="px-3 py-2">Email</th>
-	                    <th className="px-3 py-2 text-right">Total</th>
-	                    <th className="px-3 py-2 text-right">In office</th>
-	                    <th className="px-3 py-2 text-right">Deficit</th>
-	                    <th className="px-3 py-2 text-right">Deficit in-office</th>
-	                  </tr>
+                  <tr>
+                    <th className="px-3 py-2">Name</th>
+                    <th className="px-3 py-2">Email</th>
+                    <th className="px-3 py-2 text-right">Total</th>
+                    <th className="px-3 py-2 text-right">In office</th>
+                    <th className="px-3 py-2 text-right">Deficit</th>
+                    <th className="px-3 py-2 text-right">Deficit in-office</th>
+                  </tr>
                 </thead>
                 <tbody className="divide-y">
-                  {exportPreviewRows.map((r) => (
-                    <tr key={`${r.user_id}:${r.week_start}`}>
-                      <td className="px-3 py-2">{r.display_name || "—"}</td>
-                      <td className="px-3 py-2">{r.email || "—"}</td>
-	                      <td className="px-3 py-2 text-right font-mono">{formatMinutesValue(r.total_minutes)}</td>
-	                      <td className="px-3 py-2 text-right font-mono">{formatMinutesValue(r.in_office_minutes)}</td>
-	                      <td className="px-3 py-2 text-right font-mono">{formatMinutesValue(r.deficit_minutes)}</td>
-	                      <td className="px-3 py-2 text-right font-mono">
+                  {exportPreviewFilteredRows.map((r) => {
+                    const deficit = parseMinutesValue(r.deficit_minutes) ?? 0;
+                    const inOfficeDeficit = parseMinutesValue(r.deficit_in_office_minutes) ?? 0;
+                    const highlight = deficit > 0 || inOfficeDeficit > 0;
+                    return (
+                      <tr key={`${r.user_id}:${r.week_start}`} className={highlight ? "bg-red-500/5" : undefined}>
+                        <td className="px-3 py-2">{r.display_name || "—"}</td>
+                        <td className="px-3 py-2">{r.email || "—"}</td>
+                        <td className="px-3 py-2 text-right font-mono">{formatMinutesValue(r.total_minutes)}</td>
+                        <td className="px-3 py-2 text-right font-mono">{formatMinutesValue(r.in_office_minutes)}</td>
+                        <td className="px-3 py-2 text-right font-mono">{formatMinutesValue(r.deficit_minutes)}</td>
+                        <td className="px-3 py-2 text-right font-mono">
                           {formatMinutesValue(r.deficit_in_office_minutes)}
                         </td>
-	                    </tr>
-	                  ))}
+                      </tr>
+                    );
+                  })}
+                  {exportPreviewFilteredRows.length === 0 ? (
+                    <tr>
+                      <td className="px-3 py-3 text-sm text-foreground/60" colSpan={6}>
+                        {exportPreviewFiltersActive ? "No rows match the current filters." : "No rows returned."}
+                      </td>
+                    </tr>
+                  ) : null}
                 </tbody>
               </table>
             </div>
@@ -3202,6 +3825,7 @@ export function AdminPanel({
               className="h-9 rounded-md border bg-transparent px-2 text-sm"
               value={meetingCommitteeId}
               onChange={(e: ChangeEvent<HTMLSelectElement>) => setMeetingCommitteeId(e.target.value)}
+              disabled={meetingType !== "committee"}
             >
               <option value="">Select committee…</option>
               {committees.map((committee) => (
@@ -3235,13 +3859,47 @@ export function AdminPanel({
             />
           </label>
 
+          <label className="space-y-1 text-sm md:col-span-2">
+            <div className="text-foreground/70">Remote access URL (optional)</div>
+            <input
+              type="url"
+              className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+              value={meetingRemoteUrl}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingRemoteUrl(e.target.value)}
+              placeholder="https://zoom.us/j/..."
+            />
+          </label>
+
+          <label className="space-y-1 text-sm md:col-span-2">
+            <div className="text-foreground/70">Livestream URL (optional)</div>
+            <input
+              type="url"
+              className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+              value={meetingLivestreamUrl}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingLivestreamUrl(e.target.value)}
+              placeholder="https://youtube.com/..."
+            />
+          </label>
+
           <label className="space-y-1 text-sm">
             <div className="text-foreground/70">Starts at (local)</div>
             <input
               type="datetime-local"
               className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
               value={meetingStartsAtLocal}
-              onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingStartsAtLocal(e.target.value)}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => {
+                const next = e.target.value;
+                setMeetingStartsAtLocal(next);
+                if (!next) return;
+                const start = new Date(next);
+                if (Number.isNaN(start.getTime())) return;
+                const existingEnd = meetingEndsAtLocal ? new Date(meetingEndsAtLocal) : null;
+                const hasValidEnd = existingEnd && !Number.isNaN(existingEnd.getTime());
+                if (!hasValidEnd || existingEnd.getTime() <= start.getTime()) {
+                  const suggestedEnd = new Date(start.getTime() + 60 * 60000);
+                  setMeetingEndsAtLocal(toLocalDatetimeInputValue(suggestedEnd));
+                }
+              }}
             />
           </label>
 
@@ -3251,8 +3909,15 @@ export function AdminPanel({
               type="datetime-local"
               className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
               value={meetingEndsAtLocal}
+              min={meetingStartsAtLocal || undefined}
               onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingEndsAtLocal(e.target.value)}
             />
+            {meetingDurationLabel ? (
+              <div className="text-xs text-foreground/60">Duration: {meetingDurationLabel}</div>
+            ) : null}
+            {meetingTimeError ? (
+              <div className="text-xs text-red-600">{meetingTimeError}</div>
+            ) : null}
           </label>
 
           <label className="space-y-1 text-sm md:col-span-4">
@@ -3266,8 +3931,19 @@ export function AdminPanel({
             />
           </label>
 
+          <label className="space-y-1 text-sm md:col-span-4">
+            <div className="text-foreground/70">Public comment instructions (optional)</div>
+            <textarea
+              className="w-full rounded-md border bg-transparent px-2 py-2 text-sm"
+              rows={2}
+              value={meetingPublicCommentInstructions}
+              onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setMeetingPublicCommentInstructions(e.target.value)}
+              placeholder="How members of the public can comment (email, form link, time limits)."
+            />
+          </label>
+
           <div className="flex items-end md:col-span-4">
-            <Button onClick={() => void onCreateMeeting()} disabled={!meetingTitle || !meetingStartsAtLocal || !meetingEndsAtLocal}>
+            <Button onClick={() => void onCreateMeeting()} disabled={!canCreateMeeting}>
               Create meeting
             </Button>
           </div>
@@ -3281,36 +3957,134 @@ export function AdminPanel({
             </div>
             <div className="flex flex-wrap items-end gap-2">
               <label className="space-y-1 text-sm">
+                <div className="text-foreground/70">Sort</div>
+                <select
+                  className="h-9 w-full rounded-md border bg-transparent px-2 text-sm sm:w-36"
+                  value={meetingSort}
+                  onChange={(e: ChangeEvent<HTMLSelectElement>) =>
+                    setMeetingSort(e.target.value as "recent" | "upcoming")
+                  }
+                >
+                  <option value="recent">Newest</option>
+                  <option value="upcoming">Upcoming</option>
+                </select>
+              </label>
+              <label className="space-y-1 text-sm">
+                <div className="text-foreground/70">Status</div>
+                <select
+                  className="h-9 w-full rounded-md border bg-transparent px-2 text-sm sm:w-40"
+                  value={meetingStatusFilter}
+                  onChange={(e: ChangeEvent<HTMLSelectElement>) => setMeetingStatusFilter(e.target.value)}
+                >
+                  <option value="all">All statuses</option>
+                  {MEETING_STATUS_OPTIONS.map((statusOption) => (
+                    <option key={statusOption} value={statusOption}>
+                      {statusOption}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="space-y-1 text-sm">
+                <div className="text-foreground/70">Type</div>
+                <select
+                  className="h-9 w-full rounded-md border bg-transparent px-2 text-sm sm:w-40"
+                  value={meetingTypeFilter}
+                  onChange={(e: ChangeEvent<HTMLSelectElement>) => setMeetingTypeFilter(e.target.value)}
+                >
+                  <option value="all">All types</option>
+                  <option value="board">Board</option>
+                  <option value="committee">Committee</option>
+                  <option value="icc">ICC</option>
+                  <option value="special">Special</option>
+                  <option value="other">Other</option>
+                </select>
+              </label>
+
+              <label className="space-y-1 text-sm">
+                <div className="text-foreground/70">Committee</div>
+                <select
+                  className="h-9 w-full rounded-md border bg-transparent px-2 text-sm sm:w-48"
+                  value={meetingCommitteeFilter}
+                  onChange={(e: ChangeEvent<HTMLSelectElement>) => setMeetingCommitteeFilter(e.target.value)}
+                >
+                  <option value="all">All committees</option>
+                  {committees.map((committee) => (
+                    <option key={committee.id} value={committee.id}>
+                      {committee.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="space-y-1 text-sm">
                 <div className="text-foreground/70">Search</div>
                 <input
-                  className="h-9 w-56 rounded-md border bg-transparent px-2 text-sm"
+                  type="search"
+                  className="h-9 w-full rounded-md border bg-transparent px-2 text-sm sm:w-56"
                   value={meetingSearch}
                   onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingSearch(e.target.value)}
-                  placeholder="Filter by title or location…"
+                  placeholder="Filter by title, location, or committee..."
                 />
               </label>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setMeetingSearch("")}
+                disabled={!meetingSearch.trim()}
+              >
+                Clear search
+              </Button>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={meetingUpcomingOnly}
+                  onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingUpcomingOnly(e.target.checked)}
+                />
+                <span className="text-foreground/70">Upcoming only</span>
+              </label>
+              <Button variant="ghost" size="sm" onClick={resetMeetingFilters} disabled={!meetingFiltersActive}>
+                Reset
+              </Button>
               <Button variant="ghost" onClick={() => void loadMeetings()}>
                 Refresh
               </Button>
             </div>
           </div>
+          <div className="mt-2 text-xs text-foreground/60">
+            Showing {filteredMeetings.length} of {adminMeetings.length} meetings.
+            {meetingsLastLoadedAt ? ` Last refreshed ${formatShortDateTime(meetingsLastLoadedAt)}.` : ""}
+          </div>
 
           <div className="mt-3 space-y-3">
             {filteredMeetings.length === 0 ? (
-              <div className="rounded-md border px-3 py-2 text-sm text-foreground/70">No meetings found.</div>
+              <div className="rounded-md border px-3 py-2 text-sm text-foreground/70">
+                {meetingFiltersActive ? "No meetings match the current filters." : "No meetings found."}
+              </div>
             ) : (
               filteredMeetings.map((meeting) => {
-                const draft = meetingDrafts[meeting.id] ?? {
-                  title: meeting.title,
-                  description: meeting.description ?? "",
-                  location: meeting.location ?? "",
-                  starts_at_local: datetimeLocalFromIso(meeting.starts_at),
-                  ends_at_local: datetimeLocalFromIso(meeting.ends_at),
-                  status: meeting.status,
-                };
+                const draft = meetingDrafts[meeting.id] ?? buildMeetingDraft(meeting);
                 const committeeLabel = meeting.committee_id
                   ? committeeById.get(meeting.committee_id)?.name ?? meeting.committee_id
                   : "—";
+                const isDirty = isMeetingDraftDirty(meeting, draft);
+                const draftTitleError = draft.title.trim().length === 0 ? "Title is required." : "";
+                const draftTimeError = getMeetingTimeError(draft.starts_at_local, draft.ends_at_local);
+                const canSaveMeeting =
+                  isDirty &&
+                  !draftTitleError &&
+                  draft.starts_at_local.trim().length > 0 &&
+                  draft.ends_at_local.trim().length > 0 &&
+                  !draftTimeError;
+                const agendaPostedLabel = meeting.agenda_posted_at
+                  ? formatShortDateTime(meeting.agenda_posted_at)
+                  : "Not posted";
+                const minutesPostedLabel = meeting.minutes_posted_at
+                  ? formatShortDateTime(meeting.minutes_posted_at)
+                  : "Not posted";
+                const noticePostedLabel = meeting.notice_posted_at
+                  ? formatShortDateTime(meeting.notice_posted_at)
+                  : "Not posted";
 
                 return (
                   <div key={meeting.id} className="rounded-md border p-3">
@@ -3325,10 +4099,45 @@ export function AdminPanel({
                         <div className="text-xs text-foreground/60">
                           {new Date(meeting.starts_at).toLocaleString()} → {new Date(meeting.ends_at).toLocaleString()}
                         </div>
+                        <div className="text-xs text-foreground/60">
+                          Notice: {noticePostedLabel} • Agenda: {agendaPostedLabel} • Minutes: {minutesPostedLabel}
+                        </div>
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
-                        <Button size="sm" variant="outline" onClick={() => void saveMeeting(meeting)}>
+                        {isDirty ? (
+                          <span className="text-xs text-foreground/60">Unsaved changes</span>
+                        ) : null}
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => window.open(`/meetings/${meeting.id}`, "_blank", "noopener")}
+                        >
+                          Open meeting
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => void saveMeeting(meeting)}
+                          disabled={!canSaveMeeting}
+                          title={
+                            !isDirty
+                              ? "No changes to save"
+                              : draftTitleError
+                                ? draftTitleError
+                                : draftTimeError
+                                  ? draftTimeError
+                                : "Save changes"
+                          }
+                        >
                           Save
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => resetMeetingDraft(meeting.id)}
+                          disabled={!isDirty}
+                        >
+                          Reset
                         </Button>
                         <Button
                           size="sm"
@@ -3351,6 +4160,9 @@ export function AdminPanel({
                             updateMeetingDraft(meeting.id, { title: e.target.value })
                           }
                         />
+                        {draftTitleError ? (
+                          <div className="text-xs text-red-600">{draftTitleError}</div>
+                        ) : null}
                       </label>
 
                       <label className="space-y-1 text-sm">
@@ -3399,10 +4211,14 @@ export function AdminPanel({
                           type="datetime-local"
                           className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
                           value={draft.ends_at_local}
+                          min={draft.starts_at_local || undefined}
                           onChange={(e: ChangeEvent<HTMLInputElement>) =>
                             updateMeetingDraft(meeting.id, { ends_at_local: e.target.value })
                           }
                         />
+                        {draftTimeError ? (
+                          <div className="text-xs text-red-600">{draftTimeError}</div>
+                        ) : null}
                       </label>
 
                       <label className="space-y-1 text-sm md:col-span-3">
@@ -3412,6 +4228,122 @@ export function AdminPanel({
                           value={draft.description}
                           onChange={(e: ChangeEvent<HTMLInputElement>) =>
                             updateMeetingDraft(meeting.id, { description: e.target.value })
+                          }
+                        />
+                      </label>
+                    </div>
+
+                    <div className="mt-3 grid gap-2 md:grid-cols-3">
+                      <label className="space-y-1 text-sm md:col-span-2">
+                        <div className="text-foreground/70">Remote access URL</div>
+                        <input
+                          className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                          value={draft.remote_url}
+                          onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                            updateMeetingDraft(meeting.id, { remote_url: e.target.value })
+                          }
+                          placeholder="https://zoom.us/j/..."
+                        />
+                      </label>
+
+                      <label className="space-y-1 text-sm">
+                        <div className="text-foreground/70">Livestream URL</div>
+                        <input
+                          className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                          value={draft.livestream_url}
+                          onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                            updateMeetingDraft(meeting.id, { livestream_url: e.target.value })
+                          }
+                          placeholder="https://youtube.com/..."
+                        />
+                      </label>
+
+                      <label className="space-y-1 text-sm md:col-span-3">
+                        <div className="text-foreground/70">Public comment instructions</div>
+                        <textarea
+                          className="w-full rounded-md border bg-transparent px-2 py-2 text-sm"
+                          rows={2}
+                          value={draft.public_comment_instructions}
+                          onChange={(e: ChangeEvent<HTMLTextAreaElement>) =>
+                            updateMeetingDraft(meeting.id, { public_comment_instructions: e.target.value })
+                          }
+                          placeholder="Include email addresses, time limits, or form links."
+                        />
+                      </label>
+                    </div>
+
+                    <div className="mt-3 grid gap-2 md:grid-cols-3">
+                      <label className="space-y-1 text-sm">
+                        <div className="flex items-center justify-between text-foreground/70">
+                          <span>Notice posted at</span>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() =>
+                              updateMeetingDraft(meeting.id, {
+                                notice_posted_at_local: toLocalDatetimeInputValue(new Date()),
+                              })
+                            }
+                          >
+                            Now
+                          </Button>
+                        </div>
+                        <input
+                          type="datetime-local"
+                          className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                          value={draft.notice_posted_at_local}
+                          onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                            updateMeetingDraft(meeting.id, { notice_posted_at_local: e.target.value })
+                          }
+                        />
+                      </label>
+
+                      <label className="space-y-1 text-sm">
+                        <div className="flex items-center justify-between text-foreground/70">
+                          <span>Agenda posted at</span>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() =>
+                              updateMeetingDraft(meeting.id, {
+                                agenda_posted_at_local: toLocalDatetimeInputValue(new Date()),
+                              })
+                            }
+                          >
+                            Now
+                          </Button>
+                        </div>
+                        <input
+                          type="datetime-local"
+                          className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                          value={draft.agenda_posted_at_local}
+                          onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                            updateMeetingDraft(meeting.id, { agenda_posted_at_local: e.target.value })
+                          }
+                        />
+                      </label>
+
+                      <label className="space-y-1 text-sm">
+                        <div className="flex items-center justify-between text-foreground/70">
+                          <span>Minutes posted at</span>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() =>
+                              updateMeetingDraft(meeting.id, {
+                                minutes_posted_at_local: toLocalDatetimeInputValue(new Date()),
+                              })
+                            }
+                          >
+                            Now
+                          </Button>
+                        </div>
+                        <input
+                          type="datetime-local"
+                          className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                          value={draft.minutes_posted_at_local}
+                          onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                            updateMeetingDraft(meeting.id, { minutes_posted_at_local: e.target.value })
                           }
                         />
                       </label>
@@ -3434,28 +4366,72 @@ export function AdminPanel({
           <p className="text-sm text-foreground/70">
             Advisor is global. All other roles apply to the selected term.
           </p>
+          <p className="text-xs text-foreground/60">
+            Pre-login role grants live in the Access tab; this section updates active roles for signed-in users.
+          </p>
         </div>
 
-        <div className="grid gap-3 md:grid-cols-4">
+        <div className="grid gap-3 md:grid-cols-3">
           <label className="space-y-1 text-sm">
             <div className="text-foreground/70">Find user</div>
             <input
               type="text"
-              className="h-9 rounded-md border bg-transparent px-2 text-sm"
+              className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
               value={userSearch}
               onChange={(e: ChangeEvent<HTMLInputElement>) => setUserSearch(e.target.value)}
-              placeholder="Filter by name or email…"
+              placeholder="Filter by name, email, role, or status..."
             />
           </label>
 
           <label className="space-y-1 text-sm">
+            <div className="text-foreground/70">Status</div>
+            <select
+              className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+              value={userStatusFilter}
+              onChange={(e: ChangeEvent<HTMLSelectElement>) =>
+                setUserStatusFilter(e.target.value as "all" | "active" | "inactive")
+              }
+            >
+              <option value="all">Any status</option>
+              <option value="active">Active</option>
+              <option value="inactive">Inactive</option>
+            </select>
+          </label>
+
+          <label className="space-y-1 text-sm">
+            <div className="text-foreground/70">Role filter</div>
+            <select
+              className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+              value={userRoleFilter}
+              onChange={(e: ChangeEvent<HTMLSelectElement>) => setUserRoleFilter(e.target.value as RoleKey | "")}
+            >
+              <option value="">Any role</option>
+              {ROLE_OPTIONS.map((r) => (
+                <option key={r.key} value={r.key}>
+                  {r.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 text-xs text-foreground/60">
+          <Button variant="ghost" size="sm" onClick={resetUserFilters} disabled={!hasUserFilters}>
+            Reset filters
+          </Button>
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-4">
+          <label className="space-y-1 text-sm md:col-span-2">
             <div className="text-foreground/70">User</div>
             <select
-              className="h-9 rounded-md border bg-transparent px-2 text-sm"
+              className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
               value={selectedUserId}
               onChange={(e: ChangeEvent<HTMLSelectElement>) => setSelectedUserId(e.target.value)}
+              disabled={usersForRolePicker.length === 0}
             >
-              <option value="">Select a user…</option>
+              <option value="">
+                {usersForRolePicker.length === 0 ? "No users match filters" : "Select a user…"}
+              </option>
               {usersForRolePicker.map((u) => (
                 <option key={u.id} value={u.id}>
                   {formatUserLabel(u)}
@@ -3467,7 +4443,7 @@ export function AdminPanel({
           <label className="space-y-1 text-sm">
             <div className="text-foreground/70">Role</div>
             <select
-              className="h-9 rounded-md border bg-transparent px-2 text-sm"
+              className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
               value={selectedRoleKey}
               onChange={(e: ChangeEvent<HTMLSelectElement>) => setSelectedRoleKey(e.target.value as RoleKey)}
             >
@@ -3484,6 +4460,17 @@ export function AdminPanel({
               Assign role
             </Button>
           </div>
+        </div>
+        {selectedUser ? (
+          <div className="rounded-md border px-3 py-2 text-sm">
+            <div className="font-medium">Selected user</div>
+            <div className="mt-1 text-sm">{formatUserLabel(selectedUser)}</div>
+            <div className="text-xs text-foreground/70">Status: {selectedUser.status}</div>
+            <div className="text-xs text-foreground/70">Active roles: {selectedUserRolesLabel}</div>
+          </div>
+        ) : null}
+        <div className="text-xs text-foreground/60">
+          Showing {filteredUserCount} of {users.length} users.
         </div>
       </section>
 

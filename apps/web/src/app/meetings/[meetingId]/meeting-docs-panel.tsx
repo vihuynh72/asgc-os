@@ -38,6 +38,32 @@ function formatBytes(bytes: number | null | undefined): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function inferMimeType(file: File): string {
+  if (file.type) return file.type;
+  const name = file.name.toLowerCase();
+  if (name.endsWith(".pdf")) return "application/pdf";
+  if (name.endsWith(".docx")) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  if (name.endsWith(".doc")) return "application/msword";
+  if (name.endsWith(".txt")) return "text/plain";
+  if (name.endsWith(".csv")) return "text/csv";
+  return "application/octet-stream";
+}
+
+function formatVisibility(value: string): string {
+  switch (value) {
+    case "public":
+      return "Public";
+    case "internal":
+      return "Internal";
+    case "committee_only":
+      return "Committee-only";
+    case "restricted":
+      return "Restricted";
+    default:
+      return value;
+  }
+}
+
 export function MeetingDocsPanel({
   meetingId,
   committeeId,
@@ -56,6 +82,15 @@ export function MeetingDocsPanel({
   const [minutesTitle, setMinutesTitle] = useState<string>("");
   const [minutesDescription, setMinutesDescription] = useState<string>("");
   const [versionSourceId, setVersionSourceId] = useState<string>("");
+  const [minutesMarkPosted, setMinutesMarkPosted] = useState<boolean>(true);
+
+  const [agendaFile, setAgendaFile] = useState<File | null>(null);
+  const [agendaTitle, setAgendaTitle] = useState<string>("");
+  const [agendaDescription, setAgendaDescription] = useState<string>("");
+  const [agendaVersionSourceId, setAgendaVersionSourceId] = useState<string>("");
+  const [agendaMarkPosted, setAgendaMarkPosted] = useState<boolean>(true);
+
+  const fallbackVisibility = committeeId ? "committee_only" : "internal";
 
   const minutesDocs = useMemo(() => docs.filter((d) => d.doc_type === "minutes"), [docs]);
   const agendaDocs = useMemo(() => docs.filter((d) => d.doc_type === "agenda"), [docs]);
@@ -65,6 +100,19 @@ export function MeetingDocsPanel({
     const { docs: nextDocs } = await fetchJson<{ docs: DocRow[] }>(`/api/docs?${qs.toString()}`);
     setDocs(nextDocs ?? []);
   }, [meetingId]);
+
+  async function markMeetingPosted(type: "agenda" | "minutes") {
+    if (!isAdmin) return;
+    const payload =
+      type === "agenda"
+        ? { agenda_posted_at: new Date().toISOString() }
+        : { minutes_posted_at: new Date().toISOString() };
+    await fetchJson(`/api/admin/meetings/${encodeURIComponent(meetingId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  }
 
   async function handleMinutesUpload(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -79,6 +127,7 @@ export function MeetingDocsPanel({
       return;
     }
 
+    const contentType = inferMimeType(uploadFile);
     setStatus("Getting upload URL...");
 
     try {
@@ -92,20 +141,21 @@ export function MeetingDocsPanel({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           filename: uploadFile.name,
-          content_type: uploadFile.type,
-          bucket: "minutes",
+          content_type: contentType,
+          bucket: "documents",
         }),
       });
 
       setStatus("Uploading minutes...");
       const uploadRes = await fetch(uploadUrl, {
         method: "PUT",
-        headers: { "Content-Type": uploadFile.type || "application/octet-stream" },
+        headers: { "Content-Type": contentType },
         body: uploadFile,
       });
 
       if (!uploadRes.ok) {
-        throw new Error("Failed to upload minutes");
+        const errText = await uploadRes.text().catch(() => "");
+        throw new Error(errText ? `Failed to upload minutes: ${errText}` : "Failed to upload minutes");
       }
 
       setStatus("Saving minutes...");
@@ -117,7 +167,7 @@ export function MeetingDocsPanel({
           doc_type: "minutes",
           storage_path: path,
           storage_bucket: bucket,
-          mime_type: uploadFile.type || null,
+          mime_type: contentType || null,
           size_bytes: uploadFile.size,
           visibility: committeeId ? "committee_only" : "internal",
           committee_id: committeeId,
@@ -126,15 +176,97 @@ export function MeetingDocsPanel({
           version_of_doc_id: versionSourceId || null,
         }),
       });
+      if (minutesMarkPosted) {
+        await markMeetingPosted("minutes");
+      }
 
       setStatus("");
       setUploadFile(null);
       setMinutesTitle("");
       setMinutesDescription("");
       setVersionSourceId("");
+      setMinutesMarkPosted(true);
       await reload();
     } catch (err) {
       setStatus(err instanceof Error ? err.message : "Minutes upload failed");
+    }
+  }
+
+  async function handleAgendaUpload(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+
+    if (!agendaFile) {
+      setStatus("Select an agenda file");
+      return;
+    }
+
+    if (!agendaTitle.trim()) {
+      setStatus("Title required");
+      return;
+    }
+
+    const contentType = inferMimeType(agendaFile);
+    setStatus("Getting upload URL...");
+
+    try {
+      const { uploadUrl, path, bucket } = await fetchJson<{
+        uploadUrl: string;
+        token: string;
+        path: string;
+        bucket: string;
+      }>("/api/docs/upload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          filename: agendaFile.name,
+          content_type: contentType,
+          bucket: "documents",
+        }),
+      });
+
+      setStatus("Uploading agenda...");
+      const uploadRes = await fetch(uploadUrl, {
+        method: "PUT",
+        headers: { "Content-Type": contentType },
+        body: agendaFile,
+      });
+
+      if (!uploadRes.ok) {
+        const errText = await uploadRes.text().catch(() => "");
+        throw new Error(errText ? `Failed to upload agenda: ${errText}` : "Failed to upload agenda");
+      }
+
+      setStatus("Saving agenda...");
+      await fetchJson("/api/docs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: agendaTitle.trim(),
+          doc_type: "agenda",
+          storage_path: path,
+          storage_bucket: bucket,
+          mime_type: contentType || null,
+          size_bytes: agendaFile.size,
+          visibility: committeeId ? "committee_only" : "internal",
+          committee_id: committeeId,
+          meeting_id: meetingId,
+          description: agendaDescription.trim() || null,
+          version_of_doc_id: agendaVersionSourceId || null,
+        }),
+      });
+      if (agendaMarkPosted) {
+        await markMeetingPosted("agenda");
+      }
+
+      setStatus("");
+      setAgendaFile(null);
+      setAgendaTitle("");
+      setAgendaDescription("");
+      setAgendaVersionSourceId("");
+      setAgendaMarkPosted(true);
+      await reload();
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : "Agenda upload failed");
     }
   }
 
@@ -153,6 +285,23 @@ export function MeetingDocsPanel({
       setStatus("");
     } catch (err) {
       setStatus(err instanceof Error ? err.message : "Failed to download");
+    }
+  }
+
+  async function handleToggleVisibility(doc: DocRow) {
+    if (!isAdmin) return;
+    const nextVisibility = doc.visibility === "public" ? fallbackVisibility : "public";
+    setStatus(`Setting visibility to ${nextVisibility}...`);
+    try {
+      await fetchJson(`/api/docs/${encodeURIComponent(doc.id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ visibility: nextVisibility }),
+      });
+      setStatus("");
+      await reload();
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : "Failed to update visibility");
     }
   }
 
@@ -241,6 +390,16 @@ export function MeetingDocsPanel({
                 </div>
               ) : null}
             </div>
+            {isAdmin ? (
+              <label className="flex items-center gap-2 text-xs text-foreground/70 sm:col-span-2">
+                <input
+                  type="checkbox"
+                  checked={minutesMarkPosted}
+                  onChange={(e) => setMinutesMarkPosted(e.target.checked)}
+                />
+                Mark minutes posted now
+              </label>
+            ) : null}
           </div>
           <div className="flex justify-end">
             <Button type="submit" size="sm">
@@ -259,12 +418,31 @@ export function MeetingDocsPanel({
                   <div className="font-medium">{doc.title}</div>
                   <div className="text-xs text-foreground/70">
                     {new Date(doc.created_at).toLocaleString()} - {formatBytes(doc.size_bytes)}
-                    {doc.version_of_doc_id ? " - Versioned" : ""}
+                    {doc.version_of_doc_id ? " - Versioned" : ""} - {formatVisibility(doc.visibility)}
                   </div>
                 </div>
-                <Button type="button" variant="outline" size="sm" onClick={() => handleDownload(doc)}>
-                  Download
-                </Button>
+                <div className="flex flex-wrap items-center gap-2">
+                  {isAdmin ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => void handleToggleVisibility(doc)}
+                    >
+                      {doc.visibility === "public"
+                        ? `Make ${formatVisibility(fallbackVisibility)}`
+                        : "Publish"}
+                    </Button>
+                  ) : null}
+                  {isAdmin ? (
+                    <Button type="button" variant="ghost" size="sm" onClick={() => void markMeetingPosted("minutes")}>
+                      Mark posted now
+                    </Button>
+                  ) : null}
+                  <Button type="button" variant="outline" size="sm" onClick={() => handleDownload(doc)}>
+                    Download
+                  </Button>
+                </div>
               </div>
             ))}
           </div>
@@ -274,8 +452,8 @@ export function MeetingDocsPanel({
       <div className="rounded-lg border border-foreground/10 p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
-            <div className="text-sm font-medium">Agenda PDF</div>
-            <div className="text-xs text-foreground/70">Generate a simple agenda PDF from accepted items.</div>
+            <div className="text-sm font-medium">Agenda documents</div>
+            <div className="text-xs text-foreground/70">Upload or generate agendas for public posting.</div>
           </div>
           {isAdmin ? (
             <Button type="button" size="sm" onClick={() => void handleGenerateAgenda()}>
@@ -284,8 +462,81 @@ export function MeetingDocsPanel({
           ) : null}
         </div>
 
+        {isAdmin ? (
+          <form onSubmit={handleAgendaUpload} className="mt-4 space-y-3">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <label className="mb-1 block text-xs text-foreground/70">Title *</label>
+                <input
+                  type="text"
+                  value={agendaTitle}
+                  onChange={(e: ChangeEvent<HTMLInputElement>) => setAgendaTitle(e.target.value)}
+                  placeholder="Meeting agenda"
+                  className="w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-foreground/70">Replace version (optional)</label>
+                <select
+                  value={agendaVersionSourceId}
+                  onChange={(e) => setAgendaVersionSourceId(e.target.value)}
+                  className="w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
+                >
+                  <option value="">New version group</option>
+                  {agendaDocs.map((doc) => (
+                    <option key={doc.id} value={doc.id}>
+                      {doc.title}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="sm:col-span-2">
+                <label className="mb-1 block text-xs text-foreground/70">Description (optional)</label>
+                <textarea
+                  value={agendaDescription}
+                  onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setAgendaDescription(e.target.value)}
+                  rows={2}
+                  className="w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
+                />
+              </div>
+              <div className="sm:col-span-2">
+                <label className="mb-1 block text-xs text-foreground/70">File *</label>
+                <input
+                  type="file"
+                  onChange={(e: ChangeEvent<HTMLInputElement>) => {
+                    const f = e.target.files?.[0] ?? null;
+                    setAgendaFile(f);
+                    if (f && !agendaTitle.trim()) {
+                      setAgendaTitle(f.name.replace(/\.[^.]+$/, ""));
+                    }
+                  }}
+                  className="text-sm"
+                />
+                {agendaFile ? (
+                  <div className="mt-1 text-xs text-foreground/70">
+                    {agendaFile.name} ({formatBytes(agendaFile.size)})
+                  </div>
+                ) : null}
+              </div>
+              <label className="flex items-center gap-2 text-xs text-foreground/70 sm:col-span-2">
+                <input
+                  type="checkbox"
+                  checked={agendaMarkPosted}
+                  onChange={(e) => setAgendaMarkPosted(e.target.checked)}
+                />
+                Mark agenda posted now
+              </label>
+            </div>
+            <div className="flex justify-end">
+              <Button type="submit" size="sm">
+                Upload Agenda
+              </Button>
+            </div>
+          </form>
+        ) : null}
+
         {agendaDocs.length === 0 ? (
-          <div className="mt-4 text-sm text-foreground/70">No agenda PDFs generated yet.</div>
+          <div className="mt-4 text-sm text-foreground/70">No agenda documents yet.</div>
         ) : (
           <div className="mt-4 space-y-2">
             {agendaDocs.map((doc) => (
@@ -294,12 +545,31 @@ export function MeetingDocsPanel({
                   <div className="font-medium">{doc.title}</div>
                   <div className="text-xs text-foreground/70">
                     {new Date(doc.created_at).toLocaleString()} - {formatBytes(doc.size_bytes)}
-                    {doc.version_of_doc_id ? " - Versioned" : ""}
+                    {doc.version_of_doc_id ? " - Versioned" : ""} - {formatVisibility(doc.visibility)}
                   </div>
                 </div>
-                <Button type="button" variant="outline" size="sm" onClick={() => handleDownload(doc)}>
-                  Download
-                </Button>
+                <div className="flex flex-wrap items-center gap-2">
+                  {isAdmin ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => void handleToggleVisibility(doc)}
+                    >
+                      {doc.visibility === "public"
+                        ? `Make ${formatVisibility(fallbackVisibility)}`
+                        : "Publish"}
+                    </Button>
+                  ) : null}
+                  {isAdmin ? (
+                    <Button type="button" variant="ghost" size="sm" onClick={() => void markMeetingPosted("agenda")}>
+                      Mark posted now
+                    </Button>
+                  ) : null}
+                  <Button type="button" variant="outline" size="sm" onClick={() => handleDownload(doc)}>
+                    Download
+                  </Button>
+                </div>
               </div>
             ))}
           </div>

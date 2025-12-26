@@ -26,7 +26,7 @@ export default async function AuditLogPage() {
   }
 
   return (
-    <PageShell title="Audit Log" description="View system activity and changes.">
+    <PageShell title="Audit Log" description="View system activity and changes." backHref="/admin" backLabel="Back to Admin">
       <AuditLogPanel />
     </PageShell>
   );

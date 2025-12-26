@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
     ? await supabase
         .from("meetings")
         .select(
-          "id,committee_id,meeting_type,title,description,location,starts_at,ends_at,status,created_by,created_at,updated_at",
+          "id,committee_id,meeting_type,title,description,location,remote_url,livestream_url,public_comment_instructions,notice_posted_at,agenda_posted_at,minutes_posted_at,starts_at,ends_at,status,created_by,created_at,updated_at",
         )
         .order("starts_at", { ascending: false })
         .limit(200)

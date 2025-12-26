@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { PageShell } from "@/components/page-shell";
+import { Button } from "@/components/ui/button";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 
 type Meeting = {
@@ -13,6 +14,12 @@ type Meeting = {
   title: string;
   description: string | null;
   location: string | null;
+  remote_url?: string | null;
+  livestream_url?: string | null;
+  public_comment_instructions?: string | null;
+  notice_posted_at?: string | null;
+  agenda_posted_at?: string | null;
+  minutes_posted_at?: string | null;
   starts_at: string;
   ends_at: string;
   status: string;
@@ -44,6 +51,10 @@ export default function MeetingsPage() {
   const [error, setError] = useState<string | null>(null);
   const [officeTz, setOfficeTz] = useState<string | null>(null);
   const [showPast, setShowPast] = useState(false);
+  const [meetingSearch, setMeetingSearch] = useState("");
+  const [meetingTypeFilter, setMeetingTypeFilter] = useState("all");
+  const [meetingStatusFilter, setMeetingStatusFilter] = useState("all");
+  const [meetingSort, setMeetingSort] = useState<"upcoming" | "recent">("upcoming");
 
   const formatInOfficeTz = useCallback(
     (iso: string) => {
@@ -96,6 +107,37 @@ export default function MeetingsPage() {
     };
   }, [showPast, supabase]);
 
+  const filteredMeetings = useMemo(() => {
+    const query = meetingSearch.trim().toLowerCase();
+    const filtered = meetings.filter((meeting) => {
+      if (meetingTypeFilter !== "all" && meeting.meeting_type !== meetingTypeFilter) return false;
+      if (meetingStatusFilter !== "all" && meeting.status !== meetingStatusFilter) return false;
+      if (!query) return true;
+      const haystack = `${meeting.title} ${meeting.location ?? ""} ${meeting.meeting_type}`.toLowerCase();
+      return haystack.includes(query);
+    });
+    const sorted = [...filtered].sort((a, b) => {
+      const aTime = new Date(a.starts_at).getTime();
+      const bTime = new Date(b.starts_at).getTime();
+      if (Number.isNaN(aTime) || Number.isNaN(bTime)) return 0;
+      return meetingSort === "upcoming" ? aTime - bTime : bTime - aTime;
+    });
+    return sorted;
+  }, [meetings, meetingSearch, meetingTypeFilter, meetingStatusFilter, meetingSort]);
+
+  const meetingFiltersActive =
+    meetingSearch.trim().length > 0 ||
+    meetingTypeFilter !== "all" ||
+    meetingStatusFilter !== "all" ||
+    meetingSort !== "upcoming";
+
+  function resetMeetingFilters() {
+    setMeetingSearch("");
+    setMeetingTypeFilter("all");
+    setMeetingStatusFilter("all");
+    setMeetingSort("upcoming");
+  }
+
   return (
     <PageShell title="Meetings" description="View your upcoming meetings.">
       <div className="space-y-4">
@@ -116,6 +158,61 @@ export default function MeetingsPage() {
           </label>
         </div>
 
+        <div className="flex flex-wrap items-end gap-2">
+          <label className="space-y-1 text-xs text-foreground/70">
+            <span>Search</span>
+            <input
+              type="search"
+              className="h-8 w-full rounded border border-foreground/20 bg-background px-2 text-sm text-foreground sm:w-56"
+              value={meetingSearch}
+              onChange={(event) => setMeetingSearch(event.target.value)}
+              placeholder="Title, location, type..."
+            />
+          </label>
+          <label className="space-y-1 text-xs text-foreground/70">
+            <span>Type</span>
+            <select
+              className="h-8 w-full rounded border border-foreground/20 bg-background px-2 text-sm text-foreground sm:w-40"
+              value={meetingTypeFilter}
+              onChange={(event) => setMeetingTypeFilter(event.target.value)}
+            >
+              <option value="all">All types</option>
+              <option value="board">Board</option>
+              <option value="committee">Committee</option>
+              <option value="icc">ICC</option>
+              <option value="special">Special</option>
+              <option value="other">Other</option>
+            </select>
+          </label>
+          <label className="space-y-1 text-xs text-foreground/70">
+            <span>Status</span>
+            <select
+              className="h-8 w-full rounded border border-foreground/20 bg-background px-2 text-sm text-foreground sm:w-40"
+              value={meetingStatusFilter}
+              onChange={(event) => setMeetingStatusFilter(event.target.value)}
+            >
+              <option value="all">All statuses</option>
+              <option value="scheduled">Scheduled</option>
+              <option value="cancelled">Cancelled</option>
+              <option value="completed">Completed</option>
+            </select>
+          </label>
+          <label className="space-y-1 text-xs text-foreground/70">
+            <span>Sort</span>
+            <select
+              className="h-8 w-full rounded border border-foreground/20 bg-background px-2 text-sm text-foreground sm:w-40"
+              value={meetingSort}
+              onChange={(event) => setMeetingSort(event.target.value as "upcoming" | "recent")}
+            >
+              <option value="upcoming">Upcoming</option>
+              <option value="recent">Most recent</option>
+            </select>
+          </label>
+          <Button variant="ghost" size="sm" onClick={resetMeetingFilters} disabled={!meetingFiltersActive}>
+            Reset filters
+          </Button>
+        </div>
+
         {loading ? (
           <div className="text-sm text-foreground/70">Loading…</div>
         ) : meetings.length === 0 ? (
@@ -124,7 +221,10 @@ export default function MeetingsPage() {
           </div>
         ) : (
           <div className="space-y-3">
-            {meetings.map((m) => (
+            <div className="text-xs text-foreground/60">
+              Showing {filteredMeetings.length} of {meetings.length} meetings.
+            </div>
+            {filteredMeetings.map((m) => (
               <Link
                 key={m.id}
                 href={`/meetings/${m.id}`}
