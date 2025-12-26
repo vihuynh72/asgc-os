@@ -66,7 +66,7 @@ export async function POST(request: NextRequest, { params }: Params) {
     return NextResponse.json({ error: deadlineErr.message }, { status: 400 });
   }
   const deadline = Array.isArray(deadlineInfo) ? deadlineInfo[0] : deadlineInfo;
-  if (deadline?.is_past_deadline) {
+  if (deadline?.is_submission_open === false) {
     return NextResponse.json({ error: "submission_closed" }, { status: 403 });
   }
 

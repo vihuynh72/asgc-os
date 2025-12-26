@@ -295,6 +295,7 @@ export default async function MeetingDetailPage({ params }: { params: Params }) 
                     remote_url: typedMeeting.remote_url,
                     livestream_url: typedMeeting.livestream_url,
                   }}
+                  officeTz={officeTz}
                 />
               </div>
             </div>
@@ -374,6 +375,9 @@ export default async function MeetingDetailPage({ params }: { params: Params }) 
               initialDeadline={typedDeadline}
               isAdmin={isAdminUser}
               userId={user.id}
+              meetingStartsAt={typedMeeting.starts_at}
+              meetingType={typedMeeting.meeting_type}
+              officeTz={officeTz}
             />
           </div>
           <div>
