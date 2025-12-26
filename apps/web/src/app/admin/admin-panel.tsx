@@ -179,6 +179,10 @@ const ROLE_LABEL_BY_KEY: Record<RoleKey, string> = {
   volunteer: "Volunteer",
 };
 
+function normalizeEmailKey(raw: string | null | undefined): string {
+  return raw?.trim().toLowerCase() ?? "";
+}
+
 function formatUserLabel(u: UserRow) {
   const primary = u.display_name?.trim() || u.email?.trim() || u.id;
   const secondary = u.display_name?.trim() && u.email?.trim() ? ` (${u.email})` : "";
@@ -365,6 +369,8 @@ export function AdminPanel({
   const [roleGrantInviteId, setRoleGrantInviteId] = useState<string | null>(null);
   const [roleGrantRoleKey, setRoleGrantRoleKey] = useState<RoleKey>("volunteer");
   const [roleGrantTermId, setRoleGrantTermId] = useState<string>(initialSelectedTermId);
+  const [roleGrantApplyNow, setRoleGrantApplyNow] = useState<boolean>(false);
+  const [roleGrantDisplayTitle, setRoleGrantDisplayTitle] = useState<string>("");
   function onSelectAdminTab(nextTab: typeof adminTab) {
     if (nextTab !== "access") setRoleGrantInviteId(null);
     setAdminTab(nextTab);
@@ -545,6 +551,16 @@ export function AdminPanel({
     return m;
   }, [users]);
 
+  const usersByEmail = useMemo(() => {
+    const m = new Map<string, UserRow>();
+    for (const u of users) {
+      const key = normalizeEmailKey(u.email);
+      if (!key) continue;
+      m.set(key, u);
+    }
+    return m;
+  }, [users]);
+
   const usersForRolePicker = useMemo(() => {
     const q = userSearch.trim().toLowerCase();
     if (!q) return users;
@@ -553,6 +569,31 @@ export function AdminPanel({
       return hay.includes(q);
     });
   }, [userSearch, users]);
+
+  const activeAssignmentsByUserId = useMemo(() => {
+    const m = new Map<string, AssignmentRow[]>();
+    const add = (assignment: AssignmentRow) => {
+      const arr = m.get(assignment.user_id);
+      if (arr) arr.push(assignment);
+      else m.set(assignment.user_id, [assignment]);
+    };
+
+    for (const a of globalAdvisorAssignments) add(a);
+    for (const a of termAssignments) add(a);
+
+    for (const arr of m.values()) {
+      arr.sort((a, b) => {
+        const roleCmp = a.role_key.localeCompare(b.role_key);
+        if (roleCmp !== 0) return roleCmp;
+        const at = a.term_id ?? "";
+        const bt = b.term_id ?? "";
+        if (at !== bt) return at.localeCompare(bt);
+        return a.starts_at.localeCompare(b.starts_at);
+      });
+    }
+
+    return m;
+  }, [globalAdvisorAssignments, termAssignments]);
 
   const activeBanKeys = useMemo(() => {
     const s = new Set<string>();
@@ -569,6 +610,13 @@ export function AdminPanel({
     }
     return m;
   }, [terms]);
+
+  function formatAssignmentLabel(assignment: AssignmentRow, includeTerm: boolean): string {
+    const roleLabel = ROLE_LABEL_BY_KEY[assignment.role_key] ?? assignment.role_key;
+    if (!includeTerm) return roleLabel;
+    const termLabel = assignment.term_id ? termNameById.get(assignment.term_id) ?? assignment.term_id : "Global";
+    return `${roleLabel} (${termLabel})`;
+  }
 
   const bootstrapGrantsByEmail = useMemo(() => {
     const m = new Map<string, BootstrapRoleGrantRow[]>();
@@ -949,9 +997,13 @@ export function AdminPanel({
 
   function openRoleGrantModal(invite: InviteAllowlistRow) {
     if (!invite.email_normalized || invite.email_normalized.startsWith("@")) return;
+    const normalized = normalizeEmailKey(invite.email_normalized);
+    const user = normalized ? usersByEmail.get(normalized) ?? null : null;
     setRoleGrantInviteId(invite.id);
     setRoleGrantRoleKey("volunteer");
     setRoleGrantTermId(selectedTermId);
+    setRoleGrantApplyNow(Boolean(user));
+    setRoleGrantDisplayTitle("");
   }
 
   function closeRoleGrantModal() {
@@ -966,6 +1018,9 @@ export function AdminPanel({
       return;
     }
 
+    const user = usersByEmail.get(normalizeEmailKey(normalized)) ?? null;
+    const applyNow = roleGrantApplyNow && !!user;
+
     const roleKey = roleGrantRoleKey;
     const scope = ROLE_OPTIONS.find((r) => r.key === roleKey)?.scope ?? "term";
     const termId = scope === "term" ? (roleGrantTermId || selectedTermId) : null;
@@ -976,21 +1031,50 @@ export function AdminPanel({
       return;
     }
 
+    if (roleGrantApplyNow && !user) {
+      setStatus("No account found yet for this email. Use pre-login roles instead.");
+      toast.error("No account found yet. Pre-login roles only.");
+      return;
+    }
+
     setStatus("Granting role...");
     try {
-      const data = await fetchJson<{ grant: BootstrapRoleGrantRow }>("/api/admin/bootstrap-role-grants", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: normalized,
-          roleKey,
-          termId: scope === "term" ? termId : null,
-        }),
-      });
+      if (applyNow) {
+        await fetchJson<{ assignment: AssignmentRow }>("/api/admin/role-assignments", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userId: user!.id,
+            roleKey,
+            termId: scope === "term" ? termId : null,
+            displayTitle:
+              roleKey === "executive" && roleGrantDisplayTitle.trim().length > 0
+                ? roleGrantDisplayTitle.trim()
+                : undefined,
+          }),
+        });
 
-      setBootstrapRoleGrants((prev) => [data.grant, ...prev.filter((g) => g.id !== data.grant.id)]);
-      setStatus("");
-      toast.success("Role granted");
+        await loadAssignments(selectedTermId);
+        if (adminAccessAudit) {
+          void loadAdminAccessAudit();
+        }
+        setStatus("");
+        toast.success("Role granted (active)");
+      } else {
+        const data = await fetchJson<{ grant: BootstrapRoleGrantRow }>("/api/admin/bootstrap-role-grants", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            email: normalized,
+            roleKey,
+            termId: scope === "term" ? termId : null,
+          }),
+        });
+
+        setBootstrapRoleGrants((prev) => [data.grant, ...prev.filter((g) => g.id !== data.grant.id)]);
+        setStatus("");
+        toast.success("Role granted (pre-login)");
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Failed to grant role";
       setStatus(msg);
@@ -2108,16 +2192,29 @@ export function AdminPanel({
               {filteredInvites.map((inv) => {
                 const isDomain = inv.email_normalized.startsWith("@");
                 const grants = !isDomain ? (bootstrapGrantsByEmail.get(inv.email_normalized) ?? []) : [];
+                const user = !isDomain ? usersByEmail.get(inv.email_normalized) ?? null : null;
+                const activeAssignments = user ? activeAssignmentsByUserId.get(user.id) ?? [] : [];
+                const activeRoleLabels = activeAssignments.map((a) => formatAssignmentLabel(a, true));
                 const grantLabels = grants.map((g) => {
                   const roleLabel = ROLE_LABEL_BY_KEY[g.role_key] ?? g.role_key;
                   const termLabel = g.term_id ? (termNameById.get(g.term_id) ?? g.term_id) : null;
                   return termLabel ? `${roleLabel} (${termLabel})` : roleLabel;
                 });
-                const rolesSummary = isDomain
-                  ? "Roles: — (domain entry)"
+                const activeRolesLabel = showAllTermAssignments
+                  ? "Active roles (all terms)"
+                  : "Active roles (selected term + global)";
+                const preloginRolesSummary = isDomain
+                  ? "Pre-login roles (next sign-in): — (domain entry)"
                   : grantLabels.length > 0
-                    ? `Roles: ${grantLabels.join(", ")}`
-                    : "Roles: —";
+                    ? `Pre-login roles (next sign-in): ${grantLabels.join(", ")}`
+                    : "Pre-login roles (next sign-in): —";
+                const activeRolesSummary = isDomain
+                  ? `${activeRolesLabel}: — (domain entry)`
+                  : user
+                    ? activeRoleLabels.length > 0
+                      ? `${activeRolesLabel}: ${activeRoleLabels.join(", ")}`
+                      : `${activeRolesLabel}: —`
+                    : `${activeRolesLabel}: — (no account yet)`;
 
                 return (
                   <div
@@ -2147,7 +2244,10 @@ export function AdminPanel({
                       </div>
 
                       <div className="mt-1 truncate text-xs text-foreground/60" title={grantLabels.join(", ")}>
-                        {rolesSummary}
+                        {preloginRolesSummary}
+                      </div>
+                      <div className="mt-1 truncate text-xs text-foreground/60" title={activeRoleLabels.join(", ")}>
+                        {activeRolesSummary}
                       </div>
                     </div>
 
@@ -2261,7 +2361,14 @@ export function AdminPanel({
                 const normalized = invite.email_normalized;
                 const isDomain = normalized.startsWith("@");
                 const grants = !isDomain ? (bootstrapGrantsByEmail.get(normalized) ?? []) : [];
+                const user = !isDomain ? usersByEmail.get(normalized) ?? null : null;
+                const activeAssignments = user ? activeAssignmentsByUserId.get(user.id) ?? [] : [];
                 const scope = ROLE_OPTIONS.find((r) => r.key === roleGrantRoleKey)?.scope ?? "term";
+                const activeRolesLabel = showAllTermAssignments
+                  ? "Active roles (all terms)"
+                  : "Active roles (selected term + global)";
+                const canApplyNow = Boolean(user);
+                const applyNow = roleGrantApplyNow && canApplyNow;
 
                 return (
                   <div className="space-y-4">
@@ -2277,11 +2384,11 @@ export function AdminPanel({
 
                     <div className="text-sm text-foreground/70">
                       These roles are applied automatically when the member signs in for the first time. If they already signed in,
-                      assign roles in the <span className="font-medium">Roles</span> tab instead.
+                      their active roles appear below and can be managed here or in the <span className="font-medium">Roles</span> tab.
                     </div>
 
                     <div className="space-y-2">
-                      <div className="text-sm font-medium">Current roles</div>
+                      <div className="text-sm font-medium">Pre-login roles (next sign-in)</div>
                       {grants.length === 0 ? (
                         <div className="text-sm text-foreground/70">No pre-login roles.</div>
                       ) : (
@@ -2297,6 +2404,33 @@ export function AdminPanel({
                                 </div>
                                 <Button variant="ghost" size="sm" onClick={() => void onRevokeRoleGrant(g)}>
                                   Revoke
+                                </Button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="text-sm font-medium">{activeRolesLabel}</div>
+                      {!user ? (
+                        <div className="text-sm text-foreground/70">No account found yet for this email.</div>
+                      ) : activeAssignments.length === 0 ? (
+                        <div className="text-sm text-foreground/70">No active roles found.</div>
+                      ) : (
+                        <div className="space-y-2">
+                          {activeAssignments.map((a) => {
+                            const roleLabel = ROLE_LABEL_BY_KEY[a.role_key] ?? a.role_key;
+                            const termLabel = a.term_id ? (termNameById.get(a.term_id) ?? a.term_id) : "Global";
+                            return (
+                              <div key={a.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2">
+                                <div className="min-w-0 text-sm">
+                                  <span className="font-medium">{roleLabel}</span>
+                                  <span className="text-foreground/70">{` • ${termLabel}`}</span>
+                                </div>
+                                <Button variant="ghost" size="sm" onClick={() => void onEndAssignment(a.id)}>
+                                  End role
                                 </Button>
                               </div>
                             );
@@ -2348,6 +2482,38 @@ export function AdminPanel({
                             <div className="hidden sm:block" />
                           )}
                         </div>
+
+                        <div className="space-y-1">
+                          <label className="flex items-center gap-2 text-sm">
+                            <input
+                              type="checkbox"
+                              className="h-4 w-4"
+                              checked={applyNow}
+                              onChange={(e) => setRoleGrantApplyNow(e.target.checked)}
+                              disabled={!canApplyNow}
+                            />
+                            Apply immediately (active role)
+                          </label>
+                          <div className="text-xs text-foreground/60">
+                            {canApplyNow
+                              ? applyNow
+                                ? "Updates the user immediately and prompts them to sign in again."
+                                : "Stores a pre-login role; no prompt until they sign in again."
+                              : "No account found yet; this will be stored as a pre-login role."}
+                          </div>
+                        </div>
+
+                        {applyNow && roleGrantRoleKey === "executive" ? (
+                          <label className="space-y-1 text-sm">
+                            <div className="text-foreground/70">Executive title (optional)</div>
+                            <input
+                              className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                              value={roleGrantDisplayTitle}
+                              onChange={(e: ChangeEvent<HTMLInputElement>) => setRoleGrantDisplayTitle(e.target.value)}
+                              placeholder="Executive Vice President"
+                            />
+                          </label>
+                        ) : null}
 
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <Button size="sm" onClick={() => void onGrantRoleForInvite(invite)}>

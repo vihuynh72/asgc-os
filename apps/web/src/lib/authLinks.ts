@@ -59,5 +59,9 @@ export async function generateSignInLink(
   const second = await attemptGenerateLink(admin, "invite", email, redirectTo);
   if (second.ok) return second.result;
 
-  throw new Error(second.message || first.message || "generate_link_failed");
+  throw new Error(
+    `Failed to generate sign-in link after trying both magiclink and invite methods: ${
+      second.message || first.message || "generate_link_failed"
+    }`,
+  );
 }
