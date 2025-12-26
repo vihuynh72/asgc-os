@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { hasPublicSupabaseEnv } from "@/lib/env";
 import { safeRedirectPath } from "@/lib/redirects";
 import { getSupabaseServerComponentClient } from "@/lib/supabaseServerComponent";
+import { AdminRedirect } from "./admin-redirect";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -39,6 +40,7 @@ export default async function UnauthorizedPage({
   return (
     <PageShell title="Access denied" description={description}>
       <div className="space-y-4">
+        <AdminRedirect enabled={reason === "admin"} />
         {user ? (
           <p className="text-sm text-foreground/70">
             Signed in as <span className="font-medium text-foreground">{user.email ?? "unknown"}</span>.
@@ -47,7 +49,18 @@ export default async function UnauthorizedPage({
           <p className="text-sm text-foreground/70">Not signed in.</p>
         )}
 
+        {reason === "admin" ? (
+          <p className="text-sm text-foreground/70">
+            You will be redirected to Meetings shortly.
+          </p>
+        ) : null}
+
         <div className="flex flex-wrap items-center gap-3">
+          {reason === "admin" ? (
+            <Link href="/meetings">
+              <Button size="sm">Go to meetings</Button>
+            </Link>
+          ) : null}
           <Link className="text-sm underline" href="/dashboard">
             Go to dashboard
           </Link>

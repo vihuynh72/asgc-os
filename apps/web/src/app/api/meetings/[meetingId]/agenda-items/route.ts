@@ -59,6 +59,17 @@ export async function POST(request: NextRequest, { params }: Params) {
     return NextResponse.json({ error: "meeting_id_required" }, { status: 400 });
   }
 
+  const { data: deadlineInfo, error: deadlineErr } = await supabase.rpc("meeting_deadline_info", {
+    _meeting_id: meetingId,
+  });
+  if (deadlineErr) {
+    return NextResponse.json({ error: deadlineErr.message }, { status: 400 });
+  }
+  const deadline = Array.isArray(deadlineInfo) ? deadlineInfo[0] : deadlineInfo;
+  if (deadline?.is_past_deadline) {
+    return NextResponse.json({ error: "submission_closed" }, { status: 403 });
+  }
+
   let body: {
     title?: string;
     category?: string;

@@ -1123,6 +1123,10 @@ export function AdminPanel({
         setStatus("Start and end times are required.");
         return;
       }
+      if (meetingTimeError) {
+        setStatus(meetingTimeError);
+        return;
+      }
 
       const startsAtIso = new Date(meetingStartsAtLocal).toISOString();
       const endsAtIso = new Date(meetingEndsAtLocal).toISOString();
@@ -1264,6 +1268,35 @@ export function AdminPanel({
       toast.success("Meeting cancelled");
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Failed to cancel meeting";
+      setStatus(msg);
+      toast.error(msg);
+    }
+  }
+
+  async function markMeetingPosted(meetingId: string, kind: "notice" | "agenda" | "minutes") {
+    if (tier === "read-only") {
+      toast.error("Read-only mode: updates are disabled.");
+      return;
+    }
+    const payload =
+      kind === "notice"
+        ? { notice_posted_at: new Date().toISOString() }
+        : kind === "agenda"
+          ? { agenda_posted_at: new Date().toISOString() }
+          : { minutes_posted_at: new Date().toISOString() };
+
+    setStatus("Updating meeting...");
+    try {
+      await fetchJson(`/api/admin/meetings/${encodeURIComponent(meetingId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      await loadMeetings();
+      setStatus("");
+      toast.success(`${kind === "notice" ? "Notice" : kind === "agenda" ? "Agenda" : "Minutes"} marked posted`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Failed to update meeting";
       setStatus(msg);
       toast.error(msg);
     }
@@ -2222,9 +2255,7 @@ export function AdminPanel({
     return formatDurationMinutes(diffMinutes);
   }, [meetingStartsAtLocal, meetingEndsAtLocal]);
 
-  const meetingTimeError = useMemo(() => {
-    return getMeetingTimeError(meetingStartsAtLocal, meetingEndsAtLocal);
-  }, [meetingStartsAtLocal, meetingEndsAtLocal]);
+  const meetingTimeError = getMeetingTimeError(meetingStartsAtLocal, meetingEndsAtLocal);
 
   const canCreateMeeting =
     meetingTitle.trim().length > 0 &&
@@ -2232,6 +2263,7 @@ export function AdminPanel({
     meetingEndsAtLocal.trim().length > 0 &&
     !meetingTimeError &&
     (meetingType !== "committee" || meetingCommitteeId.trim().length > 0);
+  const isReadOnly = tier === "read-only";
 
   function resetMeetingFilters() {
     setMeetingSearch("");
@@ -3792,207 +3824,31 @@ export function AdminPanel({
       <section className="space-y-3">
         <div className="space-y-1">
           <h2 className="text-lg font-semibold">Meetings</h2>
-          <p className="text-sm text-foreground/70">Create a new meeting.</p>
+          <p className="text-sm text-foreground/70">Create and manage meetings in one place.</p>
         </div>
 
-        <div className="grid gap-3 md:grid-cols-4">
-          <label className="space-y-1 text-sm">
-            <div className="text-foreground/70">Meeting type</div>
-            <select
-              className="h-9 rounded-md border bg-transparent px-2 text-sm"
-              value={meetingType}
-              onChange={(e: ChangeEvent<HTMLSelectElement>) => {
-                const next = e.target.value;
-                setMeetingType(next);
-                if (next !== "committee") {
-                  setMeetingCommitteeId("");
-                } else if (!meetingCommitteeId && committees[0]?.id) {
-                  setMeetingCommitteeId(committees[0].id);
-                }
-              }}
-            >
-              <option value="board">Board</option>
-              <option value="committee">Committee</option>
-              <option value="icc">ICC</option>
-              <option value="special">Special</option>
-              <option value="other">Other</option>
-            </select>
-          </label>
-
-          <label className="space-y-1 text-sm">
-            <div className="text-foreground/70">Committee (optional)</div>
-            <select
-              className="h-9 rounded-md border bg-transparent px-2 text-sm"
-              value={meetingCommitteeId}
-              onChange={(e: ChangeEvent<HTMLSelectElement>) => setMeetingCommitteeId(e.target.value)}
-              disabled={meetingType !== "committee"}
-            >
-              <option value="">Select committee…</option>
-              {committees.map((committee) => (
-                <option key={committee.id} value={committee.id}>
-                  {committee.name}
-                </option>
-              ))}
-            </select>
-            <div className="text-xs text-foreground/60">Required for committee meetings.</div>
-          </label>
-
-          <label className="space-y-1 text-sm md:col-span-2">
-            <div className="text-foreground/70">Title</div>
-            <input
-              type="text"
-              className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-              value={meetingTitle}
-              onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingTitle(e.target.value)}
-              placeholder="Meeting title"
-            />
-          </label>
-
-          <label className="space-y-1 text-sm md:col-span-2">
-            <div className="text-foreground/70">Location</div>
-            <input
-              type="text"
-              className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-              value={meetingLocation}
-              onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingLocation(e.target.value)}
-              placeholder="e.g. Room 101"
-            />
-          </label>
-
-          <label className="space-y-1 text-sm md:col-span-2">
-            <div className="text-foreground/70">Remote access URL (optional)</div>
-            <input
-              type="url"
-              className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-              value={meetingRemoteUrl}
-              onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingRemoteUrl(e.target.value)}
-              placeholder="https://zoom.us/j/..."
-            />
-          </label>
-
-          <label className="space-y-1 text-sm md:col-span-2">
-            <div className="text-foreground/70">Livestream URL (optional)</div>
-            <input
-              type="url"
-              className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-              value={meetingLivestreamUrl}
-              onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingLivestreamUrl(e.target.value)}
-              placeholder="https://youtube.com/..."
-            />
-          </label>
-
-          <label className="space-y-1 text-sm">
-            <div className="text-foreground/70">Starts at (local)</div>
-            <input
-              type="datetime-local"
-              className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-              value={meetingStartsAtLocal}
-              onChange={(e: ChangeEvent<HTMLInputElement>) => {
-                const next = e.target.value;
-                setMeetingStartsAtLocal(next);
-                if (!next) return;
-                const start = new Date(next);
-                if (Number.isNaN(start.getTime())) return;
-                const existingEnd = meetingEndsAtLocal ? new Date(meetingEndsAtLocal) : null;
-                const hasValidEnd = existingEnd && !Number.isNaN(existingEnd.getTime());
-                if (!hasValidEnd || existingEnd.getTime() <= start.getTime()) {
-                  const suggestedEnd = new Date(start.getTime() + 60 * 60000);
-                  setMeetingEndsAtLocal(toLocalDatetimeInputValue(suggestedEnd));
-                }
-              }}
-            />
-          </label>
-
-          <label className="space-y-1 text-sm">
-            <div className="text-foreground/70">Ends at (local)</div>
-            <input
-              type="datetime-local"
-              className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-              value={meetingEndsAtLocal}
-              min={meetingStartsAtLocal || undefined}
-              onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingEndsAtLocal(e.target.value)}
-            />
-            {meetingDurationLabel ? (
-              <div className="text-xs text-foreground/60">Duration: {meetingDurationLabel}</div>
-            ) : null}
-            {meetingTimeError ? (
-              <div className="text-xs text-red-600">{meetingTimeError}</div>
-            ) : null}
-          </label>
-
-          <label className="space-y-1 text-sm md:col-span-4">
-            <div className="text-foreground/70">Description (optional)</div>
-            <input
-              type="text"
-              className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-              value={meetingDescription}
-              onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingDescription(e.target.value)}
-              placeholder="Optional description"
-            />
-          </label>
-
-          <label className="space-y-1 text-sm md:col-span-4">
-            <div className="text-foreground/70">Public comment instructions (optional)</div>
-            <textarea
-              className="w-full rounded-md border bg-transparent px-2 py-2 text-sm"
-              rows={2}
-              value={meetingPublicCommentInstructions}
-              onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setMeetingPublicCommentInstructions(e.target.value)}
-              placeholder="How members of the public can comment (email, form link, time limits)."
-            />
-          </label>
-
-          <div className="flex items-end md:col-span-4">
-            <Button onClick={() => void onCreateMeeting()} disabled={!canCreateMeeting}>
-              Create meeting
-            </Button>
-          </div>
-        </div>
-
-        <div className="mt-4 rounded-md border p-3">
-          <div className="flex flex-wrap items-end justify-between gap-3">
-            <div>
-              <div className="text-sm font-medium">Existing meetings</div>
-              <div className="text-xs text-foreground/60">Edit details, update status, or cancel meetings.</div>
+        <div className="grid gap-4 xl:grid-cols-[1fr_1.6fr]">
+          <div className="rounded-lg border border-foreground/10 p-4">
+            <div className="text-sm font-medium">Create meeting</div>
+            <div className="mt-1 text-xs text-foreground/60">
+              Workflow: create the meeting → collect agenda items → publish agenda & minutes in the Meeting hub.
             </div>
-            <div className="flex flex-wrap items-end gap-2">
+            <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <label className="space-y-1 text-sm">
-                <div className="text-foreground/70">Sort</div>
+                <div className="text-foreground/70">Meeting type</div>
                 <select
-                  className="h-9 w-full rounded-md border bg-transparent px-2 text-sm sm:w-36"
-                  value={meetingSort}
-                  onChange={(e: ChangeEvent<HTMLSelectElement>) =>
-                    setMeetingSort(e.target.value as "recent" | "upcoming")
-                  }
+                  className="h-9 rounded-md border bg-transparent px-2 text-sm"
+                  value={meetingType}
+                  onChange={(e: ChangeEvent<HTMLSelectElement>) => {
+                    const next = e.target.value;
+                    setMeetingType(next);
+                    if (next !== "committee") {
+                      setMeetingCommitteeId("");
+                    } else if (!meetingCommitteeId && committees[0]?.id) {
+                      setMeetingCommitteeId(committees[0].id);
+                    }
+                  }}
                 >
-                  <option value="recent">Newest</option>
-                  <option value="upcoming">Upcoming</option>
-                </select>
-              </label>
-              <label className="space-y-1 text-sm">
-                <div className="text-foreground/70">Status</div>
-                <select
-                  className="h-9 w-full rounded-md border bg-transparent px-2 text-sm sm:w-40"
-                  value={meetingStatusFilter}
-                  onChange={(e: ChangeEvent<HTMLSelectElement>) => setMeetingStatusFilter(e.target.value)}
-                >
-                  <option value="all">All statuses</option>
-                  {MEETING_STATUS_OPTIONS.map((statusOption) => (
-                    <option key={statusOption} value={statusOption}>
-                      {statusOption}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="space-y-1 text-sm">
-                <div className="text-foreground/70">Type</div>
-                <select
-                  className="h-9 w-full rounded-md border bg-transparent px-2 text-sm sm:w-40"
-                  value={meetingTypeFilter}
-                  onChange={(e: ChangeEvent<HTMLSelectElement>) => setMeetingTypeFilter(e.target.value)}
-                >
-                  <option value="all">All types</option>
                   <option value="board">Board</option>
                   <option value="committee">Committee</option>
                   <option value="icc">ICC</option>
@@ -4002,61 +3858,244 @@ export function AdminPanel({
               </label>
 
               <label className="space-y-1 text-sm">
-                <div className="text-foreground/70">Committee</div>
+                <div className="text-foreground/70">Committee (optional)</div>
                 <select
-                  className="h-9 w-full rounded-md border bg-transparent px-2 text-sm sm:w-48"
-                  value={meetingCommitteeFilter}
-                  onChange={(e: ChangeEvent<HTMLSelectElement>) => setMeetingCommitteeFilter(e.target.value)}
+                  className="h-9 rounded-md border bg-transparent px-2 text-sm"
+                  value={meetingCommitteeId}
+                  onChange={(e: ChangeEvent<HTMLSelectElement>) => setMeetingCommitteeId(e.target.value)}
+                  disabled={meetingType !== "committee"}
                 >
-                  <option value="all">All committees</option>
+                  <option value="">Select committee…</option>
                   {committees.map((committee) => (
                     <option key={committee.id} value={committee.id}>
                       {committee.name}
                     </option>
                   ))}
                 </select>
+                <div className="text-xs text-foreground/60">Required for committee meetings.</div>
+              </label>
+
+              <label className="space-y-1 text-sm sm:col-span-2">
+                <div className="text-foreground/70">Title</div>
+                <input
+                  type="text"
+                  className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                  value={meetingTitle}
+                  onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingTitle(e.target.value)}
+                  placeholder="Meeting title"
+                />
+              </label>
+
+              <label className="space-y-1 text-sm sm:col-span-2">
+                <div className="text-foreground/70">Location</div>
+                <input
+                  type="text"
+                  className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                  value={meetingLocation}
+                  onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingLocation(e.target.value)}
+                  placeholder="e.g. Room 101"
+                />
+              </label>
+
+              <label className="space-y-1 text-sm sm:col-span-2">
+                <div className="text-foreground/70">Remote access URL (optional)</div>
+                <input
+                  type="url"
+                  className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                  value={meetingRemoteUrl}
+                  onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingRemoteUrl(e.target.value)}
+                  placeholder="https://zoom.us/j/..."
+                />
+              </label>
+
+              <label className="space-y-1 text-sm sm:col-span-2">
+                <div className="text-foreground/70">Livestream URL (optional)</div>
+                <input
+                  type="url"
+                  className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                  value={meetingLivestreamUrl}
+                  onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingLivestreamUrl(e.target.value)}
+                  placeholder="https://youtube.com/..."
+                />
               </label>
 
               <label className="space-y-1 text-sm">
-                <div className="text-foreground/70">Search</div>
+                <div className="text-foreground/70">Starts at (local)</div>
                 <input
-                  type="search"
-                  className="h-9 w-full rounded-md border bg-transparent px-2 text-sm sm:w-56"
-                  value={meetingSearch}
-                  onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingSearch(e.target.value)}
-                  placeholder="Filter by title, location, or committee..."
+                  type="datetime-local"
+                  className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                  value={meetingStartsAtLocal}
+                  onChange={(e: ChangeEvent<HTMLInputElement>) => {
+                    const next = e.target.value;
+                    setMeetingStartsAtLocal(next);
+                    if (!next) return;
+                    const start = new Date(next);
+                    if (Number.isNaN(start.getTime())) return;
+                    const existingEnd = meetingEndsAtLocal ? new Date(meetingEndsAtLocal) : null;
+                    const hasValidEnd = existingEnd && !Number.isNaN(existingEnd.getTime());
+                    if (!hasValidEnd || existingEnd.getTime() <= start.getTime()) {
+                      const suggestedEnd = new Date(start.getTime() + 60 * 60000);
+                      setMeetingEndsAtLocal(toLocalDatetimeInputValue(suggestedEnd));
+                    }
+                  }}
                 />
               </label>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setMeetingSearch("")}
-                disabled={!meetingSearch.trim()}
-              >
-                Clear search
-              </Button>
-              <label className="flex items-center gap-2 text-sm">
+
+              <label className="space-y-1 text-sm">
+                <div className="text-foreground/70">Ends at (local)</div>
                 <input
-                  type="checkbox"
-                  checked={meetingUpcomingOnly}
-                  onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingUpcomingOnly(e.target.checked)}
+                  type="datetime-local"
+                  className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                  value={meetingEndsAtLocal}
+                  min={meetingStartsAtLocal || undefined}
+                  onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingEndsAtLocal(e.target.value)}
                 />
-                <span className="text-foreground/70">Upcoming only</span>
+                {meetingDurationLabel ? (
+                  <div className="text-xs text-foreground/60">Duration: {meetingDurationLabel}</div>
+                ) : null}
+                {meetingTimeError ? (
+                  <div className="text-xs text-red-600">{meetingTimeError}</div>
+                ) : null}
               </label>
-              <Button variant="ghost" size="sm" onClick={resetMeetingFilters} disabled={!meetingFiltersActive}>
-                Reset
-              </Button>
-              <Button variant="ghost" onClick={() => void loadMeetings()}>
-                Refresh
-              </Button>
+
+              <label className="space-y-1 text-sm sm:col-span-2 lg:col-span-4">
+                <div className="text-foreground/70">Description (optional)</div>
+                <input
+                  type="text"
+                  className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                  value={meetingDescription}
+                  onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingDescription(e.target.value)}
+                  placeholder="Optional description"
+                />
+              </label>
+
+              <label className="space-y-1 text-sm sm:col-span-2 lg:col-span-4">
+                <div className="text-foreground/70">Public comment instructions (optional)</div>
+                <textarea
+                  className="w-full rounded-md border bg-transparent px-2 py-2 text-sm"
+                  rows={2}
+                  value={meetingPublicCommentInstructions}
+                  onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setMeetingPublicCommentInstructions(e.target.value)}
+                  placeholder="How members of the public can comment (email, form link, time limits)."
+                />
+              </label>
+
+              <div className="flex items-end sm:col-span-2 lg:col-span-4">
+                <Button onClick={() => void onCreateMeeting()} disabled={!canCreateMeeting}>
+                  Create meeting
+                </Button>
+              </div>
             </div>
           </div>
-          <div className="mt-2 text-xs text-foreground/60">
-            Showing {filteredMeetings.length} of {adminMeetings.length} meetings.
-            {meetingsLastLoadedAt ? ` Last refreshed ${formatShortDateTime(meetingsLastLoadedAt)}.` : ""}
-          </div>
 
-          <div className="mt-3 space-y-3">
+          <div className="rounded-lg border border-foreground/10 p-4">
+            <div className="flex flex-wrap items-end justify-between gap-3">
+              <div>
+                <div className="text-sm font-medium">Existing meetings</div>
+                <div className="text-xs text-foreground/60">Edit details, update status, or cancel meetings.</div>
+              </div>
+              <div className="flex flex-wrap items-end gap-2">
+                <label className="space-y-1 text-sm">
+                  <div className="text-foreground/70">Sort</div>
+                  <select
+                    className="h-9 w-full rounded-md border bg-transparent px-2 text-sm sm:w-36"
+                    value={meetingSort}
+                    onChange={(e: ChangeEvent<HTMLSelectElement>) =>
+                      setMeetingSort(e.target.value as "recent" | "upcoming")
+                    }
+                  >
+                    <option value="recent">Newest</option>
+                    <option value="upcoming">Upcoming</option>
+                  </select>
+                </label>
+                <label className="space-y-1 text-sm">
+                  <div className="text-foreground/70">Status</div>
+                  <select
+                    className="h-9 w-full rounded-md border bg-transparent px-2 text-sm sm:w-40"
+                    value={meetingStatusFilter}
+                    onChange={(e: ChangeEvent<HTMLSelectElement>) => setMeetingStatusFilter(e.target.value)}
+                  >
+                    <option value="all">All statuses</option>
+                    {MEETING_STATUS_OPTIONS.map((statusOption) => (
+                      <option key={statusOption} value={statusOption}>
+                        {statusOption}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="space-y-1 text-sm">
+                  <div className="text-foreground/70">Type</div>
+                  <select
+                    className="h-9 w-full rounded-md border bg-transparent px-2 text-sm sm:w-40"
+                    value={meetingTypeFilter}
+                    onChange={(e: ChangeEvent<HTMLSelectElement>) => setMeetingTypeFilter(e.target.value)}
+                  >
+                    <option value="all">All types</option>
+                    <option value="board">Board</option>
+                    <option value="committee">Committee</option>
+                    <option value="icc">ICC</option>
+                    <option value="special">Special</option>
+                    <option value="other">Other</option>
+                  </select>
+                </label>
+
+                <label className="space-y-1 text-sm">
+                  <div className="text-foreground/70">Committee</div>
+                  <select
+                    className="h-9 w-full rounded-md border bg-transparent px-2 text-sm sm:w-48"
+                    value={meetingCommitteeFilter}
+                    onChange={(e: ChangeEvent<HTMLSelectElement>) => setMeetingCommitteeFilter(e.target.value)}
+                  >
+                    <option value="all">All committees</option>
+                    {committees.map((committee) => (
+                      <option key={committee.id} value={committee.id}>
+                        {committee.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="space-y-1 text-sm">
+                  <div className="text-foreground/70">Search</div>
+                  <input
+                    type="search"
+                    className="h-9 w-full rounded-md border bg-transparent px-2 text-sm sm:w-56"
+                    value={meetingSearch}
+                    onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingSearch(e.target.value)}
+                    placeholder="Filter by title, location, or committee..."
+                  />
+                </label>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setMeetingSearch("")}
+                  disabled={!meetingSearch.trim()}
+                >
+                  Clear search
+                </Button>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={meetingUpcomingOnly}
+                    onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingUpcomingOnly(e.target.checked)}
+                  />
+                  <span className="text-foreground/70">Upcoming only</span>
+                </label>
+                <Button variant="ghost" size="sm" onClick={resetMeetingFilters} disabled={!meetingFiltersActive}>
+                  Reset
+                </Button>
+                <Button variant="ghost" onClick={() => void loadMeetings()}>
+                  Refresh
+                </Button>
+              </div>
+            </div>
+            <div className="mt-2 text-xs text-foreground/60">
+              Showing {filteredMeetings.length} of {adminMeetings.length} meetings.
+              {meetingsLastLoadedAt ? ` Last refreshed ${formatShortDateTime(meetingsLastLoadedAt)}.` : ""}
+            </div>
+
+            <div className="mt-3 space-y-3">
             {filteredMeetings.length === 0 ? (
               <div className="rounded-md border px-3 py-2 text-sm text-foreground/70">
                 {meetingFiltersActive ? "No meetings match the current filters." : "No meetings found."}
@@ -4086,11 +4125,21 @@ export function AdminPanel({
                   ? formatShortDateTime(meeting.notice_posted_at)
                   : "Not posted";
 
+                const statusBadgeClass =
+                  meeting.status === "scheduled"
+                    ? "bg-green-100 text-green-700"
+                    : meeting.status === "cancelled"
+                      ? "bg-red-100 text-red-700"
+                      : "bg-gray-200 text-gray-700";
+
                 return (
                   <div key={meeting.id} className="rounded-md border p-3">
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <div className="text-sm font-medium">{meeting.title}</div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <div className="text-sm font-medium">{meeting.title}</div>
+                          <span className={`rounded px-2 py-0.5 text-xs ${statusBadgeClass}`}>{meeting.status}</span>
+                        </div>
                         <div className="text-xs text-foreground/60">
                           {formatMeetingTypeLabel(meeting.meeting_type)}
                           {meeting.committee_id ? ` • ${committeeLabel}` : ""}
@@ -4098,9 +4147,6 @@ export function AdminPanel({
                         </div>
                         <div className="text-xs text-foreground/60">
                           {new Date(meeting.starts_at).toLocaleString()} → {new Date(meeting.ends_at).toLocaleString()}
-                        </div>
-                        <div className="text-xs text-foreground/60">
-                          Notice: {noticePostedLabel} • Agenda: {agendaPostedLabel} • Minutes: {minutesPostedLabel}
                         </div>
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
@@ -4112,7 +4158,7 @@ export function AdminPanel({
                           variant="ghost"
                           onClick={() => window.open(`/meetings/${meeting.id}`, "_blank", "noopener")}
                         >
-                          Open meeting
+                          Meeting hub
                         </Button>
                         <Button
                           size="sm"
@@ -4126,7 +4172,7 @@ export function AdminPanel({
                                 ? draftTitleError
                                 : draftTimeError
                                   ? draftTimeError
-                                : "Save changes"
+                                  : "Save changes"
                           }
                         >
                           Save
@@ -4150,208 +4196,276 @@ export function AdminPanel({
                       </div>
                     </div>
 
-                    <div className="mt-3 grid gap-2 md:grid-cols-3">
-                      <label className="space-y-1 text-sm md:col-span-2">
-                        <div className="text-foreground/70">Title</div>
-                        <input
-                          className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-                          value={draft.title}
-                          onChange={(e: ChangeEvent<HTMLInputElement>) =>
-                            updateMeetingDraft(meeting.id, { title: e.target.value })
-                          }
-                        />
-                        {draftTitleError ? (
-                          <div className="text-xs text-red-600">{draftTitleError}</div>
-                        ) : null}
-                      </label>
-
-                      <label className="space-y-1 text-sm">
-                        <div className="text-foreground/70">Status</div>
-                        <select
-                          className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-                          value={draft.status}
-                          onChange={(e: ChangeEvent<HTMLSelectElement>) =>
-                            updateMeetingDraft(meeting.id, { status: e.target.value })
-                          }
+                    <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                      <div className="rounded-md border border-foreground/10 bg-foreground/5 px-3 py-2 text-xs">
+                        <div className="flex items-center justify-between">
+                          <span className="text-foreground/70">Notice posted</span>
+                          <span className={meeting.notice_posted_at ? "text-green-600" : "text-foreground/60"}>
+                            {meeting.notice_posted_at ? "Posted" : "Missing"}
+                          </span>
+                        </div>
+                        <div className="mt-1 text-foreground/60">{noticePostedLabel}</div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="mt-1 px-2"
+                          onClick={() => void markMeetingPosted(meeting.id, "notice")}
+                          disabled={isReadOnly || !!meeting.notice_posted_at}
                         >
-                          {MEETING_STATUS_OPTIONS.map((statusOption) => (
-                            <option key={statusOption} value={statusOption}>
-                              {statusOption}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-
-                      <label className="space-y-1 text-sm md:col-span-2">
-                        <div className="text-foreground/70">Location</div>
-                        <input
-                          className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-                          value={draft.location}
-                          onChange={(e: ChangeEvent<HTMLInputElement>) =>
-                            updateMeetingDraft(meeting.id, { location: e.target.value })
-                          }
-                        />
-                      </label>
-
-                      <label className="space-y-1 text-sm">
-                        <div className="text-foreground/70">Starts at (local)</div>
-                        <input
-                          type="datetime-local"
-                          className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-                          value={draft.starts_at_local}
-                          onChange={(e: ChangeEvent<HTMLInputElement>) =>
-                            updateMeetingDraft(meeting.id, { starts_at_local: e.target.value })
-                          }
-                        />
-                      </label>
-
-                      <label className="space-y-1 text-sm">
-                        <div className="text-foreground/70">Ends at (local)</div>
-                        <input
-                          type="datetime-local"
-                          className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-                          value={draft.ends_at_local}
-                          min={draft.starts_at_local || undefined}
-                          onChange={(e: ChangeEvent<HTMLInputElement>) =>
-                            updateMeetingDraft(meeting.id, { ends_at_local: e.target.value })
-                          }
-                        />
-                        {draftTimeError ? (
-                          <div className="text-xs text-red-600">{draftTimeError}</div>
-                        ) : null}
-                      </label>
-
-                      <label className="space-y-1 text-sm md:col-span-3">
-                        <div className="text-foreground/70">Description</div>
-                        <input
-                          className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-                          value={draft.description}
-                          onChange={(e: ChangeEvent<HTMLInputElement>) =>
-                            updateMeetingDraft(meeting.id, { description: e.target.value })
-                          }
-                        />
-                      </label>
+                          {meeting.notice_posted_at ? "Posted" : "Mark now"}
+                        </Button>
+                      </div>
+                      <div className="rounded-md border border-foreground/10 bg-foreground/5 px-3 py-2 text-xs">
+                        <div className="flex items-center justify-between">
+                          <span className="text-foreground/70">Agenda posted</span>
+                          <span className={meeting.agenda_posted_at ? "text-green-600" : "text-foreground/60"}>
+                            {meeting.agenda_posted_at ? "Posted" : "Missing"}
+                          </span>
+                        </div>
+                        <div className="mt-1 text-foreground/60">{agendaPostedLabel}</div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="mt-1 px-2"
+                          onClick={() => void markMeetingPosted(meeting.id, "agenda")}
+                          disabled={isReadOnly || !!meeting.agenda_posted_at}
+                        >
+                          {meeting.agenda_posted_at ? "Posted" : "Mark now"}
+                        </Button>
+                      </div>
+                      <div className="rounded-md border border-foreground/10 bg-foreground/5 px-3 py-2 text-xs">
+                        <div className="flex items-center justify-between">
+                          <span className="text-foreground/70">Minutes posted</span>
+                          <span className={meeting.minutes_posted_at ? "text-green-600" : "text-foreground/60"}>
+                            {meeting.minutes_posted_at ? "Posted" : "Missing"}
+                          </span>
+                        </div>
+                        <div className="mt-1 text-foreground/60">{minutesPostedLabel}</div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="mt-1 px-2"
+                          onClick={() => void markMeetingPosted(meeting.id, "minutes")}
+                          disabled={isReadOnly || !!meeting.minutes_posted_at}
+                        >
+                          {meeting.minutes_posted_at ? "Posted" : "Mark now"}
+                        </Button>
+                      </div>
                     </div>
 
-                    <div className="mt-3 grid gap-2 md:grid-cols-3">
-                      <label className="space-y-1 text-sm md:col-span-2">
-                        <div className="text-foreground/70">Remote access URL</div>
-                        <input
-                          className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-                          value={draft.remote_url}
-                          onChange={(e: ChangeEvent<HTMLInputElement>) =>
-                            updateMeetingDraft(meeting.id, { remote_url: e.target.value })
-                          }
-                          placeholder="https://zoom.us/j/..."
-                        />
-                      </label>
-
-                      <label className="space-y-1 text-sm">
-                        <div className="text-foreground/70">Livestream URL</div>
-                        <input
-                          className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-                          value={draft.livestream_url}
-                          onChange={(e: ChangeEvent<HTMLInputElement>) =>
-                            updateMeetingDraft(meeting.id, { livestream_url: e.target.value })
-                          }
-                          placeholder="https://youtube.com/..."
-                        />
-                      </label>
-
-                      <label className="space-y-1 text-sm md:col-span-3">
-                        <div className="text-foreground/70">Public comment instructions</div>
-                        <textarea
-                          className="w-full rounded-md border bg-transparent px-2 py-2 text-sm"
-                          rows={2}
-                          value={draft.public_comment_instructions}
-                          onChange={(e: ChangeEvent<HTMLTextAreaElement>) =>
-                            updateMeetingDraft(meeting.id, { public_comment_instructions: e.target.value })
-                          }
-                          placeholder="Include email addresses, time limits, or form links."
-                        />
-                      </label>
+                    <div className="mt-2 text-xs text-foreground/60">
+                      Manage agenda items, agenda PDF, and minutes in the Meeting hub.
                     </div>
 
-                    <div className="mt-3 grid gap-2 md:grid-cols-3">
-                      <label className="space-y-1 text-sm">
-                        <div className="flex items-center justify-between text-foreground/70">
-                          <span>Notice posted at</span>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() =>
-                              updateMeetingDraft(meeting.id, {
-                                notice_posted_at_local: toLocalDatetimeInputValue(new Date()),
-                              })
-                            }
-                          >
-                            Now
-                          </Button>
-                        </div>
-                        <input
-                          type="datetime-local"
-                          className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-                          value={draft.notice_posted_at_local}
-                          onChange={(e: ChangeEvent<HTMLInputElement>) =>
-                            updateMeetingDraft(meeting.id, { notice_posted_at_local: e.target.value })
-                          }
-                        />
-                      </label>
+                    <details className="mt-3 rounded-md border border-foreground/10 bg-foreground/5 px-3 py-2">
+                      <summary className="cursor-pointer text-sm font-medium text-foreground/70">
+                        Edit details
+                      </summary>
 
-                      <label className="space-y-1 text-sm">
-                        <div className="flex items-center justify-between text-foreground/70">
-                          <span>Agenda posted at</span>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() =>
-                              updateMeetingDraft(meeting.id, {
-                                agenda_posted_at_local: toLocalDatetimeInputValue(new Date()),
-                              })
+                      <div className="mt-3 grid gap-2 md:grid-cols-3">
+                        <label className="space-y-1 text-sm md:col-span-2">
+                          <div className="text-foreground/70">Title</div>
+                          <input
+                            className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                            value={draft.title}
+                            onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                              updateMeetingDraft(meeting.id, { title: e.target.value })
                             }
-                          >
-                            Now
-                          </Button>
-                        </div>
-                        <input
-                          type="datetime-local"
-                          className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-                          value={draft.agenda_posted_at_local}
-                          onChange={(e: ChangeEvent<HTMLInputElement>) =>
-                            updateMeetingDraft(meeting.id, { agenda_posted_at_local: e.target.value })
-                          }
-                        />
-                      </label>
+                          />
+                          {draftTitleError ? (
+                            <div className="text-xs text-red-600">{draftTitleError}</div>
+                          ) : null}
+                        </label>
 
-                      <label className="space-y-1 text-sm">
-                        <div className="flex items-center justify-between text-foreground/70">
-                          <span>Minutes posted at</span>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() =>
-                              updateMeetingDraft(meeting.id, {
-                                minutes_posted_at_local: toLocalDatetimeInputValue(new Date()),
-                              })
+                        <label className="space-y-1 text-sm">
+                          <div className="text-foreground/70">Status</div>
+                          <select
+                            className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                            value={draft.status}
+                            onChange={(e: ChangeEvent<HTMLSelectElement>) =>
+                              updateMeetingDraft(meeting.id, { status: e.target.value })
                             }
                           >
-                            Now
-                          </Button>
-                        </div>
-                        <input
-                          type="datetime-local"
-                          className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-                          value={draft.minutes_posted_at_local}
-                          onChange={(e: ChangeEvent<HTMLInputElement>) =>
-                            updateMeetingDraft(meeting.id, { minutes_posted_at_local: e.target.value })
-                          }
-                        />
-                      </label>
-                    </div>
+                            {MEETING_STATUS_OPTIONS.map((statusOption) => (
+                              <option key={statusOption} value={statusOption}>
+                                {statusOption}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+
+                        <label className="space-y-1 text-sm md:col-span-2">
+                          <div className="text-foreground/70">Location</div>
+                          <input
+                            className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                            value={draft.location}
+                            onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                              updateMeetingDraft(meeting.id, { location: e.target.value })
+                            }
+                          />
+                        </label>
+
+                        <label className="space-y-1 text-sm">
+                          <div className="text-foreground/70">Starts at (local)</div>
+                          <input
+                            type="datetime-local"
+                            className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                            value={draft.starts_at_local}
+                            onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                              updateMeetingDraft(meeting.id, { starts_at_local: e.target.value })
+                            }
+                          />
+                        </label>
+
+                        <label className="space-y-1 text-sm">
+                          <div className="text-foreground/70">Ends at (local)</div>
+                          <input
+                            type="datetime-local"
+                            className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                            value={draft.ends_at_local}
+                            min={draft.starts_at_local || undefined}
+                            onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                              updateMeetingDraft(meeting.id, { ends_at_local: e.target.value })
+                            }
+                          />
+                          {draftTimeError ? (
+                            <div className="text-xs text-red-600">{draftTimeError}</div>
+                          ) : null}
+                        </label>
+
+                        <label className="space-y-1 text-sm md:col-span-3">
+                          <div className="text-foreground/70">Description</div>
+                          <input
+                            className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                            value={draft.description}
+                            onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                              updateMeetingDraft(meeting.id, { description: e.target.value })
+                            }
+                          />
+                        </label>
+                      </div>
+
+                      <div className="mt-3 grid gap-2 md:grid-cols-3">
+                        <label className="space-y-1 text-sm md:col-span-2">
+                          <div className="text-foreground/70">Remote access URL</div>
+                          <input
+                            className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                            value={draft.remote_url}
+                            onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                              updateMeetingDraft(meeting.id, { remote_url: e.target.value })
+                            }
+                            placeholder="https://zoom.us/j/..."
+                          />
+                        </label>
+
+                        <label className="space-y-1 text-sm">
+                          <div className="text-foreground/70">Livestream URL</div>
+                          <input
+                            className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                            value={draft.livestream_url}
+                            onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                              updateMeetingDraft(meeting.id, { livestream_url: e.target.value })
+                            }
+                            placeholder="https://youtube.com/..."
+                          />
+                        </label>
+
+                        <label className="space-y-1 text-sm md:col-span-3">
+                          <div className="text-foreground/70">Public comment instructions</div>
+                          <textarea
+                            className="w-full rounded-md border bg-transparent px-2 py-2 text-sm"
+                            rows={2}
+                            value={draft.public_comment_instructions}
+                            onChange={(e: ChangeEvent<HTMLTextAreaElement>) =>
+                              updateMeetingDraft(meeting.id, { public_comment_instructions: e.target.value })
+                            }
+                            placeholder="Include email addresses, time limits, or form links."
+                          />
+                        </label>
+                      </div>
+
+                      <div className="mt-3 grid gap-2 md:grid-cols-3">
+                        <label className="space-y-1 text-sm">
+                          <div className="flex items-center justify-between text-foreground/70">
+                            <span>Notice posted at</span>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() =>
+                                updateMeetingDraft(meeting.id, {
+                                  notice_posted_at_local: toLocalDatetimeInputValue(new Date()),
+                                })
+                              }
+                            >
+                              Now
+                            </Button>
+                          </div>
+                          <input
+                            type="datetime-local"
+                            className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                            value={draft.notice_posted_at_local}
+                            onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                              updateMeetingDraft(meeting.id, { notice_posted_at_local: e.target.value })
+                            }
+                          />
+                        </label>
+
+                        <label className="space-y-1 text-sm">
+                          <div className="flex items-center justify-between text-foreground/70">
+                            <span>Agenda posted at</span>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() =>
+                                updateMeetingDraft(meeting.id, {
+                                  agenda_posted_at_local: toLocalDatetimeInputValue(new Date()),
+                                })
+                              }
+                            >
+                              Now
+                            </Button>
+                          </div>
+                          <input
+                            type="datetime-local"
+                            className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                            value={draft.agenda_posted_at_local}
+                            onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                              updateMeetingDraft(meeting.id, { agenda_posted_at_local: e.target.value })
+                            }
+                          />
+                        </label>
+
+                        <label className="space-y-1 text-sm">
+                          <div className="flex items-center justify-between text-foreground/70">
+                            <span>Minutes posted at</span>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() =>
+                                updateMeetingDraft(meeting.id, {
+                                  minutes_posted_at_local: toLocalDatetimeInputValue(new Date()),
+                                })
+                              }
+                            >
+                              Now
+                            </Button>
+                          </div>
+                          <input
+                            type="datetime-local"
+                            className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                            value={draft.minutes_posted_at_local}
+                            onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                              updateMeetingDraft(meeting.id, { minutes_posted_at_local: e.target.value })
+                            }
+                          />
+                        </label>
+                      </div>
+                    </details>
                   </div>
                 );
               })
             )}
+            </div>
           </div>
         </div>
       </section>
