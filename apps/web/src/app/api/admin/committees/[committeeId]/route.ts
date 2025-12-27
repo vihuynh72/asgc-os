@@ -37,14 +37,13 @@ async function isAdminForRequest(
   return { ok: true };
 }
 
-export async function PATCH(
-  request: NextRequest,
-  { params }: { params: { committeeId: string } },
-) {
+type Params = { params: Promise<{ committeeId: string }> };
+
+export async function PATCH(request: NextRequest, { params }: Params) {
   const authz = await isAdminForRequest(request);
   if (!authz.ok) return authz.response;
 
-  const committeeId = params.committeeId;
+  const { committeeId } = await params;
   if (!committeeId) {
     return NextResponse.json({ error: "Committee id is required." }, { status: 400 });
   }
@@ -87,14 +86,11 @@ export async function PATCH(
   return NextResponse.json({ committee: data });
 }
 
-export async function DELETE(
-  request: NextRequest,
-  { params }: { params: { committeeId: string } },
-) {
+export async function DELETE(request: NextRequest, { params }: Params) {
   const authz = await isAdminForRequest(request);
   if (!authz.ok) return authz.response;
 
-  const committeeId = params.committeeId;
+  const { committeeId } = await params;
   if (!committeeId) {
     return NextResponse.json({ error: "Committee id is required." }, { status: 400 });
   }
