@@ -30,6 +30,11 @@ type CommitteeRow = {
   committee_key: string;
 };
 
+type CommitteeDraft = {
+  name: string;
+  committee_key: string;
+};
+
 type RoleKey = "advisor" | "president" | "executive" | "director" | "board_member" | "volunteer";
 
 type OfficeLocationRow = {
@@ -51,6 +56,14 @@ type OfficeConfigRow = {
   weekly_hours_reminder_enabled: boolean;
   weekly_hours_reminder_weekday: number;
   weekly_hours_reminder_time_local: string;
+};
+
+type OfficeConfigBaseline = {
+  officeLocation: OfficeLocationRow;
+  officeConfig: OfficeConfigRow;
+  officeLatText: string;
+  officeLonText: string;
+  snapshot: string;
 };
 
 type OfficeHourRequirementRow = {
@@ -181,6 +194,7 @@ const ROLE_OPTIONS: Array<{ key: RoleKey; label: string; scope: "global" | "term
 ];
 
 const MEETING_STATUS_OPTIONS = ["scheduled", "cancelled", "completed"] as const;
+const MEETING_DURATION_MINUTES = [30, 60, 90, 120];
 const WEEKDAY_LABELS: Record<number, string> = {
   1: "Monday",
   2: "Tuesday",
@@ -188,6 +202,7 @@ const WEEKDAY_LABELS: Record<number, string> = {
   4: "Thursday",
   5: "Friday",
 };
+const COMMITTEE_KEY_PATTERN = /^[a-z0-9][a-z0-9_-]*$/i;
 
 const ROLE_LABEL_BY_KEY: Record<RoleKey, string> = {
   advisor: "Advisor",
@@ -227,6 +242,17 @@ function isValidHttpUrl(value: string): boolean {
   try {
     const url = new URL(value);
     return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function isValidTimeZone(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  try {
+    Intl.DateTimeFormat(undefined, { timeZone: trimmed });
+    return true;
   } catch {
     return false;
   }
@@ -365,6 +391,76 @@ function parseOptionalNumber(raw: string): number | null {
   if (!trimmed) return null;
   const n = Number(trimmed);
   return Number.isFinite(n) ? n : null;
+}
+
+function slugifyCommitteeKey(raw: string): string {
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function getCommitteeKeyValidationError(
+  rawKey: string,
+  committees: CommitteeRow[],
+  currentId?: string,
+): string {
+  const trimmed = rawKey.trim();
+  if (!trimmed) return "Committee key is required.";
+  if (!COMMITTEE_KEY_PATTERN.test(trimmed)) {
+    return "Use letters, numbers, underscores, or hyphens.";
+  }
+  const normalized = trimmed.toLowerCase();
+  const isDuplicate = committees.some(
+    (committee) => committee.id !== currentId && committee.committee_key.trim().toLowerCase() === normalized,
+  );
+  if (isDuplicate) return "Committee key already exists.";
+  return "";
+}
+
+function normalizeFiniteNumber(value: number | null): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function buildOfficeConfigSnapshot(
+  location: OfficeLocationRow | null,
+  config: OfficeConfigRow | null,
+  latText: string,
+  lonText: string,
+): string {
+  if (!location || !config) return "";
+  return JSON.stringify({
+    name: location.name.trim(),
+    timezone: location.timezone.trim(),
+    latText: latText.trim(),
+    lonText: lonText.trim(),
+    radius_m: normalizeFiniteNumber(location.radius_m),
+    grace_radius_m: normalizeFiniteNumber(location.grace_radius_m),
+    active: location.active,
+    quiet_hours_enabled: config.quiet_hours_enabled,
+    quiet_hours_start_local: config.quiet_hours_start_local.slice(0, 5),
+    quiet_hours_end_local: config.quiet_hours_end_local.slice(0, 5),
+    weekly_hours_reminder_enabled: config.weekly_hours_reminder_enabled,
+    weekly_hours_reminder_weekday: config.weekly_hours_reminder_weekday,
+    weekly_hours_reminder_time_local: config.weekly_hours_reminder_time_local.slice(0, 5),
+  });
+}
+
+function buildOfficeConfigBaseline(
+  location: OfficeLocationRow | null,
+  config: OfficeConfigRow | null,
+  latText: string,
+  lonText: string,
+): OfficeConfigBaseline | null {
+  if (!location || !config) return null;
+  return {
+    officeLocation: { ...location },
+    officeConfig: { ...config },
+    officeLatText: latText,
+    officeLonText: lonText,
+    snapshot: buildOfficeConfigSnapshot(location, config, latText, lonText),
+  };
 }
 
 function formatMinutes(totalMinutes: number): string {
@@ -538,6 +634,14 @@ export function AdminPanel({
   const [userStatusFilter, setUserStatusFilter] = useState<"all" | "active" | "inactive">("all");
   const [userRoleFilter, setUserRoleFilter] = useState<RoleKey | "">("");
   const [committees, setCommittees] = useState<CommitteeRow[]>([]);
+  const [committeeSearch, setCommitteeSearch] = useState<string>("");
+  const [newCommitteeName, setNewCommitteeName] = useState<string>("");
+  const [newCommitteeKey, setNewCommitteeKey] = useState<string>("");
+  const [committeeActionStatus, setCommitteeActionStatus] = useState<string>("");
+  const [committeeCreating, setCommitteeCreating] = useState<boolean>(false);
+  const [committeeDrafts, setCommitteeDrafts] = useState<Record<string, CommitteeDraft>>({});
+  const [committeeSavingId, setCommitteeSavingId] = useState<string | null>(null);
+  const [committeeDeletingId, setCommitteeDeletingId] = useState<string | null>(null);
 
   const [newTermName, setNewTermName] = useState<string>("");
   const [newTermStart, setNewTermStart] = useState<string>("");
@@ -553,11 +657,12 @@ export function AdminPanel({
 
   const [officeLocation, setOfficeLocation] = useState<OfficeLocationRow | null>(initialOfficeLocation);
   const [officeConfig, setOfficeConfig] = useState<OfficeConfigRow | null>(initialOfficeConfig);
-  const [officeLatText, setOfficeLatText] = useState<string>(
-    typeof initialOfficeLocation?.lat === "number" ? String(initialOfficeLocation.lat) : "",
-  );
-  const [officeLonText, setOfficeLonText] = useState<string>(
-    typeof initialOfficeLocation?.lon === "number" ? String(initialOfficeLocation.lon) : "",
+  const initialOfficeLatText = typeof initialOfficeLocation?.lat === "number" ? String(initialOfficeLocation.lat) : "";
+  const initialOfficeLonText = typeof initialOfficeLocation?.lon === "number" ? String(initialOfficeLocation.lon) : "";
+  const [officeLatText, setOfficeLatText] = useState<string>(initialOfficeLatText);
+  const [officeLonText, setOfficeLonText] = useState<string>(initialOfficeLonText);
+  const officeConfigBaselineRef = useRef<OfficeConfigBaseline | null>(
+    buildOfficeConfigBaseline(initialOfficeLocation, initialOfficeConfig, initialOfficeLatText, initialOfficeLonText),
   );
 
   const [officeHourRequirements, setOfficeHourRequirements] = useState<OfficeHourRequirementRow[]>(
@@ -689,14 +794,33 @@ export function AdminPanel({
       const data = await fetchJson<{ officeConfig: OfficeConfigRow; officeLocation: OfficeLocationRow }>(
         "/api/admin/office-config",
       );
+      const nextLatText = typeof data.officeLocation.lat === "number" ? String(data.officeLocation.lat) : "";
+      const nextLonText = typeof data.officeLocation.lon === "number" ? String(data.officeLocation.lon) : "";
       setOfficeConfig(data.officeConfig);
       setOfficeLocation(data.officeLocation);
-      setOfficeLatText(typeof data.officeLocation.lat === "number" ? String(data.officeLocation.lat) : "");
-      setOfficeLonText(typeof data.officeLocation.lon === "number" ? String(data.officeLocation.lon) : "");
+      setOfficeLatText(nextLatText);
+      setOfficeLonText(nextLonText);
+      officeConfigBaselineRef.current = buildOfficeConfigBaseline(
+        data.officeLocation,
+        data.officeConfig,
+        nextLatText,
+        nextLonText,
+      );
       setStatus("");
     } catch (e) {
       setStatus(e instanceof Error ? e.message : "Failed to load office config");
     }
+  }
+
+  function revertOfficeConfigChanges() {
+    const baseline = officeConfigBaselineRef.current;
+    if (!baseline) return;
+    setOfficeConfig({ ...baseline.officeConfig });
+    setOfficeLocation({ ...baseline.officeLocation });
+    setOfficeLatText(baseline.officeLatText);
+    setOfficeLonText(baseline.officeLonText);
+    setStatus("Office config changes reverted.");
+    toast.success("Office config reverted");
   }
 
   async function onSendTestEmail() {
@@ -1249,12 +1373,41 @@ export function AdminPanel({
     meetingCreateRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
+  function selectCommitteeForMeeting(committeeId: string) {
+    setMeetingType("committee");
+    setMeetingCommitteeId(committeeId);
+    meetingCreateRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
   async function copyMeetingLink(meetingId: string) {
     try {
       const url = `${window.location.origin}/meetings/${meetingId}`;
       await navigator.clipboard.writeText(url);
       setStatus("Meeting link copied.");
       toast.success("Meeting link copied");
+    } catch {
+      const msg = "Copy failed. Your browser may block clipboard access.";
+      setStatus(msg);
+      toast.error(msg);
+    }
+  }
+
+  async function copyMeetingSummary(meeting: AdminMeetingRow, committeeLabel: string) {
+    try {
+      const startLabel = formatDateTimeInZone(meeting.starts_at, officeTimezoneLabel);
+      const endLabel = formatDateTimeInZone(meeting.ends_at, officeTimezoneLabel);
+      const parts = [
+        meeting.title,
+        `${startLabel} → ${endLabel}`,
+        `Type: ${formatMeetingTypeLabel(meeting.meeting_type)}`,
+        meeting.committee_id ? `Committee: ${committeeLabel}` : null,
+        meeting.location ? `Location: ${meeting.location}` : null,
+        meeting.remote_url ? `Remote: ${meeting.remote_url}` : null,
+        meeting.livestream_url ? `Livestream: ${meeting.livestream_url}` : null,
+      ].filter(Boolean) as string[];
+      await navigator.clipboard.writeText(parts.join("\n"));
+      setStatus("Meeting summary copied.");
+      toast.success("Meeting summary copied");
     } catch {
       const msg = "Copy failed. Your browser may block clipboard access.";
       setStatus(msg);
@@ -1278,12 +1431,172 @@ export function AdminPanel({
     toast.success("Meeting form cleared");
   }
 
+  function applyMeetingDuration(minutes: number) {
+    if (!meetingStartsAtLocal.trim()) {
+      const msg = "Select a start time first.";
+      setStatus(msg);
+      toast.error(msg);
+      return;
+    }
+    const start = new Date(meetingStartsAtLocal);
+    if (Number.isNaN(start.getTime())) {
+      const msg = "Start time is invalid.";
+      setStatus(msg);
+      toast.error(msg);
+      return;
+    }
+    const end = new Date(start.getTime() + minutes * 60000);
+    setMeetingEndsAtLocal(toLocalDatetimeInputValue(end));
+  }
+
   async function loadCommittees() {
     try {
       const { committees: rows } = await fetchJson<{ committees: CommitteeRow[] }>("/api/admin/committees");
       setCommittees(rows ?? []);
     } catch (e) {
       setStatus(e instanceof Error ? e.message : "Failed to load committees");
+    }
+  }
+
+  async function onCreateCommittee() {
+    if (isReadOnly) {
+      toast.error("Read-only mode: updates are disabled.");
+      return;
+    }
+    const name = newCommitteeName.trim();
+    const committeeKey = newCommitteeKey.trim();
+    if (!name) {
+      setCommitteeActionStatus("Committee name is required.");
+      toast.error("Committee name is required");
+      return;
+    }
+    if (!committeeKey) {
+      setCommitteeActionStatus("Committee key is required.");
+      toast.error("Committee key is required");
+      return;
+    }
+    if (!COMMITTEE_KEY_PATTERN.test(committeeKey)) {
+      const msg = "Committee key must use letters, numbers, underscores, or hyphens.";
+      setCommitteeActionStatus(msg);
+      toast.error(msg);
+      return;
+    }
+
+    setCommitteeCreating(true);
+    setCommitteeActionStatus("Saving committee...");
+    try {
+      const data = await fetchJson<{ committee: CommitteeRow }>("/api/admin/committees", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, committee_key: committeeKey }),
+      });
+      setNewCommitteeName("");
+      setNewCommitteeKey("");
+      if (meetingType === "committee") {
+        setMeetingCommitteeId(data.committee.id);
+      }
+      await loadCommittees();
+      setCommitteeActionStatus("Committee added.");
+      toast.success("Committee added");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Failed to add committee";
+      setCommitteeActionStatus(msg);
+      toast.error(msg);
+    } finally {
+      setCommitteeCreating(false);
+    }
+  }
+
+  function startEditCommittee(committee: CommitteeRow) {
+    setCommitteeDrafts((prev) => ({
+      ...prev,
+      [committee.id]: { name: committee.name, committee_key: committee.committee_key },
+    }));
+  }
+
+  function updateCommitteeDraft(committeeId: string, patch: Partial<CommitteeDraft>) {
+    setCommitteeDrafts((prev) => ({
+      ...prev,
+      [committeeId]: { ...(prev[committeeId] ?? { name: "", committee_key: "" }), ...patch },
+    }));
+  }
+
+  function cancelCommitteeEdit(committeeId: string) {
+    setCommitteeDrafts((prev) => {
+      if (!prev[committeeId]) return prev;
+      const next = { ...prev };
+      delete next[committeeId];
+      return next;
+    });
+  }
+
+  async function saveCommittee(committee: CommitteeRow) {
+    const draft = committeeDrafts[committee.id];
+    if (!draft) return;
+    const name = draft.name.trim();
+    const committeeKey = draft.committee_key.trim();
+    if (!name) {
+      setCommitteeActionStatus("Committee name is required.");
+      toast.error("Committee name is required");
+      return;
+    }
+    const keyError = getCommitteeKeyValidationError(committeeKey, committees, committee.id);
+    if (keyError) {
+      setCommitteeActionStatus(keyError);
+      toast.error(keyError);
+      return;
+    }
+
+    setCommitteeSavingId(committee.id);
+    setCommitteeActionStatus("Saving committee...");
+    try {
+      await fetchJson<{ committee: CommitteeRow }>(
+        `/api/admin/committees/${encodeURIComponent(committee.id)}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name, committee_key: committeeKey }),
+        },
+      );
+      await loadCommittees();
+      cancelCommitteeEdit(committee.id);
+      setCommitteeActionStatus("Committee updated.");
+      toast.success("Committee updated");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Failed to update committee";
+      setCommitteeActionStatus(msg);
+      toast.error(msg);
+    } finally {
+      setCommitteeSavingId(null);
+    }
+  }
+
+  async function deleteCommittee(committee: CommitteeRow) {
+    if (isReadOnly) {
+      toast.error("Read-only mode: updates are disabled.");
+      return;
+    }
+    if (!window.confirm(`Delete committee "${committee.name}"? This cannot be undone.`)) return;
+    setCommitteeDeletingId(committee.id);
+    setCommitteeActionStatus("Deleting committee...");
+    try {
+      await fetchJson(`/api/admin/committees/${encodeURIComponent(committee.id)}`, { method: "DELETE" });
+      await loadCommittees();
+      cancelCommitteeEdit(committee.id);
+      if (meetingCommitteeId === committee.id) {
+        setMeetingCommitteeId("");
+      }
+      if (meetingCommitteeFilter === committee.id) {
+        setMeetingCommitteeFilter("all");
+      }
+      setCommitteeActionStatus("Committee deleted.");
+      toast.success("Committee deleted");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Failed to delete committee";
+      setCommitteeActionStatus(msg);
+      toast.error(msg);
+    } finally {
+      setCommitteeDeletingId(null);
     }
   }
 
@@ -2320,6 +2633,14 @@ export function AdminPanel({
   for (const committee of committees) {
     committeeById.set(committee.id, committee);
   }
+  const filteredCommittees = useMemo(() => {
+    const query = committeeSearch.trim().toLowerCase();
+    if (!query) return committees;
+    return committees.filter((committee) => {
+      const haystack = `${committee.name} ${committee.committee_key}`.toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [committeeSearch, committees]);
 
   const shiftUsers = useMemo(() => {
     const query = shiftUserSearch.trim().toLowerCase();
@@ -2390,20 +2711,75 @@ export function AdminPanel({
   const meetingTimeError = getMeetingTimeError(meetingStartsAtLocal, meetingEndsAtLocal);
   const isReadOnly = tier === "read-only";
   const officeTimezoneLabel = officeLocation?.timezone?.trim() || null;
+  const officeTimezoneValue = officeLocation?.timezone?.trim() ?? "";
+  const officeTimezoneError = officeLocation
+    ? !officeTimezoneValue
+      ? "Timezone is required."
+      : isValidTimeZone(officeTimezoneValue)
+        ? ""
+        : "Timezone must be a valid IANA name (e.g., America/Los_Angeles)."
+    : "";
+  const officeNameError =
+    officeLocation && !officeLocation.name.trim() ? "Office name is required." : "";
   const quietHoursStart = officeConfig?.quiet_hours_start_local.slice(0, 5) ?? "";
   const quietHoursEnd = officeConfig?.quiet_hours_end_local.slice(0, 5) ?? "";
   const quietHoursOvernight = !!quietHoursStart && !!quietHoursEnd && quietHoursEnd <= quietHoursStart;
+  const quietHoursError =
+    officeConfig?.quiet_hours_enabled && (!quietHoursStart || !quietHoursEnd)
+      ? "Quiet hours start and end are required."
+      : "";
   const quietHoursSummary = (officeConfig?.quiet_hours_enabled ?? false)
     ? `${quietHoursStart || "--:--"}-${quietHoursEnd || "--:--"}${quietHoursOvernight ? " (overnight)" : ""}`
     : "Disabled";
   const reminderDayLabel =
     WEEKDAY_LABELS[officeConfig?.weekly_hours_reminder_weekday ?? 0] ?? "Weekday";
   const reminderTimeLabel = officeConfig?.weekly_hours_reminder_time_local.slice(0, 5) ?? "";
+  const reminderTimeError =
+    officeConfig?.weekly_hours_reminder_enabled && !reminderTimeLabel
+      ? "Reminder time is required."
+      : "";
   const reminderSummary = (officeConfig?.weekly_hours_reminder_enabled ?? false)
     ? `${reminderDayLabel}${reminderTimeLabel ? ` at ${reminderTimeLabel}` : ""}${officeTimezoneLabel ? ` (${officeTimezoneLabel})` : ""}`
     : "Disabled";
   const officeLatValue = parseOptionalNumber(officeLatText);
   const officeLonValue = parseOptionalNumber(officeLonText);
+  const officeLatError =
+    officeLatText.trim().length > 0
+      ? officeLatValue === null
+        ? "Latitude must be a valid number."
+        : officeLatValue < -90 || officeLatValue > 90
+          ? "Latitude must be between -90 and 90."
+          : ""
+      : "";
+  const officeLonError =
+    officeLonText.trim().length > 0
+      ? officeLonValue === null
+        ? "Longitude must be a valid number."
+        : officeLonValue < -180 || officeLonValue > 180
+          ? "Longitude must be between -180 and 180."
+          : ""
+      : "";
+  const officeRadiusError =
+    officeLocation && officeLocation.radius_m !== null
+      ? !Number.isFinite(officeLocation.radius_m) || officeLocation.radius_m <= 0
+        ? "Radius must be greater than 0."
+        : ""
+      : "";
+  const officeGraceRadiusError =
+    officeLocation && officeLocation.grace_radius_m !== null
+      ? !Number.isFinite(officeLocation.grace_radius_m) || officeLocation.grace_radius_m < 0
+        ? "Grace radius must be 0 or higher."
+        : ""
+      : "";
+  const officeConfigError =
+    officeTimezoneError ||
+    officeNameError ||
+    quietHoursError ||
+    reminderTimeError ||
+    officeLatError ||
+    officeLonError ||
+    officeRadiusError ||
+    officeGraceRadiusError;
   const officeMapUrl =
     officeLatValue !== null && officeLonValue !== null
       ? `https://maps.google.com/?q=${officeLatValue},${officeLonValue}`
@@ -2411,6 +2787,26 @@ export function AdminPanel({
   const geofenceSummary = officeLocation?.radius_m
     ? `Radius ${officeLocation.radius_m}m${typeof officeLocation.grace_radius_m === "number" ? ` + grace ${officeLocation.grace_radius_m}m` : ""}`
     : "Radius not set";
+  const officeConfigSnapshot = useMemo(
+    () => buildOfficeConfigSnapshot(officeLocation, officeConfig, officeLatText, officeLonText),
+    [officeLocation, officeConfig, officeLatText, officeLonText],
+  );
+  const officeConfigDirty = officeConfigSnapshot !== (officeConfigBaselineRef.current?.snapshot ?? "");
+  const officeConfigSaveDisabledReason = officeConfigError
+    ? officeConfigError
+    : isReadOnly
+      ? "Read-only mode: updates are disabled."
+      : officeConfigDirty
+        ? ""
+        : "No changes to save.";
+  const canSaveOfficeConfig = officeConfigSaveDisabledReason.length === 0;
+  const officeConfigRevertDisabledReason =
+    officeConfigDirty && officeConfigBaselineRef.current
+      ? ""
+      : officeConfigBaselineRef.current
+        ? "No changes to revert."
+        : "Office config has not loaded yet.";
+  const canRevertOfficeConfig = officeConfigRevertDisabledReason.length === 0;
   const meetingOfficePreview = useMemo(() => {
     if (!officeTimezoneLabel) return "";
     const startIso = toIsoFromDatetimeLocal(meetingStartsAtLocal);
@@ -2429,12 +2825,54 @@ export function AdminPanel({
     meetingLivestreamUrl.trim().length > 0 && !isValidHttpUrl(meetingLivestreamUrl.trim())
       ? "Livestream URL must start with http:// or https://"
       : "";
+  const meetingTitleError = meetingTitle.trim().length === 0 ? "Title is required." : "";
+  const meetingCommitteeError =
+    meetingType !== "committee"
+      ? ""
+      : committees.length === 0
+        ? "No committees yet. Add one below."
+        : meetingCommitteeId.trim().length === 0
+          ? "Select a committee."
+          : "";
+  const meetingStartsError =
+    meetingStartsAtLocal.trim().length === 0 ? "Start time is required." : "";
+  const meetingEndsError =
+    meetingEndsAtLocal.trim().length === 0 ? "End time is required." : "";
+  const meetingCreateDisabledReason = isReadOnly
+    ? "Read-only mode: updates are disabled."
+    : meetingTitleError ||
+      meetingCommitteeError ||
+      meetingStartsError ||
+      meetingEndsError ||
+      meetingTimeError ||
+      meetingRemoteUrlError ||
+      meetingLivestreamUrlError;
+  const meetingMissingFields = [
+    meetingTitleError ? "Title" : null,
+    meetingCommitteeError ? "Committee" : null,
+    meetingStartsError ? "Start time" : null,
+    meetingEndsError ? "End time" : null,
+  ].filter(Boolean) as string[];
+  const meetingCreateHelper = meetingMissingFields.length
+    ? `Missing: ${meetingMissingFields.join(", ")}.`
+    : !isReadOnly && meetingCreateDisabledReason
+      ? meetingCreateDisabledReason
+      : "";
+  const committeeNameError = newCommitteeName.trim().length === 0 ? "Committee name is required." : "";
+  const committeeKeyError = getCommitteeKeyValidationError(newCommitteeKey, committees);
+  const committeeCreateDisabledReason = committeeCreating
+    ? "Saving committee..."
+    : isReadOnly
+      ? "Read-only mode: updates are disabled."
+      : committeeNameError || committeeKeyError;
+  const canCreateCommittee = committeeCreateDisabledReason.length === 0;
 
   const canCreateMeeting =
     !isReadOnly &&
-    meetingTitle.trim().length > 0 &&
-    meetingStartsAtLocal.trim().length > 0 &&
-    meetingEndsAtLocal.trim().length > 0 &&
+    !meetingTitleError &&
+    !meetingStartsError &&
+    !meetingEndsError &&
+    !meetingCommitteeError &&
     !meetingTimeError &&
     !meetingRemoteUrlError &&
     !meetingLivestreamUrlError &&
@@ -3705,7 +4143,12 @@ export function AdminPanel({
 
       <section className="space-y-3">
         <div className="space-y-1">
-          <h2 className="text-lg font-semibold">Office Hours Config</h2>
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-lg font-semibold">Office Hours Config</h2>
+            {officeConfigDirty ? (
+              <span className="text-xs font-medium text-orange-600">Unsaved changes</span>
+            ) : null}
+          </div>
           <p className="text-sm text-foreground/70">
             Single office settings and quiet hours (times are evaluated in the configured timezone).
           </p>
@@ -3722,6 +4165,9 @@ export function AdminPanel({
                   setOfficeLocation({ ...officeLocation, name: e.target.value })
                 }
               />
+              {officeNameError ? (
+                <div className="text-xs text-red-600">{officeNameError}</div>
+              ) : null}
             </label>
 
             <label className="space-y-1 text-sm md:col-span-2">
@@ -3755,28 +4201,47 @@ export function AdminPanel({
                 }
                 placeholder="America/Los_Angeles"
               />
+              {officeTimezoneError ? (
+                <div className="text-xs text-red-600">{officeTimezoneError}</div>
+              ) : null}
             </label>
 
             <label className="space-y-1 text-sm">
               <div className="text-foreground/70">Latitude</div>
               <input
+                type="number"
+                min={-90}
+                max={90}
+                step={0.000001}
                 className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
                 value={officeLatText}
                 onChange={(e: ChangeEvent<HTMLInputElement>) => setOfficeLatText(e.target.value)}
                 inputMode="decimal"
                 placeholder="32.81..."
+                aria-invalid={!!officeLatError}
               />
+              {officeLatError ? (
+                <div className="text-xs text-red-600">{officeLatError}</div>
+              ) : null}
             </label>
 
             <label className="space-y-1 text-sm">
               <div className="text-foreground/70">Longitude</div>
               <input
+                type="number"
+                min={-180}
+                max={180}
+                step={0.000001}
                 className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
                 value={officeLonText}
                 onChange={(e: ChangeEvent<HTMLInputElement>) => setOfficeLonText(e.target.value)}
                 inputMode="decimal"
                 placeholder="-117.00..."
+                aria-invalid={!!officeLonError}
               />
+              {officeLonError ? (
+                <div className="text-xs text-red-600">{officeLonError}</div>
+              ) : null}
             </label>
 
             <label className="space-y-1 text-sm">
@@ -3792,7 +4257,11 @@ export function AdminPanel({
                   setOfficeLocation({ ...officeLocation, radius_m: v.trim() ? Number(v) : null });
                 }}
                 placeholder="20"
+                aria-invalid={!!officeRadiusError}
               />
+              {officeRadiusError ? (
+                <div className="text-xs text-red-600">{officeRadiusError}</div>
+              ) : null}
             </label>
 
             <label className="space-y-1 text-sm">
@@ -3808,7 +4277,11 @@ export function AdminPanel({
                   setOfficeLocation({ ...officeLocation, grace_radius_m: v.trim() ? Number(v) : null });
                 }}
                 placeholder="40"
+                aria-invalid={!!officeGraceRadiusError}
               />
+              {officeGraceRadiusError ? (
+                <div className="text-xs text-red-600">{officeGraceRadiusError}</div>
+              ) : null}
             </label>
 
             <div className="text-xs text-foreground/60 md:col-span-2">
@@ -3824,6 +4297,20 @@ export function AdminPanel({
                   >
                     View map
                   </a>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="ml-2 h-7 px-2 text-xs"
+                    onClick={() => {
+                      setOfficeLatText("");
+                      setOfficeLonText("");
+                      setOfficeLocation({ ...officeLocation, lat: null, lon: null });
+                    }}
+                    disabled={!officeLatText.trim() && !officeLonText.trim()}
+                  >
+                    Clear coordinates
+                  </Button>
                 </>
               ) : (
                 " Add coordinates to enable the map link."
@@ -3861,6 +4348,7 @@ export function AdminPanel({
                 onChange={(e: ChangeEvent<HTMLInputElement>) =>
                   setOfficeConfig({ ...officeConfig, quiet_hours_start_local: e.target.value })
                 }
+                disabled={!officeConfig.quiet_hours_enabled}
               />
             </label>
 
@@ -3873,6 +4361,7 @@ export function AdminPanel({
                 onChange={(e: ChangeEvent<HTMLInputElement>) =>
                   setOfficeConfig({ ...officeConfig, quiet_hours_end_local: e.target.value })
                 }
+                disabled={!officeConfig.quiet_hours_enabled}
               />
             </label>
 
@@ -3880,6 +4369,9 @@ export function AdminPanel({
               Quiet hours: {quietHoursSummary}
               {officeTimezoneLabel ? ` (${officeTimezoneLabel})` : ""}
             </div>
+            {quietHoursError ? (
+              <div className="text-xs text-red-600 md:col-span-2">{quietHoursError}</div>
+            ) : null}
 
             <div className="md:col-span-4 border-t border-foreground/10 pt-3">
               <div className="text-sm font-medium">Weekly hours reminder</div>
@@ -3910,6 +4402,7 @@ export function AdminPanel({
                 onChange={(e: ChangeEvent<HTMLSelectElement>) =>
                   setOfficeConfig({ ...officeConfig, weekly_hours_reminder_weekday: Number(e.target.value) })
                 }
+                disabled={!officeConfig.weekly_hours_reminder_enabled}
               >
                 <option value={1}>Monday</option>
                 <option value={2}>Tuesday</option>
@@ -3928,7 +4421,11 @@ export function AdminPanel({
                 onChange={(e: ChangeEvent<HTMLInputElement>) =>
                   setOfficeConfig({ ...officeConfig, weekly_hours_reminder_time_local: e.target.value })
                 }
+                disabled={!officeConfig.weekly_hours_reminder_enabled}
               />
+              {reminderTimeError ? (
+                <div className="text-xs text-red-600">{reminderTimeError}</div>
+              ) : null}
             </label>
 
             <div className="text-xs text-foreground/60 md:col-span-2">
@@ -3938,40 +4435,13 @@ export function AdminPanel({
             <div className="flex items-end gap-3 md:col-span-4">
               <Button
                 onClick={async () => {
-                  const lat = parseOptionalNumber(officeLatText);
-                  const lon = parseOptionalNumber(officeLonText);
-                  if (officeLatText.trim() && lat === null) {
-                    toast.error("Latitude must be a valid number");
-                    setStatus("Latitude must be a valid number.");
+                  if (officeConfigError) {
+                    toast.error(officeConfigError);
+                    setStatus(officeConfigError);
                     return;
                   }
-                  if (lat !== null && (lat < -90 || lat > 90)) {
-                    toast.error("Latitude must be between -90 and 90");
-                    setStatus("Latitude must be between -90 and 90.");
-                    return;
-                  }
-                  if (officeLonText.trim() && lon === null) {
-                    toast.error("Longitude must be a valid number");
-                    setStatus("Longitude must be a valid number.");
-                    return;
-                  }
-                  if (lon !== null && (lon < -180 || lon > 180)) {
-                    toast.error("Longitude must be between -180 and 180");
-                    setStatus("Longitude must be between -180 and 180.");
-                    return;
-                  }
-                  const radius = officeLocation.radius_m;
-                  if (radius !== null && (!Number.isFinite(radius) || radius <= 0)) {
-                    toast.error("Radius must be greater than 0");
-                    setStatus("Radius must be greater than 0.");
-                    return;
-                  }
-                  const graceRadius = officeLocation.grace_radius_m;
-                  if (graceRadius !== null && (!Number.isFinite(graceRadius) || graceRadius < 0)) {
-                    toast.error("Grace radius must be 0 or higher");
-                    setStatus("Grace radius must be 0 or higher.");
-                    return;
-                  }
+                  const lat = officeLatValue;
+                  const lon = officeLonValue;
 
                   setStatus("Saving office config...");
                   try {
@@ -4000,10 +4470,18 @@ export function AdminPanel({
                       },
                     );
 
+                    const nextLatText = typeof data.officeLocation.lat === "number" ? String(data.officeLocation.lat) : "";
+                    const nextLonText = typeof data.officeLocation.lon === "number" ? String(data.officeLocation.lon) : "";
                     setOfficeConfig(data.officeConfig);
                     setOfficeLocation(data.officeLocation);
-                    setOfficeLatText(typeof data.officeLocation.lat === "number" ? String(data.officeLocation.lat) : "");
-                    setOfficeLonText(typeof data.officeLocation.lon === "number" ? String(data.officeLocation.lon) : "");
+                    setOfficeLatText(nextLatText);
+                    setOfficeLonText(nextLonText);
+                    officeConfigBaselineRef.current = buildOfficeConfigBaseline(
+                      data.officeLocation,
+                      data.officeConfig,
+                      nextLatText,
+                      nextLonText,
+                    );
                     setStatus("");
                     toast.success("Office config saved");
                   } catch (e) {
@@ -4012,12 +4490,26 @@ export function AdminPanel({
                     toast.error(msg);
                   }
                 }}
+                disabled={!canSaveOfficeConfig}
+                title={officeConfigSaveDisabledReason || "Save office config"}
               >
                 Save office config
               </Button>
 
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  if (!canRevertOfficeConfig) return;
+                  revertOfficeConfigChanges();
+                }}
+                disabled={!canRevertOfficeConfig}
+                title={officeConfigRevertDisabledReason || "Revert changes"}
+              >
+                Revert changes
+              </Button>
+
               <Button variant="ghost" onClick={() => void loadOfficeConfig()}>
-                Reload
+                Reload from server
               </Button>
             </div>
           </div>
@@ -4052,173 +4544,248 @@ export function AdminPanel({
         </div>
 
         <div className="grid gap-4 xl:grid-cols-[1fr_1.6fr]">
-          <div className="rounded-lg border border-foreground/10 p-4" ref={meetingCreateRef}>
+          <div className="space-y-4">
+            <div className="rounded-lg border border-foreground/10 p-4" ref={meetingCreateRef}>
             <div className="text-sm font-medium">Create meeting</div>
             <div className="mt-1 text-xs text-foreground/60">
               Workflow: create the meeting → collect agenda items → publish agenda & minutes in the Meeting hub.
             </div>
-            <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <label className="space-y-1 text-sm">
-                <div className="text-foreground/70">Meeting type</div>
-                <select
-                  className="h-9 rounded-md border bg-transparent px-2 text-sm"
-                  value={meetingType}
-                  onChange={(e: ChangeEvent<HTMLSelectElement>) => {
-                    const next = e.target.value;
-                    setMeetingType(next);
-                    if (next !== "committee") {
-                      setMeetingCommitteeId("");
-                    } else if (!meetingCommitteeId && committees[0]?.id) {
-                      setMeetingCommitteeId(committees[0].id);
-                    }
-                  }}
-                >
-                  <option value="board">Board</option>
-                  <option value="committee">Committee</option>
-                  <option value="icc">ICC</option>
-                  <option value="special">Special</option>
-                  <option value="other">Other</option>
-                </select>
-              </label>
+            <div className="mt-3 space-y-4">
+              <div className="rounded-md border border-foreground/10 bg-foreground/5 p-3">
+                <div className="text-xs font-medium text-foreground/60">Basics</div>
+                <div className="mt-2 grid gap-3 sm:grid-cols-2">
+                  <label className="space-y-1 text-sm">
+                    <div className="text-foreground/70">Meeting type</div>
+                    <select
+                      className="h-9 rounded-md border bg-transparent px-2 text-sm"
+                      value={meetingType}
+                      onChange={(e: ChangeEvent<HTMLSelectElement>) => {
+                        const next = e.target.value;
+                        setMeetingType(next);
+                        if (next !== "committee") {
+                          setMeetingCommitteeId("");
+                        } else if (!meetingCommitteeId && committees[0]?.id) {
+                          setMeetingCommitteeId(committees[0].id);
+                        }
+                      }}
+                    >
+                      <option value="board">Board</option>
+                      <option value="committee">Committee</option>
+                      <option value="icc">ICC</option>
+                      <option value="special">Special</option>
+                      <option value="other">Other</option>
+                    </select>
+                  </label>
 
-              <label className="space-y-1 text-sm">
-                <div className="text-foreground/70">Committee (optional)</div>
-                <select
-                  className="h-9 rounded-md border bg-transparent px-2 text-sm"
-                  value={meetingCommitteeId}
-                  onChange={(e: ChangeEvent<HTMLSelectElement>) => setMeetingCommitteeId(e.target.value)}
-                  disabled={meetingType !== "committee"}
-                >
-                  <option value="">Select committee…</option>
-                  {committees.map((committee) => (
-                    <option key={committee.id} value={committee.id}>
-                      {committee.name}
-                    </option>
-                  ))}
-                </select>
-                <div className="text-xs text-foreground/60">Required for committee meetings.</div>
-              </label>
+                  <label className="space-y-1 text-sm">
+                    <div className="text-foreground/70">
+                      Committee{" "}
+                      {meetingType === "committee" ? <span className="text-red-600">*</span> : null}
+                    </div>
+                    <select
+                      className="h-9 rounded-md border bg-transparent px-2 text-sm"
+                      value={meetingCommitteeId}
+                      onChange={(e: ChangeEvent<HTMLSelectElement>) => setMeetingCommitteeId(e.target.value)}
+                      disabled={meetingType !== "committee"}
+                      aria-invalid={!!meetingCommitteeError}
+                    >
+                      <option value="">Select committee…</option>
+                      {committees.map((committee) => (
+                        <option key={committee.id} value={committee.id}>
+                          {committee.name}
+                        </option>
+                      ))}
+                    </select>
+                    {meetingCommitteeError ? (
+                      <div className="text-xs text-red-600">{meetingCommitteeError}</div>
+                    ) : (
+                      <div className="text-xs text-foreground/60">Required for committee meetings.</div>
+                    )}
+                  </label>
 
-              <label className="space-y-1 text-sm sm:col-span-2">
-                <div className="text-foreground/70">Title</div>
-                <input
-                  type="text"
-                  className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-                  value={meetingTitle}
-                  onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingTitle(e.target.value)}
-                  placeholder="Meeting title"
-                />
-              </label>
-
-              <label className="space-y-1 text-sm sm:col-span-2">
-                <div className="text-foreground/70">Location</div>
-                <input
-                  type="text"
-                  className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-                  value={meetingLocation}
-                  onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingLocation(e.target.value)}
-                  placeholder="e.g. Room 101"
-                />
-              </label>
-
-              <label className="space-y-1 text-sm sm:col-span-2">
-                <div className="text-foreground/70">Remote access URL (optional)</div>
-                <input
-                  type="url"
-                  className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-                  value={meetingRemoteUrl}
-                  onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingRemoteUrl(e.target.value)}
-                  placeholder="https://zoom.us/j/..."
-                />
-                {meetingRemoteUrlError ? (
-                  <div className="text-xs text-red-600">{meetingRemoteUrlError}</div>
-                ) : null}
-              </label>
-
-              <label className="space-y-1 text-sm sm:col-span-2">
-                <div className="text-foreground/70">Livestream URL (optional)</div>
-                <input
-                  type="url"
-                  className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-                  value={meetingLivestreamUrl}
-                  onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingLivestreamUrl(e.target.value)}
-                  placeholder="https://youtube.com/..."
-                />
-                {meetingLivestreamUrlError ? (
-                  <div className="text-xs text-red-600">{meetingLivestreamUrlError}</div>
-                ) : null}
-              </label>
-
-              <label className="space-y-1 text-sm">
-                <div className="text-foreground/70">Starts at (local)</div>
-                <input
-                  type="datetime-local"
-                  className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-                  value={meetingStartsAtLocal}
-                  onChange={(e: ChangeEvent<HTMLInputElement>) => {
-                    const next = e.target.value;
-                    setMeetingStartsAtLocal(next);
-                    if (!next) return;
-                    const start = new Date(next);
-                    if (Number.isNaN(start.getTime())) return;
-                    const existingEnd = meetingEndsAtLocal ? new Date(meetingEndsAtLocal) : null;
-                    const hasValidEnd = existingEnd && !Number.isNaN(existingEnd.getTime());
-                    if (!hasValidEnd || existingEnd.getTime() <= start.getTime()) {
-                      const suggestedEnd = new Date(start.getTime() + 60 * 60000);
-                      setMeetingEndsAtLocal(toLocalDatetimeInputValue(suggestedEnd));
-                    }
-                  }}
-                />
-              </label>
-
-              <label className="space-y-1 text-sm">
-                <div className="text-foreground/70">Ends at (local)</div>
-                <input
-                  type="datetime-local"
-                  className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-                  value={meetingEndsAtLocal}
-                  min={meetingStartsAtLocal || undefined}
-                  onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingEndsAtLocal(e.target.value)}
-                />
-                {meetingDurationLabel ? (
-                  <div className="text-xs text-foreground/60">Duration: {meetingDurationLabel}</div>
-                ) : null}
-                {meetingTimeError ? (
-                  <div className="text-xs text-red-600">{meetingTimeError}</div>
-                ) : null}
-              </label>
-
-              {officeTimezoneLabel ? (
-                <div className="text-xs text-foreground/60 sm:col-span-2 lg:col-span-4">
-                  Office timezone: {officeTimezoneLabel}. Times are entered in your local time.
-                  {meetingOfficePreview ? ` Office time preview: ${meetingOfficePreview}.` : ""}
+                  <label className="space-y-1 text-sm sm:col-span-2">
+                    <div className="text-foreground/70">
+                      Title <span className="text-red-600">*</span>
+                    </div>
+                    <input
+                      type="text"
+                      className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                      value={meetingTitle}
+                      onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingTitle(e.target.value)}
+                      placeholder="Meeting title"
+                      aria-invalid={!!meetingTitleError}
+                    />
+                    {meetingTitleError ? (
+                      <div className="text-xs text-red-600">{meetingTitleError}</div>
+                    ) : null}
+                  </label>
                 </div>
-              ) : null}
+              </div>
 
-              <label className="space-y-1 text-sm sm:col-span-2 lg:col-span-4">
-                <div className="text-foreground/70">Description (optional)</div>
-                <input
-                  type="text"
-                  className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-                  value={meetingDescription}
-                  onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingDescription(e.target.value)}
-                  placeholder="Optional description"
-                />
-              </label>
+              <div className="rounded-md border border-foreground/10 bg-foreground/5 p-3">
+                <div className="text-xs font-medium text-foreground/60">When &amp; where</div>
+                <div className="mt-2 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  <label className="space-y-1 text-sm sm:col-span-2 lg:col-span-1">
+                    <div className="text-foreground/70">Location</div>
+                    <input
+                      type="text"
+                      className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                      value={meetingLocation}
+                      onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingLocation(e.target.value)}
+                      placeholder="e.g. Room 101"
+                    />
+                  </label>
 
-              <label className="space-y-1 text-sm sm:col-span-2 lg:col-span-4">
-                <div className="text-foreground/70">Public comment instructions (optional)</div>
-                <textarea
-                  className="w-full rounded-md border bg-transparent px-2 py-2 text-sm"
-                  rows={2}
-                  value={meetingPublicCommentInstructions}
-                  onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setMeetingPublicCommentInstructions(e.target.value)}
-                  placeholder="How members of the public can comment (email, form link, time limits)."
-                />
-              </label>
+                  <label className="space-y-1 text-sm">
+                    <div className="text-foreground/70">
+                      Starts at (local) <span className="text-red-600">*</span>
+                    </div>
+                    <input
+                      type="datetime-local"
+                      className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                      value={meetingStartsAtLocal}
+                      onChange={(e: ChangeEvent<HTMLInputElement>) => {
+                        const next = e.target.value;
+                        setMeetingStartsAtLocal(next);
+                        if (!next) return;
+                        const start = new Date(next);
+                        if (Number.isNaN(start.getTime())) return;
+                        const existingEnd = meetingEndsAtLocal ? new Date(meetingEndsAtLocal) : null;
+                        const hasValidEnd = existingEnd && !Number.isNaN(existingEnd.getTime());
+                        if (!hasValidEnd || existingEnd.getTime() <= start.getTime()) {
+                          const suggestedEnd = new Date(start.getTime() + 60 * 60000);
+                          setMeetingEndsAtLocal(toLocalDatetimeInputValue(suggestedEnd));
+                        }
+                      }}
+                      aria-invalid={!!meetingStartsError}
+                    />
+                    {meetingStartsError ? (
+                      <div className="text-xs text-red-600">{meetingStartsError}</div>
+                    ) : null}
+                  </label>
 
-              <div className="flex items-end gap-2 sm:col-span-2 lg:col-span-4">
-                <Button onClick={() => void onCreateMeeting()} disabled={!canCreateMeeting}>
+                  <label className="space-y-1 text-sm">
+                    <div className="text-foreground/70">
+                      Ends at (local) <span className="text-red-600">*</span>
+                    </div>
+                    <input
+                      type="datetime-local"
+                      className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                      value={meetingEndsAtLocal}
+                      min={meetingStartsAtLocal || undefined}
+                      onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingEndsAtLocal(e.target.value)}
+                      aria-invalid={!!meetingEndsError || !!meetingTimeError}
+                    />
+                    {meetingDurationLabel ? (
+                      <div className="text-xs text-foreground/60">Duration: {meetingDurationLabel}</div>
+                    ) : null}
+                    {meetingEndsError ? (
+                      <div className="text-xs text-red-600">{meetingEndsError}</div>
+                    ) : meetingTimeError ? (
+                      <div className="text-xs text-red-600">{meetingTimeError}</div>
+                    ) : null}
+                  </label>
+
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-foreground/60 sm:col-span-2 lg:col-span-3">
+                    <span>Quick duration:</span>
+                    {MEETING_DURATION_MINUTES.map((minutes) => (
+                      <Button
+                        key={minutes}
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 px-2 text-xs"
+                        onClick={() => applyMeetingDuration(minutes)}
+                        disabled={!meetingStartsAtLocal.trim()}
+                        title={
+                          meetingStartsAtLocal.trim()
+                            ? `Set end time to +${minutes} minutes`
+                            : "Select a start time first"
+                        }
+                      >
+                        {minutes}m
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+                {officeTimezoneLabel ? (
+                  <div className="mt-2 text-xs text-foreground/60">
+                    Office timezone: {officeTimezoneLabel}. Times are entered in your local time.
+                    {meetingOfficePreview ? ` Office time preview: ${meetingOfficePreview}.` : ""}
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="rounded-md border border-foreground/10 bg-foreground/5 p-3">
+                <div className="text-xs font-medium text-foreground/60">Access</div>
+                <div className="mt-2 grid gap-3 sm:grid-cols-2">
+                  <label className="space-y-1 text-sm">
+                    <div className="text-foreground/70">Remote access URL (optional)</div>
+                    <input
+                      type="url"
+                      className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                      value={meetingRemoteUrl}
+                      onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingRemoteUrl(e.target.value)}
+                      placeholder="https://zoom.us/j/..."
+                      aria-invalid={!!meetingRemoteUrlError}
+                    />
+                    {meetingRemoteUrlError ? (
+                      <div className="text-xs text-red-600">{meetingRemoteUrlError}</div>
+                    ) : null}
+                  </label>
+
+                  <label className="space-y-1 text-sm">
+                    <div className="text-foreground/70">Livestream URL (optional)</div>
+                    <input
+                      type="url"
+                      className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                      value={meetingLivestreamUrl}
+                      onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingLivestreamUrl(e.target.value)}
+                      placeholder="https://youtube.com/..."
+                      aria-invalid={!!meetingLivestreamUrlError}
+                    />
+                    {meetingLivestreamUrlError ? (
+                      <div className="text-xs text-red-600">{meetingLivestreamUrlError}</div>
+                    ) : null}
+                  </label>
+                </div>
+              </div>
+
+              <div className="rounded-md border border-foreground/10 bg-foreground/5 p-3">
+                <div className="text-xs font-medium text-foreground/60">Public notes</div>
+                <div className="mt-2 grid gap-3">
+                  <label className="space-y-1 text-sm">
+                    <div className="text-foreground/70">Description (optional)</div>
+                    <input
+                      type="text"
+                      className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                      value={meetingDescription}
+                      onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingDescription(e.target.value)}
+                      placeholder="Optional description"
+                    />
+                  </label>
+
+                  <label className="space-y-1 text-sm">
+                    <div className="text-foreground/70">Public comment instructions (optional)</div>
+                    <textarea
+                      className="w-full rounded-md border bg-transparent px-2 py-2 text-sm"
+                      rows={2}
+                      value={meetingPublicCommentInstructions}
+                      onChange={(e: ChangeEvent<HTMLTextAreaElement>) =>
+                        setMeetingPublicCommentInstructions(e.target.value)
+                      }
+                      placeholder="How members of the public can comment (email, form link, time limits)."
+                    />
+                  </label>
+                </div>
+              </div>
+
+              <div className="flex items-end gap-2">
+                <Button
+                  onClick={() => void onCreateMeeting()}
+                  disabled={!canCreateMeeting}
+                  title={meetingCreateDisabledReason || "Create meeting"}
+                >
                   Create meeting
                 </Button>
                 <Button
@@ -4231,11 +4798,276 @@ export function AdminPanel({
                   Clear form
                 </Button>
               </div>
+              {meetingCreateHelper ? (
+                <div className="text-xs text-foreground/60">{meetingCreateHelper}</div>
+              ) : null}
+            </div>
+          </div>
+
+            <div className="rounded-lg border border-foreground/10 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-medium">Committees</div>
+                  <div className="text-xs text-foreground/60">
+                    Add committee options used for committee meetings.
+                  </div>
+                  <div className="text-xs text-foreground/60">
+                    {filteredCommittees.length} shown • {committees.length} total
+                  </div>
+                </div>
+                <Button variant="ghost" size="sm" onClick={() => void loadCommittees()}>
+                  Refresh
+                </Button>
+              </div>
+
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <label className="space-y-1 text-sm">
+                  <div className="text-foreground/70">
+                    Committee name <span className="text-red-600">*</span>
+                  </div>
+                  <input
+                    type="text"
+                    className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                    value={newCommitteeName}
+                    onChange={(e: ChangeEvent<HTMLInputElement>) => {
+                      const next = e.target.value;
+                      setNewCommitteeName(next);
+                      if (!newCommitteeKey.trim()) {
+                        setNewCommitteeKey(slugifyCommitteeKey(next));
+                      }
+                    }}
+                    placeholder="e.g. Student Outreach"
+                    aria-invalid={!!committeeNameError}
+                  />
+                  {committeeNameError ? (
+                    <div className="text-xs text-red-600">{committeeNameError}</div>
+                  ) : null}
+                </label>
+
+                <label className="space-y-1 text-sm">
+                  <div className="text-foreground/70">
+                    Committee key <span className="text-red-600">*</span>
+                  </div>
+                  <input
+                    type="text"
+                    className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                    value={newCommitteeKey}
+                    onChange={(e: ChangeEvent<HTMLInputElement>) => setNewCommitteeKey(e.target.value)}
+                    placeholder="e.g. outreach"
+                    aria-invalid={!!committeeKeyError}
+                  />
+                  {committeeKeyError ? (
+                    <div className="text-xs text-red-600">{committeeKeyError}</div>
+                  ) : (
+                    <div className="text-xs text-foreground/60">
+                      Use letters, numbers, underscores, or hyphens.
+                    </div>
+                  )}
+                </label>
+              </div>
+
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <Button
+                  onClick={() => void onCreateCommittee()}
+                  disabled={!canCreateCommittee}
+                  title={committeeCreateDisabledReason || "Add committee"}
+                >
+                  Add committee
+                </Button>
+                <Button
+                  variant="ghost"
+                  type="button"
+                  onClick={() => {
+                    setNewCommitteeName("");
+                    setNewCommitteeKey("");
+                    setCommitteeActionStatus("");
+                  }}
+                  disabled={isReadOnly || (!newCommitteeName.trim() && !newCommitteeKey.trim())}
+                >
+                  Clear
+                </Button>
+                {committeeActionStatus ? (
+                  <div className="text-xs text-foreground/60">{committeeActionStatus}</div>
+                ) : null}
+              </div>
+
+              <div className="mt-3 space-y-2">
+                <label className="space-y-1 text-sm">
+                  <div className="text-foreground/70">Search committees</div>
+                  <input
+                    type="search"
+                    className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                    value={committeeSearch}
+                    onChange={(e: ChangeEvent<HTMLInputElement>) => setCommitteeSearch(e.target.value)}
+                    placeholder="Filter by committee name or key..."
+                  />
+                </label>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setCommitteeSearch("")}
+                  disabled={!committeeSearch.trim()}
+                >
+                  Clear search
+                </Button>
+
+                {filteredCommittees.length === 0 ? (
+                  <div className="rounded-md border px-3 py-2 text-sm text-foreground/70">
+                    {committeeSearch.trim()
+                      ? "No committees match the search."
+                      : "No committees added yet."}
+                  </div>
+                ) : (
+                  <div className="max-h-64 space-y-2 overflow-auto pr-1">
+                    {filteredCommittees.map((committee) => {
+                      const draft = committeeDrafts[committee.id];
+                      const isEditing = !!draft;
+                      const draftName = draft?.name ?? committee.name;
+                      const draftKey = draft?.committee_key ?? committee.committee_key;
+                      const draftNameError = isEditing && !draftName.trim() ? "Name is required." : "";
+                      const draftKeyError = isEditing
+                        ? getCommitteeKeyValidationError(draftKey, committees, committee.id)
+                        : "";
+                      const isDirty =
+                        isEditing &&
+                        (draftName.trim() !== committee.name.trim() ||
+                          draftKey.trim() !== committee.committee_key.trim());
+                      const saveCommitteeDisabledReason = isReadOnly
+                        ? "Read-only mode: updates are disabled."
+                        : committeeSavingId === committee.id
+                          ? "Saving committee..."
+                          : !isDirty
+                            ? "No changes to save."
+                            : draftNameError || draftKeyError;
+                      const canSaveCommittee = saveCommitteeDisabledReason.length === 0;
+                      const isBusy =
+                        committeeSavingId === committee.id || committeeDeletingId === committee.id;
+
+                      return (
+                        <div
+                          key={committee.id}
+                          className="rounded-md border border-foreground/10 px-3 py-2 text-sm"
+                        >
+                          <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div className="min-w-0 flex-1">
+                              {isEditing ? (
+                                <div className="grid gap-2 sm:grid-cols-2">
+                                  <label className="space-y-1 text-xs">
+                                    <div className="text-foreground/60">Name</div>
+                                    <input
+                                      className="h-8 w-full rounded-md border bg-transparent px-2 text-sm"
+                                      value={draftName}
+                                      onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                                        updateCommitteeDraft(committee.id, { name: e.target.value })
+                                      }
+                                      aria-invalid={!!draftNameError}
+                                    />
+                                    {draftNameError ? (
+                                      <div className="text-xs text-red-600">{draftNameError}</div>
+                                    ) : null}
+                                  </label>
+
+                                  <label className="space-y-1 text-xs">
+                                    <div className="text-foreground/60">Key</div>
+                                    <input
+                                      className="h-8 w-full rounded-md border bg-transparent px-2 text-sm"
+                                      value={draftKey}
+                                      onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                                        updateCommitteeDraft(committee.id, { committee_key: e.target.value })
+                                      }
+                                      aria-invalid={!!draftKeyError}
+                                    />
+                                    {draftKeyError ? (
+                                      <div className="text-xs text-red-600">{draftKeyError}</div>
+                                    ) : null}
+                                  </label>
+                                </div>
+                              ) : (
+                                <>
+                                  <div className="font-medium">{committee.name}</div>
+                                  <div className="text-xs text-foreground/60">Key: {committee.committee_key}</div>
+                                </>
+                              )}
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-2">
+                              {isEditing ? (
+                                <>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => void saveCommittee(committee)}
+                                    disabled={!canSaveCommittee}
+                                    title={saveCommitteeDisabledReason || "Save committee"}
+                                  >
+                                    Save
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() => cancelCommitteeEdit(committee.id)}
+                                    disabled={committeeSavingId === committee.id}
+                                  >
+                                    Cancel
+                                  </Button>
+                                </>
+                              ) : (
+                                <>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() => startEditCommittee(committee)}
+                                    disabled={isReadOnly || isBusy}
+                                    title={
+                                      isReadOnly
+                                        ? "Read-only mode: updates are disabled."
+                                        : "Edit committee details"
+                                    }
+                                  >
+                                    Edit
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() => selectCommitteeForMeeting(committee.id)}
+                                    disabled={isReadOnly}
+                                    title={
+                                      isReadOnly
+                                        ? "Read-only mode: updates are disabled."
+                                        : "Use this committee in the meeting form"
+                                    }
+                                  >
+                                    Use in meeting
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    className="text-red-600 hover:bg-red-500/10"
+                                    onClick={() => void deleteCommittee(committee)}
+                                    disabled={isReadOnly || isBusy}
+                                    title={
+                                      isReadOnly
+                                        ? "Read-only mode: updates are disabled."
+                                        : "Delete committee"
+                                    }
+                                  >
+                                    Delete
+                                  </Button>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 
           <div className="rounded-lg border border-foreground/10 p-4">
-            <div className="flex flex-wrap items-end justify-between gap-3">
+            <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <div className="text-sm font-medium">Existing meetings</div>
                 <div className="text-xs text-foreground/60">Edit details, update status, or cancel meetings.</div>
@@ -4243,100 +5075,104 @@ export function AdminPanel({
                   Times shown in {officeTimezoneLabel ?? "your local time"}.
                 </div>
               </div>
-              <div className="flex flex-wrap items-end gap-2">
-                <label className="space-y-1 text-sm">
-                  <div className="text-foreground/70">Sort</div>
-                  <select
-                    className="h-9 w-full rounded-md border bg-transparent px-2 text-sm sm:w-36"
-                    value={meetingSort}
-                    onChange={(e: ChangeEvent<HTMLSelectElement>) =>
-                      setMeetingSort(e.target.value as "recent" | "upcoming")
-                    }
-                  >
-                    <option value="recent">Newest</option>
-                    <option value="upcoming">Upcoming</option>
-                  </select>
-                </label>
-                <label className="space-y-1 text-sm">
-                  <div className="text-foreground/70">Status</div>
-                  <select
-                    className="h-9 w-full rounded-md border bg-transparent px-2 text-sm sm:w-40"
-                    value={meetingStatusFilter}
-                    onChange={(e: ChangeEvent<HTMLSelectElement>) => setMeetingStatusFilter(e.target.value)}
-                  >
-                    <option value="all">All statuses</option>
-                    {MEETING_STATUS_OPTIONS.map((statusOption) => (
-                      <option key={statusOption} value={statusOption}>
-                        {statusOption}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+              <div className="flex flex-col gap-2">
+                <div className="flex flex-wrap items-end gap-2">
+                  <label className="space-y-1 text-sm">
+                    <div className="text-foreground/70">Sort</div>
+                    <select
+                      className="h-9 w-full rounded-md border bg-transparent px-2 text-sm sm:w-36"
+                      value={meetingSort}
+                      onChange={(e: ChangeEvent<HTMLSelectElement>) =>
+                        setMeetingSort(e.target.value as "recent" | "upcoming")
+                      }
+                    >
+                      <option value="recent">Newest</option>
+                      <option value="upcoming">Upcoming</option>
+                    </select>
+                  </label>
+                  <label className="space-y-1 text-sm">
+                    <div className="text-foreground/70">Status</div>
+                    <select
+                      className="h-9 w-full rounded-md border bg-transparent px-2 text-sm sm:w-40"
+                      value={meetingStatusFilter}
+                      onChange={(e: ChangeEvent<HTMLSelectElement>) => setMeetingStatusFilter(e.target.value)}
+                    >
+                      <option value="all">All statuses</option>
+                      {MEETING_STATUS_OPTIONS.map((statusOption) => (
+                        <option key={statusOption} value={statusOption}>
+                          {statusOption}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
 
-                <label className="space-y-1 text-sm">
-                  <div className="text-foreground/70">Type</div>
-                  <select
-                    className="h-9 w-full rounded-md border bg-transparent px-2 text-sm sm:w-40"
-                    value={meetingTypeFilter}
-                    onChange={(e: ChangeEvent<HTMLSelectElement>) => setMeetingTypeFilter(e.target.value)}
-                  >
-                    <option value="all">All types</option>
-                    <option value="board">Board</option>
-                    <option value="committee">Committee</option>
-                    <option value="icc">ICC</option>
-                    <option value="special">Special</option>
-                    <option value="other">Other</option>
-                  </select>
-                </label>
+                  <label className="space-y-1 text-sm">
+                    <div className="text-foreground/70">Type</div>
+                    <select
+                      className="h-9 w-full rounded-md border bg-transparent px-2 text-sm sm:w-40"
+                      value={meetingTypeFilter}
+                      onChange={(e: ChangeEvent<HTMLSelectElement>) => setMeetingTypeFilter(e.target.value)}
+                    >
+                      <option value="all">All types</option>
+                      <option value="board">Board</option>
+                      <option value="committee">Committee</option>
+                      <option value="icc">ICC</option>
+                      <option value="special">Special</option>
+                      <option value="other">Other</option>
+                    </select>
+                  </label>
 
-                <label className="space-y-1 text-sm">
-                  <div className="text-foreground/70">Committee</div>
-                  <select
-                    className="h-9 w-full rounded-md border bg-transparent px-2 text-sm sm:w-48"
-                    value={meetingCommitteeFilter}
-                    onChange={(e: ChangeEvent<HTMLSelectElement>) => setMeetingCommitteeFilter(e.target.value)}
-                  >
-                    <option value="all">All committees</option>
-                    {committees.map((committee) => (
-                      <option key={committee.id} value={committee.id}>
-                        {committee.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                  <label className="space-y-1 text-sm">
+                    <div className="text-foreground/70">Committee</div>
+                    <select
+                      className="h-9 w-full rounded-md border bg-transparent px-2 text-sm sm:w-48"
+                      value={meetingCommitteeFilter}
+                      onChange={(e: ChangeEvent<HTMLSelectElement>) => setMeetingCommitteeFilter(e.target.value)}
+                    >
+                      <option value="all">All committees</option>
+                      {committees.map((committee) => (
+                        <option key={committee.id} value={committee.id}>
+                          {committee.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
 
-                <label className="space-y-1 text-sm">
-                  <div className="text-foreground/70">Search</div>
-                  <input
-                    type="search"
-                    className="h-9 w-full rounded-md border bg-transparent px-2 text-sm sm:w-56"
-                    value={meetingSearch}
-                    onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingSearch(e.target.value)}
-                    placeholder="Filter by title, location, or committee..."
-                  />
-                </label>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setMeetingSearch("")}
-                  disabled={!meetingSearch.trim()}
-                >
-                  Clear search
-                </Button>
-                <label className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={meetingUpcomingOnly}
-                    onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingUpcomingOnly(e.target.checked)}
-                  />
-                  <span className="text-foreground/70">Upcoming only</span>
-                </label>
-                <Button variant="ghost" size="sm" onClick={resetMeetingFilters} disabled={!meetingFiltersActive}>
-                  Reset
-                </Button>
-                <Button variant="ghost" onClick={() => void loadMeetings()}>
-                  Refresh
-                </Button>
+                <div className="flex flex-wrap items-end gap-2">
+                  <label className="space-y-1 text-sm">
+                    <div className="text-foreground/70">Search</div>
+                    <input
+                      type="search"
+                      className="h-9 w-full rounded-md border bg-transparent px-2 text-sm sm:w-56"
+                      value={meetingSearch}
+                      onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingSearch(e.target.value)}
+                      placeholder="Filter by title, location, or committee..."
+                    />
+                  </label>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setMeetingSearch("")}
+                    disabled={!meetingSearch.trim()}
+                  >
+                    Clear search
+                  </Button>
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={meetingUpcomingOnly}
+                      onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingUpcomingOnly(e.target.checked)}
+                    />
+                    <span className="text-foreground/70">Upcoming only</span>
+                  </label>
+                  <Button variant="ghost" size="sm" onClick={resetMeetingFilters} disabled={!meetingFiltersActive}>
+                    Reset
+                  </Button>
+                  <Button variant="ghost" onClick={() => void loadMeetings()}>
+                    Refresh
+                  </Button>
+                </div>
               </div>
             </div>
             <div className="mt-2 text-xs text-foreground/60">
@@ -4358,13 +5194,23 @@ export function AdminPanel({
                 const isDirty = isMeetingDraftDirty(meeting, draft);
                 const draftTitleError = draft.title.trim().length === 0 ? "Title is required." : "";
                 const draftTimeError = getMeetingTimeError(draft.starts_at_local, draft.ends_at_local);
+                const draftRemoteUrlError =
+                  draft.remote_url.trim().length > 0 && !isValidHttpUrl(draft.remote_url.trim())
+                    ? "Remote access URL must start with http:// or https://"
+                    : "";
+                const draftLivestreamUrlError =
+                  draft.livestream_url.trim().length > 0 && !isValidHttpUrl(draft.livestream_url.trim())
+                    ? "Livestream URL must start with http:// or https://"
+                    : "";
                 const canSaveMeeting =
                   isDirty &&
                   !isReadOnly &&
                   !draftTitleError &&
                   draft.starts_at_local.trim().length > 0 &&
                   draft.ends_at_local.trim().length > 0 &&
-                  !draftTimeError;
+                  !draftTimeError &&
+                  !draftRemoteUrlError &&
+                  !draftLivestreamUrlError;
                 const agendaPostedLabel = meeting.agenda_posted_at
                   ? formatShortDateTimeInZone(meeting.agenda_posted_at, officeTimezoneLabel)
                   : "Not posted";
@@ -4374,6 +5220,18 @@ export function AdminPanel({
                 const noticePostedLabel = meeting.notice_posted_at
                   ? formatShortDateTimeInZone(meeting.notice_posted_at, officeTimezoneLabel)
                   : "Not posted";
+                const remoteUrl = meeting.remote_url?.trim() ?? "";
+                const remoteUrlOk = !!remoteUrl && isValidHttpUrl(remoteUrl);
+                const livestreamUrl = meeting.livestream_url?.trim() ?? "";
+                const livestreamUrlOk = !!livestreamUrl && isValidHttpUrl(livestreamUrl);
+                const durationLabel = (() => {
+                  const start = new Date(meeting.starts_at);
+                  const end = new Date(meeting.ends_at);
+                  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return "";
+                  const diffMinutes = Math.round((end.getTime() - start.getTime()) / 60000);
+                  return diffMinutes > 0 ? formatDurationMinutes(diffMinutes) : "";
+                })();
+                const updatedLabel = formatShortDateTimeInZone(meeting.updated_at, officeTimezoneLabel);
 
                 const statusBadgeClass =
                   meeting.status === "scheduled"
@@ -4399,6 +5257,12 @@ export function AdminPanel({
                           {formatDateTimeInZone(meeting.starts_at, officeTimezoneLabel)} →{" "}
                           {formatDateTimeInZone(meeting.ends_at, officeTimezoneLabel)}
                         </div>
+                        {durationLabel ? (
+                          <div className="text-xs text-foreground/60">Duration: {durationLabel}</div>
+                        ) : null}
+                        {updatedLabel ? (
+                          <div className="text-xs text-foreground/60">Updated {updatedLabel}</div>
+                        ) : null}
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
                         {isDirty ? (
@@ -4418,20 +5282,31 @@ export function AdminPanel({
                         >
                           Copy link
                         </Button>
-                        {meeting.remote_url ? (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => void copyMeetingSummary(meeting, committeeLabel)}
+                        >
+                          Copy summary
+                        </Button>
+                        {remoteUrl ? (
                           <Button
                             size="sm"
                             variant="ghost"
-                            onClick={() => window.open(meeting.remote_url!, "_blank", "noopener")}
+                            onClick={() => window.open(remoteUrl, "_blank", "noopener")}
+                            disabled={!remoteUrlOk}
+                            title={remoteUrlOk ? "Open remote link" : "Invalid remote access URL"}
                           >
                             Remote link
                           </Button>
                         ) : null}
-                        {meeting.livestream_url ? (
+                        {livestreamUrl ? (
                           <Button
                             size="sm"
                             variant="ghost"
-                            onClick={() => window.open(meeting.livestream_url!, "_blank", "noopener")}
+                            onClick={() => window.open(livestreamUrl, "_blank", "noopener")}
+                            disabled={!livestreamUrlOk}
+                            title={livestreamUrlOk ? "Open livestream link" : "Invalid livestream URL"}
                           >
                             Livestream
                           </Button>
@@ -4459,7 +5334,11 @@ export function AdminPanel({
                                   ? draftTitleError
                                   : draftTimeError
                                     ? draftTimeError
-                                    : "Save changes"
+                                    : draftRemoteUrlError
+                                      ? draftRemoteUrlError
+                                      : draftLivestreamUrlError
+                                        ? draftLivestreamUrlError
+                                      : "Save changes"
                           }
                         >
                           Save
@@ -4645,6 +5524,9 @@ export function AdminPanel({
                             }
                             placeholder="https://zoom.us/j/..."
                           />
+                          {draftRemoteUrlError ? (
+                            <div className="text-xs text-red-600">{draftRemoteUrlError}</div>
+                          ) : null}
                         </label>
 
                         <label className="space-y-1 text-sm">
@@ -4657,6 +5539,9 @@ export function AdminPanel({
                             }
                             placeholder="https://youtube.com/..."
                           />
+                          {draftLivestreamUrlError ? (
+                            <div className="text-xs text-red-600">{draftLivestreamUrlError}</div>
+                          ) : null}
                         </label>
 
                         <label className="space-y-1 text-sm md:col-span-3">

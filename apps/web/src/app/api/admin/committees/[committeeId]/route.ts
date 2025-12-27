@@ -37,26 +37,17 @@ async function isAdminForRequest(
   return { ok: true };
 }
 
-export async function GET(request: NextRequest) {
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: { committeeId: string } },
+) {
   const authz = await isAdminForRequest(request);
   if (!authz.ok) return authz.response;
 
-  const admin = getSupabaseAdminClient();
-  const { data, error } = await admin
-    .from("committees")
-    .select("id,name,committee_key")
-    .order("name", { ascending: true });
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  const committeeId = params.committeeId;
+  if (!committeeId) {
+    return NextResponse.json({ error: "Committee id is required." }, { status: 400 });
   }
-
-  return NextResponse.json({ committees: data ?? [] });
-}
-
-export async function POST(request: NextRequest) {
-  const authz = await isAdminForRequest(request);
-  if (!authz.ok) return authz.response;
 
   const body = (await request.json().catch(() => null)) as { name?: string; committee_key?: string } | null;
   const name = body?.name?.trim() ?? "";
@@ -78,7 +69,8 @@ export async function POST(request: NextRequest) {
   const admin = getSupabaseAdminClient();
   const { data, error } = await admin
     .from("committees")
-    .insert({ name, committee_key: committeeKey })
+    .update({ name, committee_key: committeeKey })
+    .eq("id", committeeId)
     .select("id,name,committee_key")
     .single();
 
@@ -86,8 +78,39 @@ export async function POST(request: NextRequest) {
     if (error.code === "23505") {
       return NextResponse.json({ error: "Committee key already exists." }, { status: 409 });
     }
+    if (error.code === "PGRST116") {
+      return NextResponse.json({ error: "Committee not found." }, { status: 404 });
+    }
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
   return NextResponse.json({ committee: data });
+}
+
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: { committeeId: string } },
+) {
+  const authz = await isAdminForRequest(request);
+  if (!authz.ok) return authz.response;
+
+  const committeeId = params.committeeId;
+  if (!committeeId) {
+    return NextResponse.json({ error: "Committee id is required." }, { status: 400 });
+  }
+
+  const admin = getSupabaseAdminClient();
+  const { error } = await admin
+    .from("committees")
+    .delete()
+    .eq("id", committeeId);
+
+  if (error) {
+    if (error.code === "23503") {
+      return NextResponse.json({ error: "Committee is in use and cannot be deleted." }, { status: 409 });
+    }
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  return NextResponse.json({ ok: true });
 }
