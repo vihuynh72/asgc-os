@@ -264,6 +264,18 @@ export function FinanceDashboard({
     };
   }, []);
 
+  const navItems = [
+    { id: "finance-config", label: "Config", show: isFinanceAdmin },
+    { id: "budget-lines", label: "Budget lines", show: isFinanceAdmin },
+    { id: "funding-requests", label: "Requests", show: true },
+    { id: "board-votes", label: "Board votes", show: isBoardMember || isFinanceAdmin },
+    { id: "expenses", label: "Expenses", show: isFinanceAdmin },
+    { id: "budget-burndown", label: "Burndown", show: isFinanceAdmin },
+    { id: "grant-cycles", label: "Grant cycles", show: isFinanceAdmin },
+    { id: "grant-applications", label: "Grant applications", show: true },
+    { id: "finance-exports", label: "Exports", show: isFinanceAdmin },
+  ].filter((item) => item.show);
+
   return (
     <div className="space-y-10">
       {lookupError ? (
@@ -271,39 +283,73 @@ export function FinanceDashboard({
           {lookupError}
         </div>
       ) : null}
-      {isFinanceAdmin ? <FinanceConfigPanel /> : null}
-      {isFinanceAdmin ? <BudgetLinesPanel /> : null}
+      {navItems.length > 1 ? (
+        <nav className="rounded-lg border border-foreground/10 bg-foreground/5 p-4" aria-label="Finance sections">
+          <div className="text-sm font-medium">Jump to section</div>
+          <div className="mt-2 flex flex-wrap gap-2 text-xs">
+            {navItems.map((item) => (
+              <a
+                key={item.id}
+                href={`#${item.id}`}
+                className="rounded-full border border-foreground/10 bg-background px-3 py-1 text-foreground/80 transition hover:border-foreground/30 hover:text-foreground"
+              >
+                {item.label}
+              </a>
+            ))}
+          </div>
+        </nav>
+      ) : null}
+      {isFinanceAdmin ? <FinanceConfigPanel sectionId="finance-config" /> : null}
+      {isFinanceAdmin ? <BudgetLinesPanel sectionId="budget-lines" /> : null}
       <FundingRequestsPanel
+        sectionId="funding-requests"
         isFinanceAdmin={isFinanceAdmin}
         committees={lookups.committees}
         docs={lookups.docs}
       />
       {isBoardMember || isFinanceAdmin ? (
-        <BoardVotesPanel meetings={lookups.meetings} fundingRequests={lookups.fundingRequests} users={lookups.users} />
+        <BoardVotesPanel
+          sectionId="board-votes"
+          meetings={lookups.meetings}
+          fundingRequests={lookups.fundingRequests}
+          users={lookups.users}
+        />
       ) : null}
       {isFinanceAdmin ? (
         <ExpensesPanel
+          sectionId="expenses"
           budgetLines={lookups.budgetLines}
           fundingRequests={lookups.fundingRequests}
           docs={lookups.docs}
         />
       ) : null}
-      {isFinanceAdmin ? <BudgetBurndownPanel /> : null}
-      {isFinanceAdmin ? <GrantCyclesPanel meetings={lookups.meetings} /> : null}
+      {isFinanceAdmin ? <BudgetBurndownPanel sectionId="budget-burndown" /> : null}
+      {isFinanceAdmin ? <GrantCyclesPanel sectionId="grant-cycles" meetings={lookups.meetings} /> : null}
       <GrantApplicationsPanel
+        sectionId="grant-applications"
         isFinanceAdmin={isFinanceAdmin}
         grantCycles={lookups.grantCycles}
         clubs={lookups.clubs}
         docs={lookups.docs}
       />
-      {isFinanceAdmin ? <FinanceExportsPanel /> : null}
+      {isFinanceAdmin ? <FinanceExportsPanel sectionId="finance-exports" /> : null}
     </div>
   );
 }
 
-function Section({ title, description, children }: { title: string; description?: string; children: React.ReactNode }) {
+function Section({
+  id,
+  title,
+  description,
+  children,
+}: {
+  id?: string;
+  title: string;
+  description?: string;
+  children: React.ReactNode;
+}) {
   return (
-    <section className="rounded-lg border border-foreground/10 p-4">
+    <section id={id} className="rounded-lg border border-foreground/10 p-4">
       <div className="space-y-1">
         <h2 className="text-lg font-medium">{title}</h2>
         {description ? <p className="text-sm text-foreground/70">{description}</p> : null}
@@ -313,7 +359,7 @@ function Section({ title, description, children }: { title: string; description?
   );
 }
 
-function FinanceConfigPanel() {
+function FinanceConfigPanel({ sectionId }: { sectionId?: string }) {
   const [config, setConfig] = useState<FinanceConfig | null>(null);
   const [status, setStatus] = useState<string>("");
   const [form, setForm] = useState({ board_action_threshold: "", grant_max: "", lead_time_days: "" });
@@ -388,12 +434,16 @@ function FinanceConfigPanel() {
   }
 
   return (
-    <Section title="Finance Config" description="Thresholds and defaults used across finance workflows.">
+    <Section id={sectionId} title="Finance Config" description="Thresholds and defaults used across finance workflows.">
       {status ? (
         <div className="text-sm text-foreground/70" role="status" aria-live="polite">
           {status}
         </div>
       ) : null}
+      <div className="text-xs text-foreground/60">
+        Requestors submit items. Finance admins review and schedule votes; board votes are recorded in the Board Votes
+        section.
+      </div>
       {config ? (
         <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-3">
           <label className="text-sm">
@@ -402,6 +452,7 @@ function FinanceConfigPanel() {
               type="number"
               step="0.01"
               min={0}
+              inputMode="decimal"
               value={form.board_action_threshold}
               onChange={(event) => setForm((prev) => ({ ...prev, board_action_threshold: event.target.value }))}
               className="mt-1 w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
@@ -413,6 +464,7 @@ function FinanceConfigPanel() {
               type="number"
               step="0.01"
               min={0}
+              inputMode="decimal"
               value={form.grant_max}
               onChange={(event) => setForm((prev) => ({ ...prev, grant_max: event.target.value }))}
               className="mt-1 w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
@@ -424,6 +476,7 @@ function FinanceConfigPanel() {
               type="number"
               min={0}
               step={1}
+              inputMode="numeric"
               value={form.lead_time_days}
               onChange={(event) => setForm((prev) => ({ ...prev, lead_time_days: event.target.value }))}
               className="mt-1 w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
@@ -442,7 +495,7 @@ function FinanceConfigPanel() {
   );
 }
 
-function BudgetLinesPanel() {
+function BudgetLinesPanel({ sectionId }: { sectionId?: string }) {
   const [lines, setLines] = useState<BudgetLine[]>([]);
   const [status, setStatus] = useState<string>("");
   const [form, setForm] = useState({ fiscal_year: "", name: "", category: "", allocated_amount: "", notes: "" });
@@ -489,6 +542,14 @@ function BudgetLinesPanel() {
         setStatus("Allocated amount must be 0 or higher");
         return;
       }
+      const normalizedName = form.name.trim().toLowerCase();
+      const hasDuplicate = lines.some(
+        (line) => line.fiscal_year === fiscalYear && line.name.trim().toLowerCase() === normalizedName,
+      );
+      if (hasDuplicate) {
+        setStatus("A budget line with this name already exists for the fiscal year.");
+        return;
+      }
 
       const payload = {
         fiscal_year: fiscalYear,
@@ -508,7 +569,11 @@ function BudgetLinesPanel() {
       setForm({ fiscal_year: "", name: "", category: "", allocated_amount: "", notes: "" });
       setStatus("Saved");
     } catch (err) {
-      setStatus(err instanceof Error ? err.message : "Failed to save budget line");
+      const raw = err instanceof Error ? err.message : "Failed to save budget line";
+      const msg = raw.toLowerCase().includes("budget_line_duplicate")
+        ? "A budget line with this name already exists for the fiscal year."
+        : raw;
+      setStatus(msg);
     }
   }
 
@@ -533,7 +598,7 @@ function BudgetLinesPanel() {
   }
 
   return (
-    <Section title="Budget Lines" description="Manage annual budget allocations.">
+    <Section id={sectionId} title="Budget Lines" description="Manage annual budget allocations.">
       {status ? (
         <div className="text-sm text-foreground/70" role="status" aria-live="polite">
           {status}
@@ -575,6 +640,7 @@ function BudgetLinesPanel() {
             type="number"
             step="0.01"
             min={0}
+            inputMode="decimal"
             value={form.allocated_amount}
             onChange={(event) => setForm((prev) => ({ ...prev, allocated_amount: event.target.value }))}
             className="mt-1 w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
@@ -630,10 +696,12 @@ function BudgetLinesPanel() {
 }
 
 function FundingRequestsPanel({
+  sectionId,
   isFinanceAdmin,
   committees,
   docs,
 }: {
+  sectionId?: string;
   isFinanceAdmin: boolean;
   committees: CommitteeLookup[];
   docs: DocLookup[];
@@ -789,10 +857,13 @@ function FundingRequestsPanel({
   }
 
   async function transitionRequest(requestId: string, nextState: string) {
-    if (nextState === "denied") {
-      const ok = window.confirm("Mark this funding request as denied?");
-      if (!ok) return;
-    }
+    const label = nextState.replace(/_/g, " ");
+    const confirmMessage =
+      nextState === "denied"
+        ? "Mark this funding request as denied?"
+        : `Change this funding request to "${label}"?`;
+    const ok = window.confirm(confirmMessage);
+    if (!ok) return;
 
     setStatus("Updating status...");
     try {
@@ -812,7 +883,11 @@ function FundingRequestsPanel({
   }
 
   return (
-    <Section title="Funding Requests" description="Submit and manage funding requests with breakdowns and attachments.">
+    <Section
+      id={sectionId}
+      title="Funding Requests"
+      description="Submit and manage funding requests with breakdowns and attachments."
+    >
       {status ? (
         <div className="text-sm text-foreground/70" role="status" aria-live="polite">
           {status}
@@ -864,6 +939,7 @@ function FundingRequestsPanel({
             type="number"
             step="0.01"
             min={0}
+            inputMode="decimal"
             value={form.amount_requested}
             onChange={(event) => setForm((prev) => ({ ...prev, amount_requested: event.target.value }))}
             className="mt-1 w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
@@ -907,6 +983,7 @@ function FundingRequestsPanel({
                 type="number"
                 step="0.01"
                 min={0}
+                inputMode="decimal"
                 placeholder="Amount"
                 aria-label="Line item amount"
                 value={item.amount}
@@ -1105,6 +1182,11 @@ function FundingRequestRow({
           ))}
         </div>
       ) : null}
+      {isFinanceAdmin ? (
+        <div className="mt-2 text-xs text-foreground/60">
+          Finance admins manage request state changes; requestors can only submit or withdraw.
+        </div>
+      ) : null}
 
       <div className="mt-3">
         <form onSubmit={attachDoc} className="flex flex-wrap gap-2">
@@ -1158,10 +1240,12 @@ function FundingRequestRow({
 }
 
 function BoardVotesPanel({
+  sectionId,
   meetings,
   fundingRequests,
   users,
 }: {
+  sectionId?: string;
   meetings: MeetingLookup[];
   fundingRequests: FundingRequestLookup[];
   users: UserLookup[];
@@ -1180,12 +1264,18 @@ function BoardVotesPanel({
     result: "approved",
     notes: "",
   });
-  const userListId = useId();
   const meetingsById = useMemo(() => new Map(meetings.map((m) => [m.id, m])), [meetings]);
   const requestsById = useMemo(() => new Map(fundingRequests.map((r) => [r.id, r])), [fundingRequests]);
   const usersById = useMemo(() => new Map(users.map((user) => [user.id, user])), [users]);
-  const selectedMovedBy = form.moved_by.trim() ? usersById.get(form.moved_by.trim()) ?? null : null;
-  const selectedSecondedBy = form.seconded_by.trim() ? usersById.get(form.seconded_by.trim()) ?? null : null;
+  const suggestedResult = useMemo(() => {
+    const yes = Number(form.vote_yes || 0);
+    const no = Number(form.vote_no || 0);
+    if (!Number.isFinite(yes) || !Number.isFinite(no)) return null;
+    if (yes === 0 && no === 0) return null;
+    if (yes > no) return "approved";
+    if (no > yes) return "denied";
+    return "tabled";
+  }, [form.vote_no, form.vote_yes]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1269,12 +1359,15 @@ function BoardVotesPanel({
   }
 
   return (
-    <Section title="Board Votes" description="Record board votes and outcomes tied to funding requests.">
+    <Section id={sectionId} title="Board Votes" description="Record board votes and outcomes tied to funding requests.">
       {status ? (
         <div className="text-sm text-foreground/70" role="status" aria-live="polite">
           {status}
         </div>
       ) : null}
+      <div className="text-xs text-foreground/60">
+        Select members by name; the vote counts suggest a result, but you can override it.
+      </div>
       <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2">
         <label className="text-sm">
           Meeting
@@ -1316,46 +1409,42 @@ function BoardVotesPanel({
           />
         </label>
         <label className="text-sm">
-          Moved by (user id)
-          <input
-            type="text"
-            list={userListId}
+          Moved by
+          <select
             value={form.moved_by}
             onChange={(event) => setForm((prev) => ({ ...prev, moved_by: event.target.value }))}
             className="mt-1 w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
-          />
-          {selectedMovedBy ? (
-            <div className="mt-1 text-xs text-foreground/60">
-              Selected: {selectedMovedBy.display_name?.trim() || selectedMovedBy.id}
-            </div>
-          ) : null}
+          >
+            <option value="">— Select member —</option>
+            {users.map((user) => (
+              <option key={user.id} value={user.id}>
+                {user.display_name?.trim() || user.id}
+              </option>
+            ))}
+          </select>
         </label>
         <label className="text-sm">
-          Seconded by (user id)
-          <input
-            type="text"
-            list={userListId}
+          Seconded by
+          <select
             value={form.seconded_by}
             onChange={(event) => setForm((prev) => ({ ...prev, seconded_by: event.target.value }))}
             className="mt-1 w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
-          />
-          {selectedSecondedBy ? (
-            <div className="mt-1 text-xs text-foreground/60">
-              Selected: {selectedSecondedBy.display_name?.trim() || selectedSecondedBy.id}
-            </div>
-          ) : null}
+          >
+            <option value="">— Select member —</option>
+            {users.map((user) => (
+              <option key={user.id} value={user.id}>
+                {user.display_name?.trim() || user.id}
+              </option>
+            ))}
+          </select>
         </label>
-        <datalist id={userListId}>
-          {users.map((user) => (
-            <option key={user.id} value={user.id} label={user.display_name?.trim() || user.id} />
-          ))}
-        </datalist>
         <label className="text-sm">
           Yes votes
           <input
             type="number"
             min={0}
             step={1}
+            inputMode="numeric"
             value={form.vote_yes}
             onChange={(event) => setForm((prev) => ({ ...prev, vote_yes: event.target.value }))}
             className="mt-1 w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
@@ -1367,6 +1456,7 @@ function BoardVotesPanel({
             type="number"
             min={0}
             step={1}
+            inputMode="numeric"
             value={form.vote_no}
             onChange={(event) => setForm((prev) => ({ ...prev, vote_no: event.target.value }))}
             className="mt-1 w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
@@ -1378,6 +1468,7 @@ function BoardVotesPanel({
             type="number"
             min={0}
             step={1}
+            inputMode="numeric"
             value={form.vote_abstain}
             onChange={(event) => setForm((prev) => ({ ...prev, vote_abstain: event.target.value }))}
             className="mt-1 w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
@@ -1395,6 +1486,18 @@ function BoardVotesPanel({
             <option value="tabled">Tabled</option>
           </select>
         </label>
+        {suggestedResult ? (
+          <div className="text-xs text-foreground/60 sm:col-span-2">
+            Suggested result: {suggestedResult}.{" "}
+            <button
+              type="button"
+              className="text-primary underline underline-offset-2"
+              onClick={() => setForm((prev) => ({ ...prev, result: suggestedResult }))}
+            >
+              Use suggested
+            </button>
+          </div>
+        ) : null}
         <label className="text-sm sm:col-span-2">
           Notes
           <input
@@ -1455,10 +1558,12 @@ function BoardVotesPanel({
 }
 
 function ExpensesPanel({
+  sectionId,
   budgetLines,
   fundingRequests,
   docs,
 }: {
+  sectionId?: string;
   budgetLines: BudgetLineLookup[];
   fundingRequests: FundingRequestLookup[];
   docs: DocLookup[];
@@ -1561,7 +1666,7 @@ function ExpensesPanel({
   }
 
   return (
-    <Section title="Expenses" description="Log expenses and link receipts.">
+    <Section id={sectionId} title="Expenses" description="Log expenses and link receipts.">
       {status ? (
         <div className="text-sm text-foreground/70" role="status" aria-live="polite">
           {status}
@@ -1613,6 +1718,7 @@ function ExpensesPanel({
             type="number"
             step="0.01"
             min={0}
+            inputMode="decimal"
             value={form.amount}
             onChange={(event) => setForm((prev) => ({ ...prev, amount: event.target.value }))}
             className="mt-1 w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
@@ -1713,7 +1819,7 @@ function ExpensesPanel({
   );
 }
 
-function BudgetBurndownPanel() {
+function BudgetBurndownPanel({ sectionId }: { sectionId?: string }) {
   const [rows, setRows] = useState<BurndownRow[]>([]);
   const [status, setStatus] = useState<string>("");
   const [fiscalYear, setFiscalYear] = useState<string>("");
@@ -1744,7 +1850,7 @@ function BudgetBurndownPanel() {
   }, [fiscalYear, refreshToken]);
 
   return (
-    <Section title="Budget Burn-down" description="Allocated vs spent by budget line.">
+    <Section id={sectionId} title="Budget Burn-down" description="Allocated vs spent by budget line.">
       {status ? (
         <div className="text-sm text-foreground/70" role="status" aria-live="polite">
           {status}
@@ -1785,7 +1891,7 @@ function BudgetBurndownPanel() {
   );
 }
 
-function GrantCyclesPanel({ meetings }: { meetings: MeetingLookup[] }) {
+function GrantCyclesPanel({ sectionId, meetings }: { sectionId?: string; meetings: MeetingLookup[] }) {
   const [cycles, setCycles] = useState<GrantCycle[]>([]);
   const [status, setStatus] = useState<string>("");
   const [form, setForm] = useState({ name: "", opens_at: "", closes_at: "", max_amount: "", board_meeting_target_id: "" });
@@ -1870,7 +1976,7 @@ function GrantCyclesPanel({ meetings }: { meetings: MeetingLookup[] }) {
   }
 
   return (
-    <Section title="Grant Cycles" description="Define grant cycles and deadlines.">
+    <Section id={sectionId} title="Grant Cycles" description="Define grant cycles and deadlines.">
       {status ? (
         <div className="text-sm text-foreground/70" role="status" aria-live="polite">
           {status}
@@ -1892,6 +1998,7 @@ function GrantCyclesPanel({ meetings }: { meetings: MeetingLookup[] }) {
             type="number"
             step="0.01"
             min={0}
+            inputMode="decimal"
             value={form.max_amount}
             onChange={(event) => setForm((prev) => ({ ...prev, max_amount: event.target.value }))}
             className="mt-1 w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
@@ -1977,11 +2084,13 @@ function GrantCyclesPanel({ meetings }: { meetings: MeetingLookup[] }) {
 }
 
 function GrantApplicationsPanel({
+  sectionId,
   isFinanceAdmin,
   grantCycles,
   clubs,
   docs,
 }: {
+  sectionId?: string;
   isFinanceAdmin: boolean;
   grantCycles: GrantCycleLookup[];
   clubs: ClubLookup[];
@@ -2111,10 +2220,9 @@ function GrantApplicationsPanel({
   }
 
   async function reviewApplication(id: string, decision: "approved" | "denied") {
-    if (decision === "denied") {
-      const ok = window.confirm("Mark this grant application as denied?");
-      if (!ok) return;
-    }
+    const label = decision === "approved" ? "approved" : "denied";
+    const ok = window.confirm(`Mark this grant application as ${label}?`);
+    if (!ok) return;
 
     setStatus("Reviewing...");
     try {
@@ -2134,6 +2242,8 @@ function GrantApplicationsPanel({
   }
 
   async function markAwarded(id: string) {
+    const ok = window.confirm("Mark this grant application as awarded?");
+    if (!ok) return;
     setStatus("Marking awarded...");
     try {
       const { application } = await fetchJson<{ application: GrantApplication }>(
@@ -2148,6 +2258,8 @@ function GrantApplicationsPanel({
   }
 
   async function markExpended(id: string) {
+    const ok = window.confirm("Mark this grant application as expended?");
+    if (!ok) return;
     setStatus("Marking expended...");
     try {
       const { application } = await fetchJson<{ application: GrantApplication }>(
@@ -2162,7 +2274,7 @@ function GrantApplicationsPanel({
   }
 
   return (
-    <Section title="Grant Applications" description="Submit and review grant applications.">
+    <Section id={sectionId} title="Grant Applications" description="Submit and review grant applications.">
       {status ? (
         <div className="text-sm text-foreground/70" role="status" aria-live="polite">
           {status}
@@ -2236,6 +2348,7 @@ function GrantApplicationsPanel({
             type="number"
             step="0.01"
             min={0}
+            inputMode="decimal"
             value={form.amount_requested}
             onChange={(event) => setForm((prev) => ({ ...prev, amount_requested: event.target.value }))}
             className="mt-1 w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
@@ -2275,6 +2388,8 @@ function GrantApplicationsPanel({
               <input
                 type="number"
                 step="0.01"
+                min={0}
+                inputMode="decimal"
                 placeholder="Amount"
                 aria-label="Application line item amount"
                 value={item.amount}
@@ -2385,7 +2500,7 @@ function GrantApplicationsPanel({
   );
 }
 
-function FinanceExportsPanel() {
+function FinanceExportsPanel({ sectionId }: { sectionId?: string }) {
   const [month, setMonth] = useState<string>(new Date().toISOString().slice(0, 7));
   const [status, setStatus] = useState<string>("");
   const [docs, setDocs] = useState<DocRow[]>([]);
@@ -2441,7 +2556,7 @@ function FinanceExportsPanel() {
   }
 
   return (
-    <Section title="Finance Exports" description="Generate monthly PDF/CSV exports.">
+    <Section id={sectionId} title="Finance Exports" description="Generate monthly PDF/CSV exports.">
       {status ? (
         <div className="text-sm text-foreground/70" role="status" aria-live="polite">
           {status}

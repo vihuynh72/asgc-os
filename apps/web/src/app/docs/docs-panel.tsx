@@ -152,6 +152,31 @@ function formatVisibility(visibility: string): string {
   }
 }
 
+function formatDocErrorMessage(message: string): string {
+  switch (message) {
+    case "forbidden":
+      return "You do not have permission to update this document.";
+    case "doc_not_found":
+      return "Document not found.";
+    case "doc_deleted":
+      return "Document has been deleted.";
+    case "cannot_change_committee":
+      return "Committee cannot be changed for committee notes.";
+    case "cannot_change_meeting":
+      return "Meeting cannot be changed for agenda or minutes.";
+    case "committee_only_required":
+      return "Committee notes must remain committee-only.";
+    case "content_text_required":
+      return "Note content is required.";
+    case "content_text_not_allowed":
+      return "Note content is only allowed for committee notes.";
+    case "forbidden_visibility":
+      return "You do not have permission to set restricted visibility.";
+    default:
+      return message;
+  }
+}
+
 export function DocsPanel({
   initialDocs,
   committees,
@@ -170,7 +195,11 @@ export function DocsPanel({
   const [filterDocType, setFilterDocType] = useState<string>("");
   const [filterVisibility, setFilterVisibility] = useState<string>("");
   const [filterCommittee, setFilterCommittee] = useState<string>("");
+  const [filterMeeting, setFilterMeeting] = useState<string>("");
   const [filterQuery, setFilterQuery] = useState<string>("");
+  const [sortBy, setSortBy] = useState<string>("newest");
+  const [docPage, setDocPage] = useState<number>(1);
+  const [docPageSize, setDocPageSize] = useState<number>(10);
 
   // Upload state
   const [showUploadForm, setShowUploadForm] = useState<boolean>(false);
@@ -183,6 +212,16 @@ export function DocsPanel({
   const [newCommitteeId, setNewCommitteeId] = useState<string>("");
   const [newMeetingId, setNewMeetingId] = useState<string>("");
   const [newContentText, setNewContentText] = useState<string>("");
+
+  const [editingDocId, setEditingDocId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState<{
+    title: string;
+    description: string;
+    visibility: string;
+    committeeId: string;
+    contentText: string;
+  } | null>(null);
+  const [isSaving, setIsSaving] = useState<boolean>(false);
 
   const [expandedNoteId, setExpandedNoteId] = useState<string | null>(null);
   const [summariesByDocId, setSummariesByDocId] = useState<Record<string, DocSummary[]>>({});
@@ -227,6 +266,88 @@ export function DocsPanel({
     setShowUploadForm(false);
   }
 
+  function startEditing(doc: DocRow) {
+    setEditingDocId(doc.id);
+    setEditDraft({
+      title: doc.title ?? "",
+      description: doc.description ?? "",
+      visibility: doc.visibility ?? "internal",
+      committeeId: doc.committee_id ?? "",
+      contentText: doc.content_text ?? "",
+    });
+  }
+
+  function cancelEditing() {
+    setEditingDocId(null);
+    setEditDraft(null);
+  }
+
+  async function handleSave(doc: DocRow) {
+    if (!editDraft || isSaving) return;
+    const trimmedTitle = editDraft.title.trim();
+    if (!trimmedTitle) {
+      setStatus("Title required");
+      return;
+    }
+
+    const isNote = doc.doc_type === "committee_notes";
+    const isMeetingDoc = doc.doc_type === "minutes" || doc.doc_type === "agenda";
+
+    if (isNote && !editDraft.contentText.trim()) {
+      setStatus("Note content required");
+      return;
+    }
+
+    const nextVisibility = isNote ? "committee_only" : editDraft.visibility;
+    const nextCommitteeId = isNote ? doc.committee_id ?? "" : editDraft.committeeId;
+
+    if (nextVisibility === "committee_only" && !nextCommitteeId) {
+      setStatus("Committee required for committee-only visibility");
+      return;
+    }
+
+    const payload: {
+      title: string;
+      description: string | null;
+      visibility: string;
+      committee_id?: string | null;
+      content_text?: string;
+    } = {
+      title: trimmedTitle,
+      description: editDraft.description.trim() || null,
+      visibility: nextVisibility,
+    };
+
+    if (!isNote && !isMeetingDoc) {
+      payload.committee_id = editDraft.committeeId || null;
+    }
+
+    if (isNote) {
+      payload.content_text = editDraft.contentText.trim();
+    }
+
+    setIsSaving(true);
+    setStatus("Saving...");
+    try {
+      const { doc: updated } = await fetchJson<{ doc: DocRow }>(
+        `/api/docs/${encodeURIComponent(doc.id)}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        },
+      );
+
+      setDocs((prev) => prev.map((d) => (d.id === doc.id ? updated : d)));
+      setStatus("Saved");
+      cancelEditing();
+    } catch (err) {
+      setStatus(err instanceof Error ? formatDocErrorMessage(err.message) : "Save failed");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
   function handleFileSelected(file: File | null) {
     setUploadFile(file);
     if (!file) return;
@@ -244,6 +365,7 @@ export function DocsPanel({
       if (filterDocType && d.doc_type !== filterDocType) return false;
       if (filterVisibility && d.visibility !== filterVisibility) return false;
       if (filterCommittee && d.committee_id !== filterCommittee) return false;
+      if (filterMeeting && d.meeting_id !== filterMeeting) return false;
       if (query) {
         const committeeName = d.committee_id ? committeesById.get(d.committee_id)?.name ?? "" : "";
         const meetingTitle = d.meeting_id ? meetingsById.get(d.meeting_id)?.title ?? "" : "";
@@ -261,17 +383,55 @@ export function DocsPanel({
       }
       return true;
     });
-  }, [committeesById, docs, filterCommittee, filterDocType, filterQuery, filterVisibility, meetingsById]);
+  }, [
+    committeesById,
+    docs,
+    filterCommittee,
+    filterDocType,
+    filterMeeting,
+    filterQuery,
+    filterVisibility,
+    meetingsById,
+  ]);
+
+  const sortedDocs = useMemo(() => {
+    const items = [...filteredDocs];
+    switch (sortBy) {
+      case "oldest":
+        items.sort(
+          (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+        );
+        break;
+      case "title":
+        items.sort((a, b) => a.title.localeCompare(b.title));
+        break;
+      case "newest":
+      default:
+        items.sort(
+          (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+        );
+        break;
+    }
+    return items;
+  }, [filteredDocs, sortBy]);
+
+  const pageCount = Math.max(1, Math.ceil(sortedDocs.length / docPageSize));
+  const resolvedDocPage = Math.min(docPage, pageCount);
+  const paginatedDocs = useMemo(() => {
+    const start = (resolvedDocPage - 1) * docPageSize;
+    return sortedDocs.slice(start, start + docPageSize);
+  }, [docPageSize, resolvedDocPage, sortedDocs]);
 
   const reload = useCallback(async () => {
     const qs = new URLSearchParams();
     if (filterDocType) qs.set("doc_type", filterDocType);
     if (filterVisibility) qs.set("visibility", filterVisibility);
     if (filterCommittee) qs.set("committee_id", filterCommittee);
+    if (filterMeeting) qs.set("meeting_id", filterMeeting);
 
     const { docs: d } = await fetchJson<{ docs: DocRow[] }>(`/api/docs?${qs.toString()}`);
     setDocs(d);
-  }, [filterDocType, filterVisibility, filterCommittee]);
+  }, [filterDocType, filterVisibility, filterCommittee, filterMeeting]);
 
   async function handleUpload(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -444,6 +604,19 @@ export function DocsPanel({
     }
   }
 
+  async function handleCopy(text: string, label: string) {
+    if (!text) {
+      setStatus(`No ${label.toLowerCase()} to copy`);
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      setStatus(`${label} copied`);
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : `Failed to copy ${label.toLowerCase()}`);
+    }
+  }
+
   async function handleDelete(doc: DocRow) {
     if (!confirm(`Delete "${doc.title}"?`)) return;
 
@@ -547,7 +720,10 @@ export function DocsPanel({
       <div className="flex flex-wrap items-center gap-3">
         <input
           value={filterQuery}
-          onChange={(e: ChangeEvent<HTMLInputElement>) => setFilterQuery(e.target.value)}
+          onChange={(e: ChangeEvent<HTMLInputElement>) => {
+            setFilterQuery(e.target.value);
+            setDocPage(1);
+          }}
           className="w-56 rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
           placeholder="Search docs…"
           aria-label="Search documents"
@@ -555,7 +731,10 @@ export function DocsPanel({
 
         <select
           value={filterDocType}
-          onChange={(e) => setFilterDocType(e.target.value)}
+          onChange={(e) => {
+            setFilterDocType(e.target.value);
+            setDocPage(1);
+          }}
           className="rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
         >
           <option value="">All Types</option>
@@ -574,7 +753,10 @@ export function DocsPanel({
 
         <select
           value={filterVisibility}
-          onChange={(e) => setFilterVisibility(e.target.value)}
+          onChange={(e) => {
+            setFilterVisibility(e.target.value);
+            setDocPage(1);
+          }}
           className="rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
         >
           <option value="">All Visibility</option>
@@ -586,7 +768,10 @@ export function DocsPanel({
 
         <select
           value={filterCommittee}
-          onChange={(e) => setFilterCommittee(e.target.value)}
+          onChange={(e) => {
+            setFilterCommittee(e.target.value);
+            setDocPage(1);
+          }}
           className="rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
         >
           <option value="">All Committees</option>
@@ -595,6 +780,36 @@ export function DocsPanel({
               {c.name}
             </option>
           ))}
+        </select>
+
+        <select
+          value={filterMeeting}
+          onChange={(e) => {
+            setFilterMeeting(e.target.value);
+            setDocPage(1);
+          }}
+          className="rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
+        >
+          <option value="">All Meetings</option>
+          {meetings.map((meeting) => (
+            <option key={meeting.id} value={meeting.id}>
+              {new Date(meeting.starts_at).toLocaleDateString()} - {meeting.title}
+            </option>
+          ))}
+        </select>
+
+        <select
+          value={sortBy}
+          onChange={(e) => {
+            setSortBy(e.target.value);
+            setDocPage(1);
+          }}
+          className="rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
+          aria-label="Sort documents"
+        >
+          <option value="newest">Newest first</option>
+          <option value="oldest">Oldest first</option>
+          <option value="title">Title (A-Z)</option>
         </select>
 
         <Button
@@ -606,8 +821,10 @@ export function DocsPanel({
             setFilterDocType("");
             setFilterVisibility("");
             setFilterCommittee("");
+            setFilterMeeting("");
+            setDocPage(1);
           }}
-          disabled={!filterQuery && !filterDocType && !filterVisibility && !filterCommittee}
+          disabled={!filterQuery && !filterDocType && !filterVisibility && !filterCommittee && !filterMeeting}
         >
           Clear Filters
         </Button>
@@ -633,16 +850,49 @@ export function DocsPanel({
 
       <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-foreground/60">
         <span>
-          Showing {filteredDocs.length} of {docs.length} documents
+          Showing {paginatedDocs.length} of {filteredDocs.length} filtered ({docs.length} total)
         </span>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={() => void reload()}
-        >
-          Refresh list
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="flex items-center gap-2">
+            <span>Rows</span>
+            <select
+              className="h-8 rounded border border-foreground/20 bg-background px-2 text-xs"
+              value={docPageSize}
+              onChange={(e: ChangeEvent<HTMLSelectElement>) => {
+                setDocPageSize(Number(e.target.value));
+                setDocPage(1);
+              }}
+            >
+              <option value={10}>10</option>
+              <option value={25}>25</option>
+              <option value={50}>50</option>
+            </select>
+          </label>
+          <span>
+            Page {resolvedDocPage} of {pageCount}
+          </span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => setDocPage(Math.max(1, resolvedDocPage - 1))}
+            disabled={resolvedDocPage <= 1}
+          >
+            Prev
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => setDocPage(Math.min(pageCount, resolvedDocPage + 1))}
+            disabled={resolvedDocPage >= pageCount}
+          >
+            Next
+          </Button>
+          <Button type="button" variant="ghost" size="sm" onClick={() => void reload()}>
+            Refresh list
+          </Button>
+        </div>
       </div>
 
       {/* Upload form */}
@@ -849,13 +1099,16 @@ export function DocsPanel({
         </div>
       ) : (
         <div className="space-y-3">
-          {filteredDocs.map((doc) => {
+          {paginatedDocs.map((doc) => {
             const isNote = doc.doc_type === "committee_notes";
+            const isMeetingDoc = doc.doc_type === "minutes" || doc.doc_type === "agenda";
             const isExpanded = expandedNoteId === doc.id;
             const summaries = summariesByDocId[doc.id] ?? [];
             const latestSummary = summaries[0] ?? null;
             const suggestedTasks = suggestedByDocId[doc.id] ?? [];
             const isBusy = noteBusyId === doc.id;
+            const isEditing = editingDocId === doc.id;
+            const edit = isEditing ? editDraft : null;
 
             return (
               <div key={doc.id} className="rounded-lg border border-foreground/10 p-4">
@@ -886,10 +1139,146 @@ export function DocsPanel({
                       <div className="mt-2 text-sm text-foreground/80">{doc.description}</div>
                     ) : null}
 
+                    {isEditing && edit ? (
+                      <div className="mt-3 space-y-3 rounded-lg border border-foreground/10 bg-foreground/5 p-3">
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <div>
+                            <label className="mb-1 block text-xs text-foreground/70">Title *</label>
+                            <input
+                              type="text"
+                              value={edit.title}
+                              onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                                setEditDraft((prev) => (prev ? { ...prev, title: e.target.value } : prev))
+                              }
+                              className="w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="mb-1 block text-xs text-foreground/70">Visibility</label>
+                            <select
+                              value={isNote ? "committee_only" : edit.visibility}
+                              onChange={(e) =>
+                                setEditDraft((prev) =>
+                                  prev ? { ...prev, visibility: e.target.value } : prev,
+                                )
+                              }
+                              disabled={isNote}
+                              className="w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
+                            >
+                              {isNote ? (
+                                <option value="committee_only">Committee Only</option>
+                              ) : (
+                                <>
+                                  <option value="public">Public</option>
+                                  <option value="internal">Internal</option>
+                                  {canUseRestricted || edit.visibility === "restricted" ? (
+                                    <option value="restricted">Restricted</option>
+                                  ) : null}
+                                  <option value="committee_only">Committee Only</option>
+                                </>
+                              )}
+                            </select>
+                          </div>
+
+                          <div>
+                            <label className="mb-1 block text-xs text-foreground/70">
+                              Committee {isNote ? "*" : "(optional)"}
+                            </label>
+                            <select
+                              value={edit.committeeId}
+                              onChange={(e) =>
+                                setEditDraft((prev) =>
+                                  prev ? { ...prev, committeeId: e.target.value } : prev,
+                                )
+                              }
+                              disabled={isNote || isMeetingDoc}
+                              className="w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
+                            >
+                              <option value="">None</option>
+                              {committees.map((c) => (
+                                <option key={c.id} value={c.id}>
+                                  {c.name}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div className="sm:col-span-2">
+                            <label className="mb-1 block text-xs text-foreground/70">
+                              Description (optional)
+                            </label>
+                            <textarea
+                              value={edit.description}
+                              onChange={(e: ChangeEvent<HTMLTextAreaElement>) =>
+                                setEditDraft((prev) =>
+                                  prev ? { ...prev, description: e.target.value } : prev,
+                                )
+                              }
+                              rows={2}
+                              className="w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
+                            />
+                          </div>
+
+                          {isNote ? (
+                            <div className="sm:col-span-2">
+                              <label className="mb-1 block text-xs text-foreground/70">Note *</label>
+                              <textarea
+                                value={edit.contentText}
+                                onChange={(e: ChangeEvent<HTMLTextAreaElement>) =>
+                                  setEditDraft((prev) =>
+                                    prev ? { ...prev, contentText: e.target.value } : prev,
+                                  )
+                                }
+                                rows={5}
+                                className="w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
+                              />
+                            </div>
+                          ) : null}
+                        </div>
+
+                        {isMeetingDoc ? (
+                          <div className="text-xs text-foreground/60">
+                            Meeting-linked docs cannot change committee or meeting.
+                          </div>
+                        ) : null}
+
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={cancelEditing}
+                            disabled={isSaving}
+                          >
+                            Cancel
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={() => void handleSave(doc)}
+                            disabled={isSaving}
+                          >
+                            {isSaving ? "Saving..." : "Save"}
+                          </Button>
+                        </div>
+                      </div>
+                    ) : null}
+
                     {isNote && isExpanded ? (
                       <div className="mt-4 space-y-4 rounded-lg bg-foreground/5 p-4 text-sm">
                         <div>
-                          <div className="text-xs font-medium text-foreground/70">Note</div>
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="text-xs font-medium text-foreground/70">Note</div>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => void handleCopy(doc.content_text ?? "", "Note")}
+                            >
+                              Copy
+                            </Button>
+                          </div>
                           <div className="mt-2 whitespace-pre-wrap">
                             {doc.content_text ?? "No content."}
                           </div>
@@ -952,7 +1341,7 @@ export function DocsPanel({
                     ) : null}
                   </div>
 
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2">
                     {isNote ? (
                       <Button
                         type="button"
@@ -976,7 +1365,25 @@ export function DocsPanel({
                       type="button"
                       variant="outline"
                       size="sm"
+                      onClick={() => void handleCopy(doc.id, "Document ID")}
+                    >
+                      Copy ID
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => startEditing(doc)}
+                      disabled={isEditing || isSaving}
+                    >
+                      Edit
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
                       onClick={() => handleDelete(doc)}
+                      disabled={isSaving}
                     >
                       Delete
                     </Button>

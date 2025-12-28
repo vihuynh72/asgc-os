@@ -51,6 +51,9 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     .single();
 
   if (error) {
+    if (error.code === "23505" || error.message.includes("budget_lines_year_name_active_unique")) {
+      return NextResponse.json({ error: "budget_line_duplicate" }, { status: 409 });
+    }
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
