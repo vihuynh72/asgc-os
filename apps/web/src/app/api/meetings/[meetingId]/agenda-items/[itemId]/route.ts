@@ -58,7 +58,17 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     }
     const deadline = Array.isArray(deadlineInfo) ? deadlineInfo[0] : deadlineInfo;
     if (deadline?.is_submission_open === false) {
-      return NextResponse.json({ error: "submission_closed" }, { status: 403 });
+      const [{ data: item, error: itemErr }, { data: isAdmin, error: adminErr }] = await Promise.all([
+        supabase.from("agenda_items").select("state").eq("id", itemId).maybeSingle(),
+        supabase.rpc("is_admin", { _uid: user.id }),
+      ]);
+      const isAdminUser = !adminErr && !!isAdmin;
+      if (itemErr) {
+        return NextResponse.json({ error: itemErr.message }, { status: 400 });
+      }
+      if (!isAdminUser && item?.state !== "submitted") {
+        return NextResponse.json({ error: "submission_closed" }, { status: 403 });
+      }
     }
   }
 
@@ -69,6 +79,8 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     recommended_motion?: string;
     fiscal_impact?: string;
     attachments_json?: unknown[];
+    is_late?: boolean;
+    sort_order?: number;
   };
 
   try {
@@ -85,6 +97,8 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     _recommended_motion: body.recommended_motion ?? null,
     _fiscal_impact: body.fiscal_impact ?? null,
     _attachments_json: body.attachments_json ?? null,
+    _is_late: typeof body.is_late === "boolean" ? body.is_late : null,
+    _sort_order: typeof body.sort_order === "number" ? body.sort_order : null,
   });
 
   if (error) {

@@ -1,8 +1,10 @@
 "use client";
 
-import { useMemo, useState, type ChangeEvent, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from "react";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { copyTextWithFallback } from "@/lib/clipboard";
 
 type CommitteeRow = {
   id: string;
@@ -48,6 +50,16 @@ type AssigneeRow = {
   role_key: string;
 };
 
+type TaskPrefill = {
+  title?: string;
+  description?: string;
+  committeeId?: string;
+  priority?: TaskRow["priority"] | "";
+  due?: string;
+  assigneeId?: string;
+  source?: string;
+};
+
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init);
   const data = (await res.json().catch(() => ({}))) as T;
@@ -81,16 +93,60 @@ function isTaskOverdue(task: TaskRow): boolean {
   return due.getTime() < Date.now();
 }
 
+function isTaskDueSoon(task: TaskRow, days: number = 7): boolean {
+  if (!task.due_at || task.status === "done") return false;
+  const due = new Date(task.due_at).getTime();
+  if (Number.isNaN(due)) return false;
+  const now = Date.now();
+  const windowMs = days * 24 * 60 * 60 * 1000;
+  return due >= now && due <= now + windowMs;
+}
+
+function formatTaskPriority(priority: TaskRow["priority"]): string {
+  if (priority === "high") return "High";
+  if (priority === "medium") return "Medium";
+  return "Low";
+}
+
+function priorityBadgeClass(priority: TaskRow["priority"]): string {
+  if (priority === "high") return "bg-red-100 text-red-700";
+  if (priority === "medium") return "bg-yellow-100 text-yellow-700";
+  return "bg-green-100 text-green-700";
+}
+
+function formatTaskStatus(status: TaskRow["status"]): string {
+  if (status === "todo") return "To do";
+  if (status === "doing") return "Doing";
+  return "Done";
+}
+
+function statusBadgeClass(status: TaskRow["status"]): string {
+  if (status === "todo") return "bg-gray-100 text-gray-700";
+  if (status === "doing") return "bg-blue-100 text-blue-700";
+  return "bg-green-100 text-green-700";
+}
+
+function toCsvValue(value: string | number | null | undefined): string {
+  if (value === null || value === undefined) return "";
+  const raw = String(value);
+  if (raw.includes(",") || raw.includes("\"") || raw.includes("\n")) {
+    return `"${raw.replace(/\"/g, "\"\"")}"`;
+  }
+  return raw;
+}
+
 export function TasksPanel({
   initialTasks,
   initialCommittees,
   projectIdFilter,
   viewerUserId,
+  prefill,
 }: {
   initialTasks: TaskRow[];
   initialCommittees: CommitteeRow[];
   projectIdFilter: string;
   viewerUserId: string;
+  prefill?: TaskPrefill;
 }) {
   const [tasks, setTasks] = useState<TaskRow[]>(initialTasks);
   const [committees, setCommittees] = useState<CommitteeRow[]>(initialCommittees);
@@ -103,7 +159,8 @@ export function TasksPanel({
   const [filterPriority, setFilterPriority] = useState<TaskRow["priority"] | "">("");
   const [filterAssignee, setFilterAssignee] = useState<"" | "me" | "assigned" | "unassigned">("");
   const [filterOverdueOnly, setFilterOverdueOnly] = useState<boolean>(false);
-  const [sortKey, setSortKey] = useState<"updated" | "due" | "title">("updated");
+  const [filterDueSoonOnly, setFilterDueSoonOnly] = useState<boolean>(false);
+  const [sortKey, setSortKey] = useState<"updated" | "due" | "title" | "priority">("updated");
   const [taskPage, setTaskPage] = useState<number>(1);
   const [taskPageSize, setTaskPageSize] = useState<number>(10);
 
@@ -120,12 +177,46 @@ export function TasksPanel({
   const [newCommentByTaskId, setNewCommentByTaskId] = useState<Record<string, string>>({});
   const [newAttachmentUrlByTaskId, setNewAttachmentUrlByTaskId] = useState<Record<string, string>>({});
   const [newAttachmentLabelByTaskId, setNewAttachmentLabelByTaskId] = useState<Record<string, string>>({});
+  const [prefillDismissed, setPrefillDismissed] = useState<boolean>(false);
+  const prefillAppliedRef = useRef(false);
 
   const committeesById = useMemo(() => {
     const m = new Map<string, CommitteeRow>();
     for (const c of committees) m.set(c.id, c);
     return m;
   }, [committees]);
+
+  const prefillActive = Boolean(
+    prefill?.title ||
+      prefill?.description ||
+      prefill?.committeeId ||
+      prefill?.priority ||
+      prefill?.due ||
+      prefill?.assigneeId ||
+      prefill?.source,
+  );
+  const prefillSourceLabel =
+    prefill?.source === "agenda-item"
+      ? "agenda item"
+      : prefill?.source === "meeting"
+        ? "meeting"
+        : "link";
+  const prefillCommitteeMissing = Boolean(
+    prefill?.committeeId && !committees.some((c) => c.id === prefill.committeeId),
+  );
+
+  useEffect(() => {
+    if (!prefill || prefillAppliedRef.current) return;
+    if (prefill.title) setNewTitle(prefill.title);
+    if (prefill.description) setNewDescription(prefill.description);
+    if (prefill.priority) setNewPriority(prefill.priority as TaskRow["priority"]);
+    if (prefill.due) setNewDue(prefill.due);
+    if (prefill.assigneeId) setNewAssigneeId(prefill.assigneeId);
+    if (prefill.committeeId && committees.some((c) => c.id === prefill.committeeId)) {
+      setNewCommitteeId(prefill.committeeId);
+    }
+    prefillAppliedRef.current = true;
+  }, [committees, prefill]);
 
   const filteredTasks = useMemo(() => {
     const query = filterQuery.trim().toLowerCase();
@@ -152,6 +243,9 @@ export function TasksPanel({
     if (filterOverdueOnly) {
       next = next.filter((t) => isTaskOverdue(t));
     }
+    if (filterDueSoonOnly) {
+      next = next.filter((t) => isTaskDueSoon(t));
+    }
     if (query) {
       next = next.filter((t) => {
         const committeeName = committeesById.get(t.committee_id)?.name ?? "";
@@ -174,6 +268,16 @@ export function TasksPanel({
       });
       return sorted;
     }
+    if (sortKey === "priority") {
+      const order: Record<TaskRow["priority"], number> = { high: 0, medium: 1, low: 2 };
+      sorted.sort((a, b) => {
+        const aRank = order[a.priority];
+        const bRank = order[b.priority];
+        if (aRank !== bRank) return aRank - bRank;
+        return a.title.localeCompare(b.title);
+      });
+      return sorted;
+    }
 
     sorted.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
     return sorted;
@@ -181,6 +285,7 @@ export function TasksPanel({
     committeesById,
     filterAssignee,
     filterCommitteeId,
+    filterDueSoonOnly,
     filterOverdueOnly,
     filterPriority,
     filterQuery,
@@ -191,6 +296,16 @@ export function TasksPanel({
   ]);
 
   const overdueCount = useMemo(() => filteredTasks.filter(isTaskOverdue).length, [filteredTasks]);
+  const dueSoonCount = useMemo(() => filteredTasks.filter((t) => isTaskDueSoon(t)).length, [filteredTasks]);
+  const statusCounts = useMemo(() => {
+    const counts = { todo: 0, doing: 0, done: 0 };
+    for (const task of filteredTasks) {
+      if (task.status === "todo") counts.todo += 1;
+      else if (task.status === "doing") counts.doing += 1;
+      else if (task.status === "done") counts.done += 1;
+    }
+    return counts;
+  }, [filteredTasks]);
   const pageCount = Math.max(1, Math.ceil(filteredTasks.length / taskPageSize));
   const resolvedTaskPage = Math.min(taskPage, pageCount);
   const paginatedTasks = useMemo(() => {
@@ -270,8 +385,11 @@ export function TasksPanel({
       setCommentsByTaskId((prev) => ({ ...prev, [taskId]: [...(prev[taskId] ?? []), comment] }));
       setNewCommentByTaskId((prev) => ({ ...prev, [taskId]: "" }));
       setStatus("");
+      toast.success("Comment posted");
     } catch (err) {
-      setStatus(err instanceof Error ? err.message : "Failed to post comment");
+      const msg = err instanceof Error ? err.message : "Failed to post comment";
+      setStatus(msg);
+      toast.error(msg);
     }
   }
 
@@ -288,8 +406,11 @@ export function TasksPanel({
         [taskId]: (prev[taskId] ?? []).filter((c) => c.id !== commentId),
       }));
       setStatus("");
+      toast.success("Comment deleted");
     } catch (err) {
-      setStatus(err instanceof Error ? err.message : "Failed to remove comment");
+      const msg = err instanceof Error ? err.message : "Failed to remove comment";
+      setStatus(msg);
+      toast.error(msg);
     }
   }
 
@@ -313,8 +434,11 @@ export function TasksPanel({
       setNewAttachmentUrlByTaskId((prev) => ({ ...prev, [taskId]: "" }));
       setNewAttachmentLabelByTaskId((prev) => ({ ...prev, [taskId]: "" }));
       setStatus("");
+      toast.success("Attachment added");
     } catch (err) {
-      setStatus(err instanceof Error ? err.message : "Failed to add link");
+      const msg = err instanceof Error ? err.message : "Failed to add link";
+      setStatus(msg);
+      toast.error(msg);
     }
   }
 
@@ -331,8 +455,11 @@ export function TasksPanel({
         [taskId]: (prev[taskId] ?? []).filter((a) => a.id !== attachmentId),
       }));
       setStatus("");
+      toast.success("Attachment removed");
     } catch (err) {
-      setStatus(err instanceof Error ? err.message : "Failed to remove link");
+      const msg = err instanceof Error ? err.message : "Failed to remove link";
+      setStatus(msg);
+      toast.error(msg);
     }
   }
 
@@ -378,9 +505,12 @@ export function TasksPanel({
       setNewDescription("");
       setNewDue("");
       setStatus("");
+      toast.success("Task created");
       await reload();
     } catch (err) {
-      setStatus(err instanceof Error ? err.message : "Failed to create task");
+      const msg = err instanceof Error ? err.message : "Failed to create task";
+      setStatus(msg);
+      toast.error(msg);
     }
   }
 
@@ -394,8 +524,23 @@ export function TasksPanel({
       });
       setTasks((prev) => prev.map((t) => (t.id === task.id ? task : t)));
       setStatus("");
+      const label =
+        "status" in patch
+          ? "Status updated"
+          : "assignedTo" in patch
+            ? "Assignee updated"
+            : "priority" in patch
+              ? "Priority updated"
+              : "dueAt" in patch
+                ? "Due date updated"
+                : "description" in patch
+                  ? "Description updated"
+                  : "Task updated";
+      toast.success(label);
     } catch (err) {
-      setStatus(err instanceof Error ? err.message : "Failed to save");
+      const msg = err instanceof Error ? err.message : "Failed to save";
+      setStatus(msg);
+      toast.error(msg);
     }
   }
 
@@ -408,9 +553,78 @@ export function TasksPanel({
       await fetchJson<{ ok: true }>(`/api/tasks/${encodeURIComponent(taskId)}`, { method: "DELETE" });
       setTasks((prev) => prev.filter((t) => t.id !== taskId));
       setStatus("");
+      toast.success("Task deleted");
     } catch (err) {
-      setStatus(err instanceof Error ? err.message : "Failed to delete");
+      const msg = err instanceof Error ? err.message : "Failed to delete";
+      setStatus(msg);
+      toast.error(msg);
     }
+  }
+
+  function buildTasksCsv(list: TaskRow[]) {
+    const headers = ["Title", "Status", "Priority", "Committee", "Due Date", "Assignee", "Description", "Updated At"];
+    const rows = list.map((task) => [
+      task.title,
+      task.status,
+      task.priority,
+      committeesById.get(task.committee_id)?.name ?? task.committee_id,
+      task.due_at ?? "",
+      task.assigned_to ?? "",
+      task.description ?? "",
+      task.updated_at,
+    ]);
+    return [headers, ...rows].map((row) => row.map(toCsvValue).join(",")).join("\n");
+  }
+
+  function buildTaskCopyText(list: TaskRow[]) {
+    return list
+      .map((task) => {
+        const due = task.due_at ? `Due ${formatDateInputValue(task.due_at)}` : "No due date";
+        const committee = committeesById.get(task.committee_id)?.name ?? task.committee_id;
+        return `${task.title} • ${formatTaskStatus(task.status)} • ${formatTaskPriority(task.priority)} • ${committee} • ${due}`;
+      })
+      .join("\n");
+  }
+
+  async function handleCopyTaskList() {
+    if (filteredTasks.length === 0) {
+      toast.error("No tasks to copy");
+      return;
+    }
+    const ok = await copyTextWithFallback(buildTaskCopyText(filteredTasks), { promptLabel: "Copy task list" });
+    if (ok) {
+      toast.success("Task list copied");
+    } else {
+      toast.info("Clipboard blocked. Use the prompt to copy.");
+    }
+  }
+
+  function handleDownloadTasksCsv() {
+    if (filteredTasks.length === 0) {
+      toast.error("No tasks to export");
+      return;
+    }
+    const csv = buildTasksCsv(filteredTasks);
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `tasks_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    toast.success("Tasks CSV downloaded");
+  }
+
+  function clearPrefill() {
+    setNewTitle("");
+    setNewDescription("");
+    setNewPriority("medium");
+    setNewDue("");
+    setNewAssigneeId(viewerUserId);
+    if (committees[0]?.id) setNewCommitteeId(committees[0].id);
+    setPrefillDismissed(true);
   }
 
   return (
@@ -427,10 +641,36 @@ export function TasksPanel({
           <p className="text-sm text-foreground/70">Committee-scoped. Your access is enforced by RLS.</p>
         </div>
 
+        {prefillActive && !prefillDismissed ? (
+          <div className="rounded-md border border-foreground/10 bg-foreground/5 px-3 py-2 text-sm">
+            <div className="font-medium">Prefilled from {prefillSourceLabel}</div>
+            <div className="mt-1 text-xs text-foreground/70">
+              Review the fields below before creating the task.
+            </div>
+            {prefillCommitteeMissing ? (
+              <div className="mt-1 text-xs text-red-600">
+                Committee access missing for this prefill. Choose a committee you belong to.
+              </div>
+            ) : null}
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <Button size="sm" variant="outline" onClick={clearPrefill}>
+                Clear prefill
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => document.getElementById("task-create-form")?.scrollIntoView({ behavior: "smooth" })}
+              >
+                Jump to form
+              </Button>
+            </div>
+          </div>
+        ) : null}
+
         {committees.length === 0 ? (
           <div className="rounded-md border px-3 py-2 text-sm text-foreground/70">No committee memberships found.</div>
         ) : (
-          <form className="grid gap-3 md:grid-cols-5" onSubmit={onCreateTask}>
+          <form id="task-create-form" className="grid gap-3 md:grid-cols-5" onSubmit={onCreateTask}>
             <label className="space-y-1 text-sm md:col-span-2">
               <div className="text-foreground/70">Committee</div>
               <select
@@ -533,15 +773,25 @@ export function TasksPanel({
           <div className="grid gap-3 md:grid-cols-7">
             <label className="space-y-1 text-sm md:col-span-2">
               <div className="text-foreground/70">Search</div>
-              <input
-                className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-                value={filterQuery}
-                onChange={(e: ChangeEvent<HTMLInputElement>) => {
-                  setFilterQuery(e.target.value);
-                  setTaskPage(1);
-                }}
-                placeholder="Title, description, committee…"
-              />
+              <div className="flex items-center gap-2">
+                <input
+                  className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                  value={filterQuery}
+                  onChange={(e: ChangeEvent<HTMLInputElement>) => {
+                    setFilterQuery(e.target.value);
+                    setTaskPage(1);
+                  }}
+                  placeholder="Title, description, committee…"
+                />
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setFilterQuery("")}
+                  disabled={!filterQuery.trim()}
+                >
+                  Clear
+                </Button>
+              </div>
             </label>
 
             <label className="space-y-1 text-sm">
@@ -627,6 +877,7 @@ export function TasksPanel({
                 <option value="updated">Recently updated</option>
                 <option value="due">Due date</option>
                 <option value="title">Title</option>
+                <option value="priority">Priority</option>
               </select>
             </label>
           </div>
@@ -637,19 +888,73 @@ export function TasksPanel({
                 Showing {paginatedTasks.length} of {filteredTasks.length} filtered ({tasks.length} total)
               </span>
               <span>{overdueCount > 0 ? `${overdueCount} overdue` : "No overdue tasks"}</span>
+              <span>{dueSoonCount > 0 ? `${dueSoonCount} due soon` : "No due soon tasks"}</span>
+              <span>
+                To do {statusCounts.todo} • Doing {statusCounts.doing} • Done {statusCounts.done}
+              </span>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <label className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={filterOverdueOnly}
-                  onChange={(e: ChangeEvent<HTMLInputElement>) => {
-                    setFilterOverdueOnly(e.target.checked);
+              <div className="flex flex-wrap items-center gap-1">
+                <span className="text-foreground/50">Quick filters</span>
+                <Button
+                  variant={filterOverdueOnly ? "default" : "ghost"}
+                  size="sm"
+                  onClick={() => {
+                    setFilterOverdueOnly((prev) => {
+                      const next = !prev;
+                      if (next) setFilterDueSoonOnly(false);
+                      return next;
+                    });
                     setTaskPage(1);
                   }}
-                />
-                <span>Overdue only</span>
-              </label>
+                >
+                  Overdue
+                </Button>
+                <Button
+                  variant={filterDueSoonOnly ? "default" : "ghost"}
+                  size="sm"
+                  onClick={() => {
+                    setFilterDueSoonOnly((prev) => {
+                      const next = !prev;
+                      if (next) setFilterOverdueOnly(false);
+                      return next;
+                    });
+                    setTaskPage(1);
+                  }}
+                >
+                  Due soon
+                </Button>
+                <Button
+                  variant={filterAssignee === "me" ? "default" : "ghost"}
+                  size="sm"
+                  onClick={() => {
+                    setFilterAssignee((prev) => (prev === "me" ? "" : "me"));
+                    setTaskPage(1);
+                  }}
+                >
+                  Assigned to me
+                </Button>
+                <Button
+                  variant={filterPriority === "high" ? "default" : "ghost"}
+                  size="sm"
+                  onClick={() => {
+                    setFilterPriority((prev) => (prev === "high" ? "" : "high"));
+                    setTaskPage(1);
+                  }}
+                >
+                  High priority
+                </Button>
+                <Button
+                  variant={filterAssignee === "unassigned" ? "default" : "ghost"}
+                  size="sm"
+                  onClick={() => {
+                    setFilterAssignee((prev) => (prev === "unassigned" ? "" : "unassigned"));
+                    setTaskPage(1);
+                  }}
+                >
+                  Unassigned
+                </Button>
+              </div>
               <label className="flex items-center gap-2">
                 <span>Rows</span>
                 <select
@@ -687,6 +992,12 @@ export function TasksPanel({
               <Button variant="ghost" size="sm" onClick={() => void reload()}>
                 Refresh list
               </Button>
+              <Button variant="ghost" size="sm" onClick={() => void handleCopyTaskList()}>
+                Copy list
+              </Button>
+              <Button variant="ghost" size="sm" onClick={handleDownloadTasksCsv}>
+                Export CSV
+              </Button>
               <Button
                 variant="ghost"
                 size="sm"
@@ -697,6 +1008,7 @@ export function TasksPanel({
                   setFilterPriority("");
                   setFilterAssignee("");
                   setFilterOverdueOnly(false);
+                  setFilterDueSoonOnly(false);
                   setSortKey("updated");
                   setTaskPage(1);
                 }}
@@ -707,6 +1019,7 @@ export function TasksPanel({
                   !filterPriority &&
                   !filterAssignee &&
                   !filterOverdueOnly &&
+                  !filterDueSoonOnly &&
                   sortKey === "updated"
                 }
               >
@@ -729,6 +1042,7 @@ export function TasksPanel({
                 const comments = commentsByTaskId[t.id] ?? [];
                 const attachments = attachmentsByTaskId[t.id] ?? [];
                 const overdue = isTaskOverdue(t);
+                const dueSoon = !overdue && isTaskDueSoon(t);
                 return (
                   <div key={t.id} className="px-3 py-2">
                     <div className="flex flex-wrap items-center justify-between gap-3">
@@ -736,11 +1050,23 @@ export function TasksPanel({
                         <div className="truncate text-sm font-medium">{t.title}</div>
                         <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-foreground/70">
                           <span>{committee ? committee.name : t.committee_id}</span>
+                          <span className={`rounded px-1.5 py-0.5 text-[11px] ${statusBadgeClass(t.status)}`}>
+                            {formatTaskStatus(t.status)}
+                          </span>
+                          <span className={`rounded px-1.5 py-0.5 text-[11px] ${priorityBadgeClass(t.priority)}`}>
+                            {formatTaskPriority(t.priority)}
+                          </span>
                           {t.due_at ? <span>Due {formatDateInputValue(t.due_at)}</span> : null}
                           <span>{t.assigned_to ? taskAssigneeLabel(t) : "Unassigned"}</span>
+                          <span>Updated {formatDateInputValue(t.updated_at)}</span>
                           {overdue ? (
                             <span className="rounded bg-red-500/10 px-1.5 py-0.5 text-[11px] text-red-600">
                               Overdue
+                            </span>
+                          ) : null}
+                          {dueSoon ? (
+                            <span className="rounded bg-yellow-100 px-1.5 py-0.5 text-[11px] text-yellow-700">
+                              Due soon
                             </span>
                           ) : null}
                         </div>

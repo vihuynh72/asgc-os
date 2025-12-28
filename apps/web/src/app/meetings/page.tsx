@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { PageShell } from "@/components/page-shell";
 import { Button } from "@/components/ui/button";
+import { copyTextWithFallback } from "@/lib/clipboard";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 
 type Meeting = {
@@ -80,6 +81,30 @@ function formatRelativeTime(iso: string): string {
   return rtf.format(days, "day");
 }
 
+function formatDateOnly(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function addDays(date: Date, days: number): Date {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function isStartingSoon(iso: string, windowMinutes = 120): boolean {
+  const start = new Date(iso).getTime();
+  if (Number.isNaN(start)) return false;
+  const diffMinutes = Math.round((start - Date.now()) / 60000);
+  return diffMinutes >= 0 && diffMinutes <= windowMinutes;
+}
+
+function complianceBadgeClass(posted: boolean): string {
+  return posted ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700";
+}
+
 function escapeIcsText(text: string): string {
   return text
     .replace(/\\/g, "\\\\")
@@ -147,6 +172,8 @@ export default function MeetingsPage() {
   const [meetingStatusFilter, setMeetingStatusFilter] = useState("all");
   const [meetingScopeFilter, setMeetingScopeFilter] = useState<"all" | "committee" | "general">("all");
   const [meetingSort, setMeetingSort] = useState<"upcoming" | "recent" | "title">("upcoming");
+  const [meetingStartDateFilter, setMeetingStartDateFilter] = useState("");
+  const [meetingEndDateFilter, setMeetingEndDateFilter] = useState("");
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [filterRemoteOnly, setFilterRemoteOnly] = useState(false);
   const [filterLivestreamOnly, setFilterLivestreamOnly] = useState(false);
@@ -214,11 +241,23 @@ export default function MeetingsPage() {
 
   const filteredMeetings = useMemo(() => {
     const query = meetingSearch.trim().toLowerCase();
+    const startFilterTs = meetingStartDateFilter
+      ? new Date(`${meetingStartDateFilter}T00:00:00`).getTime()
+      : null;
+    const endFilterTs = meetingEndDateFilter
+      ? new Date(`${meetingEndDateFilter}T23:59:59`).getTime()
+      : null;
     const filtered = meetings.filter((meeting) => {
       if (meetingTypeFilter !== "all" && meeting.meeting_type !== meetingTypeFilter) return false;
       if (meetingStatusFilter !== "all" && meeting.status !== meetingStatusFilter) return false;
       if (meetingScopeFilter === "committee" && !meeting.committee_id) return false;
       if (meetingScopeFilter === "general" && meeting.committee_id) return false;
+      if (startFilterTs || endFilterTs) {
+        const meetingStart = new Date(meeting.starts_at).getTime();
+        if (Number.isNaN(meetingStart)) return false;
+        if (startFilterTs && !Number.isNaN(startFilterTs) && meetingStart < startFilterTs) return false;
+        if (endFilterTs && !Number.isNaN(endFilterTs) && meetingStart > endFilterTs) return false;
+      }
       if (filterRemoteOnly && !meeting.remote_url) return false;
       if (filterLivestreamOnly && !meeting.livestream_url) return false;
       if (filterCommentOnly && !meeting.public_comment_instructions) return false;
@@ -255,7 +294,9 @@ export default function MeetingsPage() {
     meetingScopeFilter,
     meetingSearch,
     meetingSort,
+    meetingStartDateFilter,
     meetingStatusFilter,
+    meetingEndDateFilter,
     meetingTypeFilter,
     meetings,
   ]);
@@ -293,6 +334,8 @@ export default function MeetingsPage() {
     meetingStatusFilter !== "all" ||
     meetingScopeFilter !== "all" ||
     meetingSort !== "upcoming" ||
+    meetingStartDateFilter.trim().length > 0 ||
+    meetingEndDateFilter.trim().length > 0 ||
     filterRemoteOnly ||
     filterLivestreamOnly ||
     filterCommentOnly ||
@@ -300,12 +343,85 @@ export default function MeetingsPage() {
     filterAgendaPosted ||
     filterMinutesPosted;
 
+  const meetingDateRangeError =
+    meetingStartDateFilter && meetingEndDateFilter && meetingStartDateFilter > meetingEndDateFilter
+      ? "Start date is after end date."
+      : "";
+
+  const meetingActiveFilterLabels = useMemo(() => {
+    const labels: string[] = [];
+    const query = meetingSearch.trim();
+    if (query) labels.push(`Search: "${query}"`);
+    if (meetingTypeFilter !== "all") labels.push(`Type: ${meetingTypeFilter}`);
+    if (meetingStatusFilter !== "all") labels.push(`Status: ${meetingStatusFilter}`);
+    if (meetingScopeFilter !== "all") labels.push(`Scope: ${meetingScopeFilter}`);
+    if (meetingSort !== "upcoming") labels.push(`Sort: ${meetingSort}`);
+    if (meetingStartDateFilter || meetingEndDateFilter) {
+      labels.push(`Date: ${meetingStartDateFilter || "any"} → ${meetingEndDateFilter || "any"}`);
+    }
+    if (filterRemoteOnly) labels.push("Remote only");
+    if (filterLivestreamOnly) labels.push("Livestream only");
+    if (filterCommentOnly) labels.push("Public comments");
+    if (filterNoticePosted) labels.push("Notice posted");
+    if (filterAgendaPosted) labels.push("Agenda posted");
+    if (filterMinutesPosted) labels.push("Minutes posted");
+    return labels;
+  }, [
+    filterAgendaPosted,
+    filterCommentOnly,
+    filterLivestreamOnly,
+    filterMinutesPosted,
+    filterNoticePosted,
+    filterRemoteOnly,
+    meetingEndDateFilter,
+    meetingScopeFilter,
+    meetingSearch,
+    meetingSort,
+    meetingStartDateFilter,
+    meetingStatusFilter,
+    meetingTypeFilter,
+  ]);
+
+  function applyMeetingDatePreset(preset: "today" | "next7" | "next30" | "past30") {
+    const today = new Date();
+    if (preset === "today") {
+      const value = formatDateOnly(today);
+      setMeetingStartDateFilter(value);
+      setMeetingEndDateFilter(value);
+      setPage(1);
+      return;
+    }
+    if (preset === "next7") {
+      const start = formatDateOnly(today);
+      const end = formatDateOnly(addDays(today, 7));
+      setMeetingStartDateFilter(start);
+      setMeetingEndDateFilter(end);
+      setPage(1);
+      return;
+    }
+    if (preset === "next30") {
+      const start = formatDateOnly(today);
+      const end = formatDateOnly(addDays(today, 30));
+      setMeetingStartDateFilter(start);
+      setMeetingEndDateFilter(end);
+      setPage(1);
+      return;
+    }
+    const start = formatDateOnly(addDays(today, -30));
+    const end = formatDateOnly(today);
+    setMeetingStartDateFilter(start);
+    setMeetingEndDateFilter(end);
+    setPage(1);
+  }
+
   function resetMeetingFilters() {
     setMeetingSearch("");
     setMeetingTypeFilter("all");
     setMeetingStatusFilter("all");
     setMeetingScopeFilter("all");
     setMeetingSort("upcoming");
+    setMeetingStartDateFilter("");
+    setMeetingEndDateFilter("");
     setFilterRemoteOnly(false);
     setFilterLivestreamOnly(false);
     setFilterCommentOnly(false);
@@ -316,13 +432,9 @@ export default function MeetingsPage() {
   }
 
   async function handleCopyMeetingLink(meeting: Meeting) {
-    try {
-      const url = new URL(`/meetings/${meeting.id}`, window.location.origin).toString();
-      await navigator.clipboard.writeText(url);
-      setActionStatus("Meeting link copied.");
-    } catch (err) {
-      setActionStatus(err instanceof Error ? err.message : "Failed to copy meeting link.");
-    }
+    const url = new URL(`/meetings/${meeting.id}`, window.location.origin).toString();
+    const ok = await copyTextWithFallback(url, { promptLabel: "Copy meeting link" });
+    setActionStatus(ok ? "Meeting link copied." : "Clipboard blocked. Use the prompt to copy the link.");
   }
 
   function handleDownloadCalendar(meeting: Meeting) {
@@ -339,8 +451,15 @@ export default function MeetingsPage() {
     setActionStatus("Calendar file downloaded.");
   }
 
+  function handleSubscribeCalendar() {
+    const url = new URL("/api/meetings/calendar", window.location.origin).toString();
+    const webcalUrl = url.replace(/^https?:/, "webcal:");
+    window.open(webcalUrl, "_blank", "noopener");
+    setActionStatus("Calendar feed opened.");
+  }
+
   return (
-    <PageShell title="Meetings" description="View your upcoming meetings.">
+    <PageShell title="Meetings" description="Browse upcoming and past meetings.">
       <div className="space-y-6">
         {error ? (
           <div className="text-sm text-red-600" role="alert">
@@ -361,32 +480,58 @@ export default function MeetingsPage() {
                 Times shown in {officeTz ?? "your local time"}.
               </div>
             </div>
-            <label className="flex items-center gap-2 text-sm text-foreground/70">
-              <input
-                type="checkbox"
-                checked={showPast}
-                onChange={(event) => {
-                  setShowPast(event.target.checked);
-                  setPage(1);
-                }}
-              />
-              Show past meetings
-            </label>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-1 rounded-md border border-foreground/10 p-1">
+                <Button
+                  variant={!showPast ? "default" : "ghost"}
+                  size="sm"
+                  onClick={() => {
+                    setShowPast(false);
+                    setPage(1);
+                  }}
+                >
+                  Upcoming
+                </Button>
+                <Button
+                  variant={showPast ? "default" : "ghost"}
+                  size="sm"
+                  onClick={() => {
+                    setShowPast(true);
+                    setPage(1);
+                  }}
+                >
+                  Past
+                </Button>
+              </div>
+              <Button variant="outline" size="sm" onClick={handleSubscribeCalendar}>
+                Subscribe to calendar feed
+              </Button>
+            </div>
           </div>
 
-          <div className="mt-4 grid gap-3 md:grid-cols-3 xl:grid-cols-6">
-            <label className="space-y-1 text-xs text-foreground/70">
+          <div className="mt-4 grid gap-3 md:grid-cols-4 xl:grid-cols-8">
+            <label className="space-y-1 text-xs text-foreground/70 xl:col-span-2">
               <span>Search</span>
-              <input
-                type="search"
-                className="h-9 w-full rounded border border-foreground/20 bg-background px-2 text-sm text-foreground"
-                value={meetingSearch}
-                onChange={(event) => {
-                  setMeetingSearch(event.target.value);
-                  setPage(1);
-                }}
-                placeholder="Title, location, type..."
-              />
+              <div className="flex items-center gap-2">
+                <input
+                  type="search"
+                  className="h-9 w-full rounded border border-foreground/20 bg-background px-2 text-sm text-foreground"
+                  value={meetingSearch}
+                  onChange={(event) => {
+                    setMeetingSearch(event.target.value);
+                    setPage(1);
+                  }}
+                  placeholder="Title, location, type..."
+                />
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setMeetingSearch("")}
+                  disabled={!meetingSearch.trim()}
+                >
+                  Clear
+                </Button>
+              </div>
             </label>
             <label className="space-y-1 text-xs text-foreground/70">
               <span>Type</span>
@@ -452,6 +597,30 @@ export default function MeetingsPage() {
                 <option value="title">Title (A-Z)</option>
               </select>
             </label>
+            <label className="space-y-1 text-xs text-foreground/70">
+              <span>Start date</span>
+              <input
+                type="date"
+                className="h-9 w-full rounded border border-foreground/20 bg-background px-2 text-sm text-foreground"
+                value={meetingStartDateFilter}
+                onChange={(event) => {
+                  setMeetingStartDateFilter(event.target.value);
+                  setPage(1);
+                }}
+              />
+            </label>
+            <label className="space-y-1 text-xs text-foreground/70">
+              <span>End date</span>
+              <input
+                type="date"
+                className="h-9 w-full rounded border border-foreground/20 bg-background px-2 text-sm text-foreground"
+                value={meetingEndDateFilter}
+                onChange={(event) => {
+                  setMeetingEndDateFilter(event.target.value);
+                  setPage(1);
+                }}
+              />
+            </label>
           </div>
 
           <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-xs text-foreground/60">
@@ -464,6 +633,21 @@ export default function MeetingsPage() {
               <span>Cancelled {filteredStatusCounts.cancelled}</span>
             </div>
             <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-wrap items-center gap-1">
+                <span className="text-foreground/50">Quick range</span>
+                <Button variant="ghost" size="sm" onClick={() => applyMeetingDatePreset("today")}>
+                  Today
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => applyMeetingDatePreset("next7")}>
+                  Next 7 days
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => applyMeetingDatePreset("next30")}>
+                  Next 30 days
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => applyMeetingDatePreset("past30")}>
+                  Past 30 days
+                </Button>
+              </div>
               <Button
                 variant="ghost"
                 size="sm"
@@ -484,6 +668,19 @@ export default function MeetingsPage() {
               </Button>
             </div>
           </div>
+          {meetingDateRangeError ? (
+            <div className="mt-2 text-xs text-red-600">{meetingDateRangeError}</div>
+          ) : null}
+          {meetingActiveFilterLabels.length > 0 ? (
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-foreground/60">
+              <span>Active filters</span>
+              {meetingActiveFilterLabels.map((label) => (
+                <span key={label} className="rounded bg-foreground/5 px-2 py-0.5 text-foreground/70">
+                  {label}
+                </span>
+              ))}
+            </div>
+          ) : null}
 
           {showAdvancedFilters ? (
             <div className="mt-3 grid gap-3 md:grid-cols-3 xl:grid-cols-6 text-xs text-foreground/70">
@@ -558,9 +755,9 @@ export default function MeetingsPage() {
 
           {meetingStatusFilter !== "all" && meetingStatusFilter !== "scheduled" && !showPast ? (
             <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-foreground/60">
-              <span>Past meetings are hidden. Cancelled or completed meetings may not appear.</span>
+              <span>Showing upcoming meetings only. Switch to the Past tab for completed or cancelled meetings.</span>
               <Button variant="outline" size="sm" onClick={() => setShowPast(true)}>
-                Show past meetings
+                Past meetings
               </Button>
             </div>
           ) : null}
@@ -643,11 +840,16 @@ export default function MeetingsPage() {
               const duration = formatDuration(m.starts_at, m.ends_at);
               const relative = formatRelativeTime(m.starts_at);
               const isCommittee = Boolean(m.committee_id);
+              const startingSoon = !showPast && m.status === "scheduled" && isStartingSoon(m.starts_at);
+              const noticePosted = !!m.notice_posted_at;
+              const agendaPosted = !!m.agenda_posted_at;
+              const minutesPosted = !!m.minutes_posted_at;
               return (
                 <Link
                   key={m.id}
                   href={`/meetings/${m.id}`}
                   className="group rounded-xl border border-foreground/10 bg-background p-4 transition-colors hover:border-foreground/20 hover:bg-foreground/5"
+                  aria-label={`Open meeting details for ${m.title}`}
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex flex-wrap items-center gap-2 text-xs text-foreground/60">
@@ -655,6 +857,9 @@ export default function MeetingsPage() {
                       <span className="rounded bg-foreground/5 px-2 py-0.5">
                         {isCommittee ? "Committee" : "General"}
                       </span>
+                      {startingSoon ? (
+                        <span className="rounded bg-yellow-100 px-2 py-0.5 text-yellow-700">Starting soon</span>
+                      ) : null}
                       {m.remote_url ? (
                         <span className="rounded bg-foreground/5 px-2 py-0.5">Remote</span>
                       ) : null}
@@ -674,26 +879,33 @@ export default function MeetingsPage() {
                   <div className="mt-3 text-sm text-foreground/80">
                     {formatInOfficeTz(m.starts_at)} → {formatInOfficeTz(m.ends_at)}
                   </div>
-                  <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-foreground/60">
-                    {duration ? <span>{duration}</span> : null}
-                    {relative ? <span>{relative}</span> : null}
-                    <span>
-                      Notice {m.notice_posted_at ? "posted" : "missing"}
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                    {duration ? <span className="text-foreground/60">{duration}</span> : null}
+                    {relative ? <span className="text-foreground/60">{relative}</span> : null}
+                    <span
+                      className={`rounded px-2 py-0.5 ${complianceBadgeClass(noticePosted)}`}
+                      title={noticePosted ? "Notice posted" : "Notice missing"}
+                    >
+                      Notice {noticePosted ? "posted" : "missing"}
                     </span>
-                    <span>
-                      Agenda {m.agenda_posted_at ? "posted" : "missing"}
+                    <span
+                      className={`rounded px-2 py-0.5 ${complianceBadgeClass(agendaPosted)}`}
+                      title={agendaPosted ? "Agenda posted" : "Agenda missing"}
+                    >
+                      Agenda {agendaPosted ? "posted" : "missing"}
                     </span>
-                    <span>
-                      Minutes {m.minutes_posted_at ? "posted" : "missing"}
+                    <span
+                      className={`rounded px-2 py-0.5 ${complianceBadgeClass(minutesPosted)}`}
+                      title={minutesPosted ? "Minutes posted" : "Minutes missing"}
+                    >
+                      Minutes {minutesPosted ? "posted" : "missing"}
                     </span>
                   </div>
                   {m.description ? (
                     <div className="mt-3 text-sm text-foreground/70">{m.description}</div>
                   ) : null}
                   <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
-                    <div className="text-xs text-primary opacity-0 transition group-hover:opacity-100">
-                      View details →
-                    </div>
+                    <div className="text-xs font-medium text-primary">View details →</div>
                     <div className="flex items-center gap-2">
                       <Button
                         size="sm"
