@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState, type ChangeEvent, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -152,6 +152,7 @@ export function MeetingDocsPanel({
   initialDocs,
   acceptedAgendaCount,
   meetingStatus,
+  onDocsChange,
 }: {
   meetingId: string;
   committeeId: string | null;
@@ -159,11 +160,14 @@ export function MeetingDocsPanel({
   initialDocs: DocRow[];
   acceptedAgendaCount: number;
   meetingStatus: string;
+  onDocsChange?: (docs: DocRow[]) => void;
 }) {
   const [docs, setDocs] = useState<DocRow[]>(initialDocs);
   const [status, setStatus] = useState<string>("");
   const [minutesUploadProgress, setMinutesUploadProgress] = useState<number | null>(null);
   const [agendaUploadProgress, setAgendaUploadProgress] = useState<number | null>(null);
+  const [minutesFileInputKey, setMinutesFileInputKey] = useState<number>(0);
+  const [agendaFileInputKey, setAgendaFileInputKey] = useState<number>(0);
   const minutesUploading = minutesUploadProgress !== null;
   const agendaUploading = agendaUploadProgress !== null;
 
@@ -182,6 +186,20 @@ export function MeetingDocsPanel({
   const canEdit = isAdmin && !meetingIsCancelled;
   const canUploadMinutes = canEdit && !!uploadFile && minutesTitle.trim().length > 0 && !minutesUploading;
   const canUploadAgenda = canEdit && !!agendaFile && agendaTitle.trim().length > 0 && !agendaUploading;
+
+  function clearMinutesFile() {
+    setUploadFile(null);
+    setMinutesFileInputKey((key) => key + 1);
+  }
+
+  function clearAgendaFile() {
+    setAgendaFile(null);
+    setAgendaFileInputKey((key) => key + 1);
+  }
+
+  useEffect(() => {
+    onDocsChange?.(docs);
+  }, [docs, onDocsChange]);
 
   const fallbackVisibility = committeeId ? "committee_only" : "internal";
 
@@ -226,21 +244,25 @@ export function MeetingDocsPanel({
 
     if (!canEdit) {
       setStatus("Meeting is cancelled. Uploads are disabled.");
+      toast.error("Meeting is cancelled. Uploads are disabled.");
       return;
     }
     if (!uploadFile) {
       setStatus("Select a minutes file");
+      toast.error("Select a minutes file");
       return;
     }
 
     const fileError = validateUploadFile(uploadFile);
     if (fileError) {
       setStatus(fileError);
+      toast.error(fileError);
       return;
     }
 
     if (!minutesTitle.trim()) {
       setStatus("Title required");
+      toast.error("Title required");
       return;
     }
 
@@ -311,21 +333,25 @@ export function MeetingDocsPanel({
 
     if (!canEdit) {
       setStatus("Meeting is cancelled. Uploads are disabled.");
+      toast.error("Meeting is cancelled. Uploads are disabled.");
       return;
     }
     if (!agendaFile) {
       setStatus("Select an agenda file");
+      toast.error("Select an agenda file");
       return;
     }
 
     const fileError = validateUploadFile(agendaFile);
     if (fileError) {
       setStatus(fileError);
+      toast.error(fileError);
       return;
     }
 
     if (!agendaTitle.trim()) {
       setStatus("Title required");
+      toast.error("Title required");
       return;
     }
 
@@ -463,7 +489,8 @@ export function MeetingDocsPanel({
     <div className="space-y-6">
       {meetingIsCancelled ? (
         <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-          This meeting was cancelled. Agenda and minutes uploads are disabled.
+          This meeting was cancelled. Agenda and minutes uploads are disabled. Reschedule the meeting and post documents on
+          the replacement meeting.
         </div>
       ) : null}
       {status ? (
@@ -481,7 +508,10 @@ export function MeetingDocsPanel({
         </div>
 
         {canEdit ? (
-          <details className="mt-4 rounded-md border border-foreground/10 bg-foreground/5 px-3 py-2" open={minutesDocs.length === 0}>
+          <details
+            className="mt-4 rounded-md border border-foreground/10 bg-foreground/5 px-3 py-2"
+            open={minutesDocs.length === 0}
+          >
             <summary className="cursor-pointer text-sm font-medium text-foreground/80">
               Upload minutes
             </summary>
@@ -498,19 +528,22 @@ export function MeetingDocsPanel({
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs text-foreground/70">Replace version (optional)</label>
+                  <label className="mb-1 block text-xs text-foreground/70">Replace version group (optional)</label>
                   <select
                     value={versionSourceId}
                     onChange={(e) => setVersionSourceId(e.target.value)}
                     className="w-full rounded border border-foreground/20 bg-background px-2 py-2 text-sm"
                   >
-                    <option value="">New version group</option>
+                    <option value="">Start a new version group</option>
                     {minutesDocs.map((doc) => (
                       <option key={doc.id} value={doc.id}>
                         {doc.title}
                       </option>
                     ))}
                   </select>
+                  <div className="mt-1 text-xs text-foreground/60">
+                    Choose a previous minutes file to keep versions together.
+                  </div>
                 </div>
                 <div className="sm:col-span-2">
                   <label className="mb-1 block text-xs text-foreground/70">Description (optional)</label>
@@ -524,8 +557,10 @@ export function MeetingDocsPanel({
                 <div className="sm:col-span-2">
                   <label className="mb-1 block text-xs text-foreground/70">File *</label>
                   <input
+                    key={minutesFileInputKey}
                     type="file"
                     accept={FILE_ACCEPT}
+                    disabled={minutesUploading}
                     onChange={(e: ChangeEvent<HTMLInputElement>) => {
                       const f = e.target.files?.[0] ?? null;
                       if (f) {
@@ -546,34 +581,42 @@ export function MeetingDocsPanel({
                   />
                   <div className="mt-1 text-xs text-foreground/60">PDF, DOC, DOCX, TXT, or CSV. Max 20 MB.</div>
                   {uploadFile ? (
-                    <div className="mt-1 text-xs text-foreground/70">
-                      {uploadFile.name} ({formatBytes(uploadFile.size)})
+                    <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-foreground/70">
+                      <span>
+                        {uploadFile.name} ({formatBytes(uploadFile.size)})
+                      </span>
+                      <Button type="button" variant="ghost" size="sm" onClick={clearMinutesFile} disabled={minutesUploading}>
+                        Clear file
+                      </Button>
                     </div>
                   ) : null}
                   {minutesUploadProgress !== null ? (
                     <div className="mt-2">
                       <div className="h-2 w-full rounded bg-foreground/10">
-                        <div
-                          className="h-2 rounded bg-primary"
-                          style={{ width: `${minutesUploadProgress}%` }}
-                        />
+                        <div className="h-2 rounded bg-primary" style={{ width: `${minutesUploadProgress}%` }} />
                       </div>
                       <div className="mt-1 text-xs text-foreground/70">{minutesUploadProgress}%</div>
                     </div>
                   ) : null}
                 </div>
-                <label className="flex items-center gap-2 text-xs text-foreground/70 sm:col-span-2">
+                <label
+                  className="flex items-center gap-2 text-xs text-foreground/70 sm:col-span-2"
+                  title="Posting minutes indicates they are publicly available."
+                >
                   <input
                     type="checkbox"
                     checked={minutesMarkPosted}
                     onChange={(e) => setMinutesMarkPosted(e.target.checked)}
                   />
-                  Mark minutes posted now
+                  <span>Mark minutes posted now</span>
                 </label>
+                <div className="text-xs text-foreground/60 sm:col-span-2">
+                  Posting minutes indicates they are publicly available for compliance.
+                </div>
               </div>
               <div className="flex justify-end">
                 <Button type="submit" size="sm" disabled={!canUploadMinutes}>
-                  Upload Minutes
+                  {minutesUploading ? `Uploading ${minutesUploadProgress ?? 0}%` : "Upload Minutes"}
                 </Button>
               </div>
             </form>
@@ -614,7 +657,7 @@ export function MeetingDocsPanel({
                               {index === 0 ? "Latest" : `Version ${versionCount - index}`}
                             </span>
                             <span>
-                              {new Date(doc.created_at).toLocaleString()} - {formatBytes(doc.size_bytes)}
+                              {new Date(doc.created_at).toLocaleString()} • {formatBytes(doc.size_bytes)} • {doc.mime_type ?? "Unknown type"}
                             </span>
                             <Button type="button" variant="ghost" size="sm" onClick={() => handleDownload(doc)}>
                               Download
@@ -701,7 +744,10 @@ export function MeetingDocsPanel({
         ) : null}
 
         {canEdit ? (
-          <details className="mt-4 rounded-md border border-foreground/10 bg-foreground/5 px-3 py-2" open={agendaDocs.length === 0}>
+          <details
+            className="mt-4 rounded-md border border-foreground/10 bg-foreground/5 px-3 py-2"
+            open={agendaDocs.length === 0}
+          >
             <summary className="cursor-pointer text-sm font-medium text-foreground/80">
               Upload agenda
             </summary>
@@ -718,19 +764,22 @@ export function MeetingDocsPanel({
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs text-foreground/70">Replace version (optional)</label>
+                  <label className="mb-1 block text-xs text-foreground/70">Replace version group (optional)</label>
                   <select
                     value={agendaVersionSourceId}
                     onChange={(e) => setAgendaVersionSourceId(e.target.value)}
                     className="w-full rounded border border-foreground/20 bg-background px-2 py-2 text-sm"
                   >
-                    <option value="">New version group</option>
+                    <option value="">Start a new version group</option>
                     {agendaDocs.map((doc) => (
                       <option key={doc.id} value={doc.id}>
                         {doc.title}
                       </option>
                     ))}
                   </select>
+                  <div className="mt-1 text-xs text-foreground/60">
+                    Choose a previous agenda file to group versions together.
+                  </div>
                 </div>
                 <div className="sm:col-span-2">
                   <label className="mb-1 block text-xs text-foreground/70">Description (optional)</label>
@@ -744,8 +793,10 @@ export function MeetingDocsPanel({
                 <div className="sm:col-span-2">
                   <label className="mb-1 block text-xs text-foreground/70">File *</label>
                   <input
+                    key={agendaFileInputKey}
                     type="file"
                     accept={FILE_ACCEPT}
+                    disabled={agendaUploading}
                     onChange={(e: ChangeEvent<HTMLInputElement>) => {
                       const f = e.target.files?.[0] ?? null;
                       if (f) {
@@ -766,34 +817,42 @@ export function MeetingDocsPanel({
                   />
                   <div className="mt-1 text-xs text-foreground/60">PDF, DOC, DOCX, TXT, or CSV. Max 20 MB.</div>
                   {agendaFile ? (
-                    <div className="mt-1 text-xs text-foreground/70">
-                      {agendaFile.name} ({formatBytes(agendaFile.size)})
+                    <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-foreground/70">
+                      <span>
+                        {agendaFile.name} ({formatBytes(agendaFile.size)})
+                      </span>
+                      <Button type="button" variant="ghost" size="sm" onClick={clearAgendaFile} disabled={agendaUploading}>
+                        Clear file
+                      </Button>
                     </div>
                   ) : null}
                   {agendaUploadProgress !== null ? (
                     <div className="mt-2">
                       <div className="h-2 w-full rounded bg-foreground/10">
-                        <div
-                          className="h-2 rounded bg-primary"
-                          style={{ width: `${agendaUploadProgress}%` }}
-                        />
+                        <div className="h-2 rounded bg-primary" style={{ width: `${agendaUploadProgress}%` }} />
                       </div>
                       <div className="mt-1 text-xs text-foreground/70">{agendaUploadProgress}%</div>
                     </div>
                   ) : null}
                 </div>
-                <label className="flex items-center gap-2 text-xs text-foreground/70 sm:col-span-2">
+                <label
+                  className="flex items-center gap-2 text-xs text-foreground/70 sm:col-span-2"
+                  title="Posting the agenda indicates it is publicly available."
+                >
                   <input
                     type="checkbox"
                     checked={agendaMarkPosted}
                     onChange={(e) => setAgendaMarkPosted(e.target.checked)}
                   />
-                  Mark agenda posted now
+                  <span>Mark agenda posted now</span>
                 </label>
+                <div className="text-xs text-foreground/60 sm:col-span-2">
+                  Posting the agenda indicates it is publicly available for compliance.
+                </div>
               </div>
               <div className="flex justify-end">
                 <Button type="submit" size="sm" disabled={!canUploadAgenda}>
-                  Upload Agenda
+                  {agendaUploading ? `Uploading ${agendaUploadProgress ?? 0}%` : "Upload Agenda"}
                 </Button>
               </div>
             </form>
@@ -832,7 +891,7 @@ export function MeetingDocsPanel({
                               {index === 0 ? "Latest" : `Version ${versionCount - index}`}
                             </span>
                             <span>
-                              {new Date(doc.created_at).toLocaleString()} - {formatBytes(doc.size_bytes)}
+                              {new Date(doc.created_at).toLocaleString()} • {formatBytes(doc.size_bytes)} • {doc.mime_type ?? "Unknown type"}
                             </span>
                             <Button type="button" variant="ghost" size="sm" onClick={() => handleDownload(doc)}>
                               Download

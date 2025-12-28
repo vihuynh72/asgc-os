@@ -62,6 +62,28 @@ function formatMeetingType(type: string): string {
   }
 }
 
+function isOverdue(iso: string | null, nowMs: number): boolean {
+  if (!iso) return false;
+  const ts = new Date(iso).getTime();
+  return Number.isFinite(ts) && ts < nowMs;
+}
+
+function isDueSoon(iso: string | null, nowMs: number, days: number): boolean {
+  if (!iso) return false;
+  const ts = new Date(iso).getTime();
+  const windowMs = days * 24 * 60 * 60 * 1000;
+  return Number.isFinite(ts) && ts >= nowMs && ts <= nowMs + windowMs;
+}
+
+function isSameLocalDay(iso: string, now: Date): boolean {
+  const d = new Date(iso);
+  return (
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate()
+  );
+}
+
 export default async function DashboardPage() {
   const supabase = await getSupabaseServerComponentClient();
 
@@ -150,6 +172,11 @@ export default async function DashboardPage() {
   const delegatedTasks = ((delegatedTasksRaw ?? []) as TaskRow[]).filter((t) => t.assigned_to !== user.id);
   const shifts = (shiftsRaw ?? []) as ShiftRow[];
   const meetings = (meetingsRaw ?? []) as MeetingRow[];
+  const now = new Date(nowIso);
+  const taskOverdueCount = tasks.filter((t) => isOverdue(t.due_at, nowMs)).length;
+  const taskDueSoonCount = tasks.filter((t) => isDueSoon(t.due_at, nowMs, 7)).length;
+  const meetingsTodayCount = meetings.filter((m) => isSameLocalDay(m.starts_at, now)).length;
+  const meetingsWeekCount = meetings.filter((m) => isDueSoon(m.starts_at, nowMs, 7)).length;
 
   const openSession = (openSessionRaw as { checkin_at?: string } | null) ?? null;
   const openMinutes = openSession?.checkin_at
@@ -233,6 +260,11 @@ export default async function DashboardPage() {
               View all
             </Link>
           </div>
+          <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-foreground/60">
+            <span>{tasks.length} open</span>
+            <span>{taskOverdueCount} overdue</span>
+            <span>{taskDueSoonCount} due in 7 days</span>
+          </div>
           {tasks.length === 0 ? (
             <p className="mt-2 text-sm text-foreground/70">No assigned tasks right now.</p>
           ) : (
@@ -281,6 +313,7 @@ export default async function DashboardPage() {
               Office hours
             </Link>
           </div>
+          <div className="mt-2 text-xs text-foreground/60">{shifts.length} scheduled</div>
           {shifts.length === 0 ? (
             <p className="mt-2 text-sm text-foreground/70">No upcoming shifts scheduled.</p>
           ) : (
@@ -298,8 +331,15 @@ export default async function DashboardPage() {
         </section>
 
         <section className="rounded-md border p-4">
-          <h2 className="text-sm font-semibold">Finance</h2>
-          <p className="mt-1 text-sm text-foreground/70">Finance summary will appear here.</p>
+          <div className="flex items-baseline justify-between gap-3">
+            <h2 className="text-sm font-semibold">Finance</h2>
+            <Link className="text-xs text-foreground/70 underline" href="/finance">
+              Open finance
+            </Link>
+          </div>
+          <p className="mt-2 text-sm text-foreground/70">
+            Track requests, budgets, and reimbursements tied to agenda items.
+          </p>
         </section>
 
         <section className="rounded-md border p-4">
@@ -308,6 +348,10 @@ export default async function DashboardPage() {
             <Link className="text-xs text-foreground/70 underline" href="/meetings">
               View all
             </Link>
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-foreground/60">
+            <span>{meetingsTodayCount} today</span>
+            <span>{meetingsWeekCount} next 7 days</span>
           </div>
           {meetings.length === 0 ? (
             <p className="mt-2 text-sm text-foreground/70">No upcoming meetings.</p>

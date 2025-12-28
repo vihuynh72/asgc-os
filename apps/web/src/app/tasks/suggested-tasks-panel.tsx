@@ -1,8 +1,10 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useState, type ChangeEvent } from "react";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { copyTextWithFallback } from "@/lib/clipboard";
 
 type CommitteeRow = {
   id: string;
@@ -61,6 +63,15 @@ function statusClass(status: string): string {
   }
 }
 
+function toCsvValue(value: string | number | null | undefined): string {
+  if (value === null || value === undefined) return "";
+  const raw = String(value);
+  if (raw.includes(",") || raw.includes("\"") || raw.includes("\n")) {
+    return `"${raw.replace(/\"/g, "\"\"")}"`;
+  }
+  return raw;
+}
+
 export function SuggestedTasksPanel({
   initialSuggestedTasks,
   committees,
@@ -74,16 +85,39 @@ export function SuggestedTasksPanel({
 }) {
   const [tasks, setTasks] = useState<SuggestedTask[]>(initialSuggestedTasks);
   const [status, setStatus] = useState<string>("");
+  const [filterQuery, setFilterQuery] = useState<string>("");
   const [filterCommittee, setFilterCommittee] = useState<string>("");
   const [filterStatus, setFilterStatus] = useState<string>("");
+  const [filterPendingOnly, setFilterPendingOnly] = useState<boolean>(false);
 
   const filteredTasks = useMemo(() => {
+    const query = filterQuery.trim().toLowerCase();
     return tasks.filter((task) => {
       if (filterCommittee && task.committee_id !== filterCommittee) return false;
       if (filterStatus && task.status !== filterStatus) return false;
-      return true;
+      if (filterPendingOnly && task.status !== "draft") return false;
+      if (!query) return true;
+      const haystack = [
+        task.proposed_title,
+        task.proposed_description ?? "",
+        task.committees?.[0]?.name ?? "",
+        task.docs?.[0]?.title ?? "",
+      ]
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(query);
     });
-  }, [tasks, filterCommittee, filterStatus]);
+  }, [tasks, filterCommittee, filterStatus, filterPendingOnly, filterQuery]);
+
+  const statusCounts = useMemo(() => {
+    const counts = { draft: 0, approved: 0, rejected: 0 };
+    for (const task of filteredTasks) {
+      if (task.status === "draft") counts.draft += 1;
+      else if (task.status === "approved") counts.approved += 1;
+      else if (task.status === "rejected") counts.rejected += 1;
+    }
+    return counts;
+  }, [filteredTasks]);
 
   const reload = useCallback(async () => {
     const { suggestedTasks } = await fetchJson<{ suggestedTasks: SuggestedTask[] }>(
@@ -96,6 +130,63 @@ export function SuggestedTasksPanel({
     (committeeId: string) => canReviewAll || canReviewCommitteeIds.includes(committeeId),
     [canReviewAll, canReviewCommitteeIds],
   );
+
+  function buildSuggestedTasksCsv(list: SuggestedTask[]) {
+    const headers = ["Title", "Status", "Committee", "Doc", "Created At", "Reviewed At", "Published Task Id"];
+    const rows = list.map((task) => [
+      task.proposed_title,
+      task.status,
+      task.committees?.[0]?.name ?? task.committee_id,
+      task.docs?.[0]?.title ?? "",
+      task.created_at,
+      task.reviewed_at ?? "",
+      task.published_task_id ?? "",
+    ]);
+    return [headers, ...rows].map((row) => row.map(toCsvValue).join(",")).join("\n");
+  }
+
+  function buildSuggestedTasksCopyText(list: SuggestedTask[]) {
+    return list
+      .map((task) => {
+        const committee = task.committees?.[0]?.name ?? task.committee_id;
+        const doc = task.docs?.[0]?.title ?? "No doc";
+        return `${task.proposed_title} • ${statusLabel(task.status)} • ${committee} • ${doc}`;
+      })
+      .join("\n");
+  }
+
+  async function handleCopySuggestedTasks() {
+    if (filteredTasks.length === 0) {
+      toast.error("No suggested tasks to copy");
+      return;
+    }
+    const ok = await copyTextWithFallback(buildSuggestedTasksCopyText(filteredTasks), {
+      promptLabel: "Copy suggested tasks",
+    });
+    if (ok) {
+      toast.success("Suggested tasks copied");
+    } else {
+      toast.info("Clipboard blocked. Use the prompt to copy.");
+    }
+  }
+
+  function handleDownloadSuggestedTasksCsv() {
+    if (filteredTasks.length === 0) {
+      toast.error("No suggested tasks to export");
+      return;
+    }
+    const csv = buildSuggestedTasksCsv(filteredTasks);
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `suggested_tasks_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    toast.success("Suggested tasks CSV downloaded");
+  }
 
   async function handleReview(taskId: string, decision: "approved" | "rejected") {
     const label = decision === "approved" ? "approve" : "reject";
@@ -116,8 +207,11 @@ export function SuggestedTasksPanel({
         prev.map((task) => (task.id === taskId ? { ...task, ...suggestedTask } : task)),
       );
       setStatus("");
+      toast.success(`Suggested task ${decision === "approved" ? "approved" : "rejected"}`);
     } catch (err) {
-      setStatus(err instanceof Error ? err.message : "Review failed");
+      const msg = err instanceof Error ? err.message : "Review failed";
+      setStatus(msg);
+      toast.error(msg);
     }
   }
 
@@ -126,6 +220,12 @@ export function SuggestedTasksPanel({
       <div className="flex flex-wrap items-center gap-3">
         <div className="text-lg font-semibold">Suggested Tasks</div>
         <div className="flex-1" />
+        <Button type="button" variant="ghost" size="sm" onClick={() => void handleCopySuggestedTasks()}>
+          Copy list
+        </Button>
+        <Button type="button" variant="ghost" size="sm" onClick={handleDownloadSuggestedTasksCsv}>
+          Export CSV
+        </Button>
         <Button type="button" variant="outline" size="sm" onClick={() => void reload()}>
           Refresh
         </Button>
@@ -136,8 +236,36 @@ export function SuggestedTasksPanel({
           {status}
         </div>
       ) : null}
+      <div className="flex flex-wrap items-center gap-3 text-xs text-foreground/60">
+        <span>
+          Showing {filteredTasks.length} of {tasks.length}
+        </span>
+        <span>Draft {statusCounts.draft}</span>
+        <span>Approved {statusCounts.approved}</span>
+        <span>Rejected {statusCounts.rejected}</span>
+      </div>
 
       <div className="flex flex-wrap items-center gap-3">
+        <label className="space-y-1 text-xs text-foreground/70">
+          <span>Search</span>
+          <div className="flex items-center gap-2">
+            <input
+              className="h-8 w-56 rounded border border-foreground/20 bg-background px-2 text-sm"
+              value={filterQuery}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => setFilterQuery(e.target.value)}
+              placeholder="Title, committee, doc..."
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => setFilterQuery("")}
+              disabled={!filterQuery.trim()}
+            >
+              Clear
+            </Button>
+          </div>
+        </label>
         <select
           value={filterCommittee}
           onChange={(e) => setFilterCommittee(e.target.value)}
@@ -162,13 +290,24 @@ export function SuggestedTasksPanel({
           <option value="rejected">Rejected</option>
         </select>
 
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={filterPendingOnly}
+            onChange={(e: ChangeEvent<HTMLInputElement>) => setFilterPendingOnly(e.target.checked)}
+          />
+          <span className="text-foreground/70">Pending review</span>
+        </label>
+
         <Button
           type="button"
           variant="outline"
           size="sm"
           onClick={() => {
+            setFilterQuery("");
             setFilterCommittee("");
             setFilterStatus("");
+            setFilterPendingOnly(false);
           }}
         >
           Clear Filters

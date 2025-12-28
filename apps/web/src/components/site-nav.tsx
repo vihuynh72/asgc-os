@@ -1,18 +1,37 @@
 import Link from "next/link";
 
+import { SiteNavLinks } from "@/components/site-nav-links";
 import { Button } from "@/components/ui/button";
 import { getSupabaseServerComponentClient } from "@/lib/supabaseServerComponent";
 
-const appLinks = [
-  { href: "/dashboard", label: "Dashboard" },
-  { href: "/office-hours", label: "Office Hours" },
-  { href: "/tasks", label: "Tasks" },
-  { href: "/meetings", label: "Meetings" },
-  { href: "/clubs", label: "Clubs" },
-  { href: "/icc", label: "ICC" },
-  { href: "/docs", label: "Docs" },
-  { href: "/finance", label: "Finance" },
-  { href: "/admin", label: "Admin" },
+const navGroups = [
+  {
+    label: "Core",
+    items: [
+      { href: "/dashboard", label: "Dashboard" },
+      { href: "/meetings", label: "Meetings" },
+      { href: "/tasks", label: "Tasks" },
+      { href: "/office-hours", label: "Office Hours" },
+    ],
+  },
+  {
+    label: "Community",
+    items: [
+      { href: "/clubs", label: "Clubs" },
+      { href: "/icc", label: "ICC" },
+    ],
+  },
+  {
+    label: "Resources",
+    items: [
+      { href: "/docs", label: "Docs" },
+      { href: "/finance", label: "Finance" },
+    ],
+  },
+  {
+    label: "Admin",
+    items: [{ href: "/admin", label: "Admin" }],
+  },
 ];
 
 const publicLinks = [{ href: "/office-hours/kiosk", label: "Office Hours Form" }];
@@ -37,7 +56,14 @@ export async function SiteNav() {
     isAdmin = false;
   }
 
-  const links = user ? appLinks.filter((l) => l.href !== "/admin" || isAdmin) : publicLinks;
+  const groups = user
+    ? navGroups
+        .map((group) => ({
+          ...group,
+          items: group.items.filter((item) => item.href !== "/admin" || isAdmin),
+        }))
+        .filter((group) => group.items.length > 0)
+    : null;
 
   return (
     <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
@@ -45,17 +71,7 @@ export async function SiteNav() {
         <Link href="/" className="font-semibold">
           ASGC OS
         </Link>
-        <nav aria-label="Primary" className="flex min-w-0 flex-1 gap-4 overflow-x-auto whitespace-nowrap text-sm">
-          {links.map((l) => (
-            <Link
-              key={l.href}
-              href={l.href}
-              className="text-foreground/80 hover:text-foreground"
-            >
-              {l.label}
-            </Link>
-          ))}
-        </nav>
+        <SiteNavLinks groups={groups ?? undefined} links={!user ? publicLinks : undefined} />
 
         <div className="flex shrink-0 items-center gap-2">
           {user ? (

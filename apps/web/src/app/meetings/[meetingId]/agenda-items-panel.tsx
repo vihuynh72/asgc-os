@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useMemo, useState, type ChangeEvent, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { copyTextWithFallback } from "@/lib/clipboard";
 
 type AgendaItem = {
   id: string;
@@ -18,6 +19,7 @@ type AgendaItem = {
   attachments_json: unknown;
   state: string;
   is_late: boolean;
+  sort_order?: number | null;
   created_at: string;
   updated_at: string;
 };
@@ -194,6 +196,23 @@ function formatDeadline(iso: string | null | undefined, timeZone?: string | null
   }).format(d);
 }
 
+function formatMeetingDate(iso: string | null | undefined, timeZone?: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  if (!timeZone) return d.toLocaleString();
+  return new Intl.DateTimeFormat(undefined, {
+    timeZone,
+    weekday: "short",
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZoneName: "short",
+  }).format(d);
+}
+
 function formatAgendaError(message: string): string {
   const key = message.trim().toLowerCase();
   if (key.includes("meeting_not_scheduled") || key.includes("meeting_not_schedueld")) {
@@ -204,6 +223,12 @@ function formatAgendaError(message: string): string {
   }
   if (key.includes("submission_closed")) {
     return "Submission deadline has passed.";
+  }
+  if (key.includes("cannot_edit_finalized_item")) {
+    return "This agenda item has already been finalized.";
+  }
+  if (key.includes("forbidden")) {
+    return "You are not authorized to update this agenda item.";
   }
   if (key.includes("title_required")) {
     return "Title is required.";
@@ -240,20 +265,26 @@ export function AgendaItemsPanel({
   initialDeadline,
   isAdmin,
   userId,
+  meetingTitle,
+  meetingCommitteeId,
   meetingStartsAt,
   meetingType,
   officeTz,
   meetingStatus,
+  onItemsChange,
 }: {
   meetingId: string;
   initialItems: AgendaItem[];
   initialDeadline: DeadlineInfo | null;
   isAdmin: boolean;
   userId: string;
+  meetingTitle?: string | null;
+  meetingCommitteeId?: string | null;
   meetingStartsAt?: string | null;
   meetingType?: string | null;
   officeTz?: string | null;
   meetingStatus: string;
+  onItemsChange?: (items: AgendaItem[]) => void;
 }) {
   const [items, setItems] = useState<AgendaItem[]>(initialItems);
   const [deadline, setDeadline] = useState<DeadlineInfo | null>(initialDeadline);
@@ -262,7 +293,9 @@ export function AgendaItemsPanel({
   const [agendaStateFilter, setAgendaStateFilter] = useState<string>("all");
   const [agendaCategoryFilter, setAgendaCategoryFilter] = useState<string>("all");
   const [agendaLateOnly, setAgendaLateOnly] = useState<boolean>(false);
-  const [agendaSort, setAgendaSort] = useState<"recent" | "title">("recent");
+  const [agendaSort, setAgendaSort] = useState<"agenda" | "recent" | "title">(() =>
+    isAdmin ? "agenda" : "recent",
+  );
 
   // New item form
   const [showNewForm, setShowNewForm] = useState<boolean>(false);
@@ -274,6 +307,7 @@ export function AgendaItemsPanel({
   const [newAttachments, setNewAttachments] = useState<string>("");
   const [createBusy, setCreateBusy] = useState<boolean>(false);
   const [actionBusy, setActionBusy] = useState<string | null>(null);
+  const [selectedAdminItems, setSelectedAdminItems] = useState<Record<string, boolean>>({});
 
   // Edit form
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -283,6 +317,11 @@ export function AgendaItemsPanel({
   const [editMotion, setEditMotion] = useState<string>("");
   const [editFiscal, setEditFiscal] = useState<string>("");
   const [editAttachments, setEditAttachments] = useState<string>("");
+
+  useEffect(() => {
+    onItemsChange?.(items);
+    setSelectedAdminItems({});
+  }, [items, onItemsChange]);
 
   const reload = useCallback(async () => {
     const { items: i, deadline: d } = await fetchJson<{
@@ -306,6 +345,7 @@ export function AgendaItemsPanel({
   }, [deadline, fallbackDeadline]);
 
   const meetingActive = meetingStatus === "scheduled";
+  const meetingIsCancelled = meetingStatus === "cancelled";
   const submissionOpen = meetingActive && (effectiveDeadline ? effectiveDeadline.is_submission_open : true);
   const submissionClosed = !submissionOpen;
   const hoursUntilDeadline =
@@ -325,6 +365,48 @@ export function AgendaItemsPanel({
       : meetingStatus === "completed"
         ? "This meeting is completed. Agenda submissions are closed."
         : "";
+  const meetingCancelledGuidance = meetingIsCancelled
+    ? "This meeting was cancelled. To reschedule, ask an admin to duplicate the meeting and set a new date."
+    : "";
+  const meetingDateLabel = formatMeetingDate(meetingStartsAt, officeTz);
+  const meetingHubPath = `/meetings/${meetingId}`;
+
+  function buildTaskDescription(item: AgendaItem) {
+    const parts: string[] = [];
+    if (meetingTitle) parts.push(`Meeting: ${meetingTitle}`);
+    if (meetingDateLabel) parts.push(`Meeting date: ${meetingDateLabel}`);
+    parts.push(`Agenda item: ${item.title}`);
+    if (item.fiscal_impact) parts.push(`Fiscal impact: ${item.fiscal_impact}`);
+    if (item.recommended_motion) parts.push(`Motion: ${item.recommended_motion}`);
+    if (item.background) parts.push(`Background: ${item.background}`);
+    const attachments = normalizeAttachments(item.attachments_json);
+    if (attachments.length > 0) {
+      parts.push("Supporting links:");
+      parts.push(...attachments.map((link) => `- ${link}`));
+    }
+    parts.push(`Meeting hub: ${meetingHubPath}`);
+    return parts.join("\n");
+  }
+
+  function buildTaskPrefillUrl(item: AgendaItem) {
+    const params = new URLSearchParams();
+    params.set("prefillTitle", item.title);
+    const description = buildTaskDescription(item);
+    if (description) params.set("prefillDescription", description);
+    if (meetingCommitteeId) params.set("committeeId", meetingCommitteeId);
+    if (item.fiscal_impact) params.set("prefillPriority", "high");
+    if (meetingStartsAt && isValidIso(meetingStartsAt)) {
+      params.set("prefillDue", meetingStartsAt.slice(0, 10));
+    }
+    params.set("source", "agenda-item");
+    params.set("meetingId", meetingId);
+    params.set("agendaItemId", item.id);
+    return `/tasks?${params.toString()}`;
+  }
+
+  function handleCreateTask(item: AgendaItem) {
+    window.location.href = buildTaskPrefillUrl(item);
+  }
 
   async function createItem(submitImmediately: boolean) {
     if (!meetingActive) {
@@ -406,7 +488,12 @@ export function AgendaItemsPanel({
       setStatus(meetingStatusNotice || "Updates are disabled for this meeting.");
       return;
     }
-    if (submissionClosed) {
+    const currentItem = items.find((item) => item.id === itemId);
+    if (!currentItem) {
+      setStatus("Agenda item not found.");
+      return;
+    }
+    if (submissionClosed && currentItem.state === "draft") {
       setStatus("Submission deadline has passed.");
       return;
     }
@@ -459,7 +546,7 @@ export function AgendaItemsPanel({
       return;
     }
 
-    if (!confirm("Submit this item for review? You won't be able to edit it after submission.")) {
+    if (!confirm("Submit this item for review? You can still make edits before it is accepted.")) {
       return;
     }
 
@@ -545,14 +632,145 @@ export function AgendaItemsPanel({
     }
   }
 
+  function toggleAdminSelection(itemId: string) {
+    setSelectedAdminItems((prev) => ({ ...prev, [itemId]: !prev[itemId] }));
+  }
+
+  function toggleSelectAllAdminItems(checked: boolean) {
+    if (!checked) {
+      setSelectedAdminItems({});
+      return;
+    }
+    const next: Record<string, boolean> = {};
+    for (const item of selectableAdminItems) {
+      next[item.id] = true;
+    }
+    setSelectedAdminItems(next);
+  }
+
+  async function handleBulkReview(newState: "accepted" | "rejected" | "tabled") {
+    if (!meetingActive) {
+      setStatus(meetingStatusNotice || "Review actions are disabled for this meeting.");
+      return;
+    }
+    if (selectedAdminIds.length === 0) return;
+    const stateLabel = newState === "accepted" ? "accept" : newState === "rejected" ? "reject" : "table";
+    if (!confirm(`Review ${selectedAdminIds.length} item(s) and ${stateLabel} them?`)) return;
+
+    if (actionBusy) return;
+    setActionBusy(`bulk:${newState}`);
+    setStatus(`Reviewing ${selectedAdminIds.length} item(s)...`);
+    try {
+      for (const itemId of selectedAdminIds) {
+        await fetchJson(
+          `/api/meetings/${encodeURIComponent(meetingId)}/agenda-items/${encodeURIComponent(itemId)}/review`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ state: newState }),
+          },
+        );
+      }
+      setStatus("");
+      toast.success(`Agenda items ${stateLabel}ed`);
+      await reload();
+    } catch (err) {
+      const msg = formatAgendaError(err instanceof Error ? err.message : "Failed to review items");
+      setStatus(msg);
+      toast.error(msg);
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
+  async function handleLateOverride(itemId: string, nextValue: boolean) {
+    if (!isAdmin) return;
+    if (!meetingActive) {
+      setStatus(meetingStatusNotice || "Updates are disabled for this meeting.");
+      return;
+    }
+    if (actionBusy) return;
+    setActionBusy(`late:${itemId}`);
+    setStatus(nextValue ? "Marking item late..." : "Clearing late flag...");
+    try {
+      await fetchJson(
+        `/api/meetings/${encodeURIComponent(meetingId)}/agenda-items/${encodeURIComponent(itemId)}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ is_late: nextValue }),
+        },
+      );
+      setStatus("");
+      toast.success(nextValue ? "Agenda item marked late" : "Late flag cleared");
+      await reload();
+    } catch (err) {
+      const msg = formatAgendaError(err instanceof Error ? err.message : "Failed to update late flag");
+      setStatus(msg);
+      toast.error(msg);
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
+  async function handleMoveAgendaItem(itemId: string, direction: -1 | 1) {
+    if (!isAdmin) return;
+    if (!meetingActive) {
+      setStatus(meetingStatusNotice || "Updates are disabled for this meeting.");
+      return;
+    }
+    if (actionBusy) return;
+    const orderedIds = orderedAgendaItems.map((item) => item.id);
+    const currentIndex = orderedIds.indexOf(itemId);
+    const nextIndex = currentIndex + direction;
+    if (currentIndex === -1 || nextIndex < 0 || nextIndex >= orderedIds.length) return;
+    const currentItem = orderedAgendaItems[currentIndex];
+    const swapItem = orderedAgendaItems[nextIndex];
+    const currentOrder =
+      typeof currentItem.sort_order === "number" ? currentItem.sort_order : currentIndex + 1;
+    const swapOrder =
+      typeof swapItem.sort_order === "number" ? swapItem.sort_order : nextIndex + 1;
+
+    setActionBusy(`reorder:${itemId}`);
+    setStatus("Updating agenda order...");
+    try {
+      await fetchJson(
+        `/api/meetings/${encodeURIComponent(meetingId)}/agenda-items/${encodeURIComponent(currentItem.id)}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sort_order: swapOrder }),
+        },
+      );
+      await fetchJson(
+        `/api/meetings/${encodeURIComponent(meetingId)}/agenda-items/${encodeURIComponent(swapItem.id)}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sort_order: currentOrder }),
+        },
+      );
+      setStatus("");
+      toast.success("Agenda order updated");
+      await reload();
+    } catch (err) {
+      const msg = formatAgendaError(err instanceof Error ? err.message : "Failed to reorder agenda items");
+      setStatus(msg);
+      toast.error(msg);
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
   const myItems = items.filter((i) => i.submitted_by === userId);
   const allItems = items;
+  const agendaSortDefault = isAdmin ? "agenda" : "recent";
   const agendaFiltersActive =
     agendaSearch.trim().length > 0 ||
     agendaStateFilter !== "all" ||
     agendaCategoryFilter !== "all" ||
     agendaLateOnly ||
-    agendaSort !== "recent";
+    agendaSort !== agendaSortDefault;
 
   const agendaSummary = useMemo(() => {
     const total = items.length;
@@ -567,7 +785,7 @@ export function AgendaItemsPanel({
     setAgendaStateFilter("all");
     setAgendaCategoryFilter("all");
     setAgendaLateOnly(false);
-    setAgendaSort("recent");
+    setAgendaSort(isAdmin ? "agenda" : "recent");
   }
 
   const applyAgendaFilters = useCallback(
@@ -584,6 +802,11 @@ export function AgendaItemsPanel({
 
       filtered = [...filtered].sort((a, b) => {
         if (agendaSort === "title") return a.title.localeCompare(b.title);
+        if (agendaSort === "agenda") {
+          const aOrder = typeof a.sort_order === "number" ? a.sort_order : Number.MAX_SAFE_INTEGER;
+          const bOrder = typeof b.sort_order === "number" ? b.sort_order : Number.MAX_SAFE_INTEGER;
+          return aOrder - bOrder;
+        }
         const aTime = new Date(a.submitted_at ?? a.created_at).getTime();
         const bTime = new Date(b.submitted_at ?? b.created_at).getTime();
         return bTime - aTime;
@@ -596,22 +819,85 @@ export function AgendaItemsPanel({
   const filteredMyItems = useMemo(() => applyAgendaFilters(myItems), [applyAgendaFilters, myItems]);
 
   const filteredAllItems = useMemo(() => applyAgendaFilters(allItems), [applyAgendaFilters, allItems]);
-
-  const acceptedItems = useMemo(
-    () => items.filter((item) => item.state === "accepted" || item.state === "tabled"),
-    [items],
+  const selectableAdminItems = useMemo(
+    () => filteredAllItems.filter((item) => item.state === "submitted"),
+    [filteredAllItems],
   );
+  const selectedAdminIds = useMemo(
+    () => Object.keys(selectedAdminItems).filter((id) => selectedAdminItems[id]),
+    [selectedAdminItems],
+  );
+  const allSelectableSelected =
+    selectableAdminItems.length > 0 && selectableAdminItems.every((item) => selectedAdminItems[item.id]);
+
+  const orderedAgendaItems = useMemo(() => {
+    return [...items]
+      .filter((item) => item.state === "accepted" || item.state === "tabled")
+      .sort((a, b) => {
+        const aOrder = typeof a.sort_order === "number" ? a.sort_order : Number.MAX_SAFE_INTEGER;
+        const bOrder = typeof b.sort_order === "number" ? b.sort_order : Number.MAX_SAFE_INTEGER;
+        return aOrder - bOrder;
+      });
+  }, [items]);
+
+  const acceptedItems = orderedAgendaItems;
 
   const exportItems = isAdmin ? filteredAllItems : filteredMyItems;
 
+  const filteredSummary = useMemo(() => {
+    const list = exportItems;
+    const counts = {
+      total: list.length,
+      draft: 0,
+      submitted: 0,
+      accepted: 0,
+      rejected: 0,
+      tabled: 0,
+      withdrawn: 0,
+      late: 0,
+    };
+    for (const item of list) {
+      if (item.state === "draft") counts.draft += 1;
+      else if (item.state === "submitted") counts.submitted += 1;
+      else if (item.state === "accepted") counts.accepted += 1;
+      else if (item.state === "rejected") counts.rejected += 1;
+      else if (item.state === "tabled") counts.tabled += 1;
+      else if (item.state === "withdrawn") counts.withdrawn += 1;
+      if (item.is_late) counts.late += 1;
+    }
+    return counts;
+  }, [exportItems]);
+
   async function handleCopyAccepted() {
-    try {
-      await navigator.clipboard.writeText(buildAgendaText(acceptedItems));
+    const ok = await copyTextWithFallback(buildAgendaText(acceptedItems), {
+      promptLabel: "Copy accepted agenda",
+    });
+    if (ok) {
       setStatus("Accepted agenda copied.");
       toast.success("Accepted agenda copied");
-    } catch {
-      setStatus("Copy failed. Your browser may block clipboard access.");
-      toast.error("Copy failed");
+    } else {
+      const msg = "Clipboard blocked. Use the prompt to copy.";
+      setStatus(msg);
+      toast.info(msg);
+    }
+  }
+
+  async function handleCopyFiltered() {
+    if (exportItems.length === 0) {
+      setStatus("No agenda items to copy.");
+      toast.error("No agenda items to copy");
+      return;
+    }
+    const ok = await copyTextWithFallback(buildAgendaText(exportItems), {
+      promptLabel: "Copy filtered agenda items",
+    });
+    if (ok) {
+      setStatus("Agenda items copied.");
+      toast.success("Agenda items copied");
+    } else {
+      const msg = "Clipboard blocked. Use the prompt to copy.";
+      setStatus(msg);
+      toast.info(msg);
     }
   }
 
@@ -635,11 +921,34 @@ export function AgendaItemsPanel({
     toast.success("CSV downloaded");
   }
 
+  function handleDownloadAcceptedCsv() {
+    if (acceptedItems.length === 0) {
+      setStatus("No accepted agenda items to export.");
+      toast.error("No accepted agenda items to export");
+      return;
+    }
+    const csv = buildAgendaCsv(acceptedItems);
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `accepted_agenda_${meetingId}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    setStatus("Accepted agenda CSV downloaded.");
+    toast.success("Accepted agenda CSV downloaded");
+  }
+
   return (
     <div className="space-y-6">
       {meetingStatusNotice ? (
         <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-          {meetingStatusNotice}
+          <div>{meetingStatusNotice}</div>
+          {meetingCancelledGuidance ? (
+            <div className="mt-1 text-xs text-red-700/80">{meetingCancelledGuidance}</div>
+          ) : null}
         </div>
       ) : null}
       {status ? (
@@ -710,6 +1019,12 @@ export function AgendaItemsPanel({
             <Button variant="outline" size="sm" onClick={handleCopyAccepted} disabled={acceptedItems.length === 0}>
               Copy accepted agenda
             </Button>
+            <Button variant="outline" size="sm" onClick={handleCopyFiltered} disabled={exportItems.length === 0}>
+              Copy filtered list
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleDownloadAcceptedCsv} disabled={acceptedItems.length === 0}>
+              Download accepted CSV
+            </Button>
             <Button variant="outline" size="sm" onClick={handleDownloadCsv} disabled={exportItems.length === 0}>
               Download CSV
             </Button>
@@ -771,8 +1086,9 @@ export function AgendaItemsPanel({
             <select
               className="h-9 w-full rounded border border-foreground/20 bg-background px-2 text-sm"
               value={agendaSort}
-              onChange={(e) => setAgendaSort(e.target.value as "recent" | "title")}
+              onChange={(e) => setAgendaSort(e.target.value as "agenda" | "recent" | "title")}
             >
+              {isAdmin ? <option value="agenda">Agenda order</option> : null}
               <option value="recent">Most recent</option>
               <option value="title">Title</option>
             </select>
@@ -787,123 +1103,165 @@ export function AgendaItemsPanel({
             />
             Late only
           </label>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-foreground/50">Quick filters</span>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setAgendaStateFilter("submitted");
+                setAgendaLateOnly(false);
+              }}
+            >
+              Submitted
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setAgendaStateFilter("accepted");
+                setAgendaLateOnly(false);
+              }}
+            >
+              Accepted
+            </Button>
+            <Button
+              variant={agendaLateOnly ? "default" : "ghost"}
+              size="sm"
+              onClick={() => setAgendaLateOnly((prev) => !prev)}
+            >
+              Late
+            </Button>
+          </div>
           <Button variant="ghost" size="sm" onClick={resetAgendaFilters} disabled={!agendaFiltersActive}>
             Reset filters
           </Button>
         </div>
+        <div className="mt-2 text-xs text-foreground/60">
+          Filtered {filteredSummary.total} • Draft {filteredSummary.draft} • Submitted {filteredSummary.submitted} •
+          Accepted {filteredSummary.accepted} • Late {filteredSummary.late}
+        </div>
       </details>
 
-      <div className="rounded-lg border border-foreground/10 p-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="text-sm font-medium">New agenda item</div>
-          {submissionOpen ? (
-            <Button type="button" size="sm" onClick={() => setShowNewForm(!showNewForm)}>
-              {showNewFormResolved ? "Hide form" : "Start new item"}
-            </Button>
-          ) : (
-            <span className="text-xs text-foreground/60">
-              Submissions closed{submissionDeadlineLabel ? ` on ${submissionDeadlineLabel}` : ""}
-            </span>
-          )}
-        </div>
+      {meetingActive ? (
+        <div className="rounded-lg border border-foreground/10 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="text-sm font-medium">New agenda item</div>
+            {submissionOpen ? (
+              <Button type="button" size="sm" onClick={() => setShowNewForm(!showNewForm)}>
+                {showNewFormResolved ? "Hide form" : "Start new item"}
+              </Button>
+            ) : (
+              <span className="text-xs text-foreground/60">
+                Submissions closed{submissionDeadlineLabel ? ` on ${submissionDeadlineLabel}` : ""}
+              </span>
+            )}
+          </div>
 
-        {showNewFormResolved ? (
-          <form onSubmit={handleCreate} className="mt-4 space-y-3">
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="sm:col-span-2">
-                <label className="mb-1 block text-xs text-foreground/70">Title *</label>
-                <input
-                  type="text"
-                  value={newTitle}
-                  onChange={(e: ChangeEvent<HTMLInputElement>) => setNewTitle(e.target.value)}
-                  placeholder="Agenda item title"
-                  className="w-full rounded border border-foreground/20 bg-background px-2 py-2 text-sm"
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block text-xs text-foreground/70">Category</label>
-                <select
-                  value={newCategory}
-                  onChange={(e) => setNewCategory(e.target.value)}
-                  className="w-full rounded border border-foreground/20 bg-background px-2 py-2 text-sm"
-                >
-                  <option value="action">Action</option>
-                  <option value="discussion">Discussion</option>
-                  <option value="information">Information</option>
-                  <option value="consent">Consent</option>
-                  <option value="other">Other</option>
-                </select>
-              </div>
-            </div>
-
-            <details className="rounded-md border border-foreground/10 bg-foreground/5 px-3 py-2">
-              <summary className="cursor-pointer text-xs font-medium text-foreground/70">
-                Add details (optional)
-              </summary>
-              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          {showNewFormResolved ? (
+            <form onSubmit={handleCreate} className="mt-4 space-y-3">
+              <div className="grid gap-3 sm:grid-cols-2">
                 <div className="sm:col-span-2">
-                  <label className="mb-1 block text-xs text-foreground/70">Background</label>
-                  <textarea
-                    value={newBackground}
-                    onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setNewBackground(e.target.value)}
-                    placeholder="Context and background information..."
-                    rows={3}
-                    className="w-full rounded border border-foreground/20 bg-background px-2 py-2 text-sm"
-                  />
-                </div>
-
-                <div className="sm:col-span-2">
-                  <label className="mb-1 block text-xs text-foreground/70">Recommended Motion</label>
-                  <textarea
-                    value={newMotion}
-                    onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setNewMotion(e.target.value)}
-                    placeholder="Motion language if this is an action item..."
-                    rows={2}
-                    className="w-full rounded border border-foreground/20 bg-background px-2 py-2 text-sm"
-                  />
-                </div>
-
-                <div className="sm:col-span-2">
-                  <label className="mb-1 block text-xs text-foreground/70">Fiscal Impact</label>
+                  <label className="mb-1 block text-xs text-foreground/70">Title *</label>
                   <input
                     type="text"
-                    value={newFiscal}
-                    onChange={(e: ChangeEvent<HTMLInputElement>) => setNewFiscal(e.target.value)}
-                    placeholder="e.g., $500 from ASGC Budget"
+                    value={newTitle}
+                    onChange={(e: ChangeEvent<HTMLInputElement>) => setNewTitle(e.target.value)}
+                    placeholder="Agenda item title"
                     className="w-full rounded border border-foreground/20 bg-background px-2 py-2 text-sm"
                   />
                 </div>
 
-                <div className="sm:col-span-2">
-                  <label className="mb-1 block text-xs text-foreground/70">Supporting documents (URLs)</label>
-                  <textarea
-                    value={newAttachments}
-                    onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setNewAttachments(e.target.value)}
-                    placeholder="One URL per line"
-                    rows={2}
+                <div>
+                  <label className="mb-1 block text-xs text-foreground/70">Category</label>
+                  <select
+                    value={newCategory}
+                    onChange={(e) => setNewCategory(e.target.value)}
                     className="w-full rounded border border-foreground/20 bg-background px-2 py-2 text-sm"
-                  />
+                  >
+                    <option value="action">Action</option>
+                    <option value="discussion">Discussion</option>
+                    <option value="information">Information</option>
+                    <option value="consent">Consent</option>
+                    <option value="other">Other</option>
+                  </select>
                 </div>
               </div>
-            </details>
 
-            <div className="flex flex-wrap justify-end gap-2">
-              <Button type="submit" size="sm" variant="outline" disabled={!canCreateNewItem}>
-                Save Draft
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => void createItem(true)}
-                disabled={!canCreateNewItem}
-              >
-                Submit for review
-              </Button>
-            </div>
-          </form>
-        ) : null}
-      </div>
+              <details className="rounded-md border border-foreground/10 bg-foreground/5 px-3 py-2" open>
+                <summary className="cursor-pointer text-xs font-medium text-foreground/70">
+                  Add details (optional)
+                </summary>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <div className="sm:col-span-2">
+                    <label className="mb-1 block text-xs text-foreground/70">Background</label>
+                    <textarea
+                      value={newBackground}
+                      onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setNewBackground(e.target.value)}
+                      placeholder="Context and background information..."
+                      rows={3}
+                      className="w-full rounded border border-foreground/20 bg-background px-2 py-2 text-sm"
+                    />
+                  </div>
+
+                  <div className="sm:col-span-2">
+                    <label className="mb-1 block text-xs text-foreground/70">Recommended Motion</label>
+                    <textarea
+                      value={newMotion}
+                      onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setNewMotion(e.target.value)}
+                      placeholder="Motion language if this is an action item..."
+                      rows={2}
+                      className="w-full rounded border border-foreground/20 bg-background px-2 py-2 text-sm"
+                    />
+                  </div>
+
+                  <div className="sm:col-span-2">
+                    <label className="mb-1 block text-xs text-foreground/70">Fiscal Impact</label>
+                    <input
+                      type="text"
+                      value={newFiscal}
+                      onChange={(e: ChangeEvent<HTMLInputElement>) => setNewFiscal(e.target.value)}
+                      placeholder="e.g., $500 from ASGC Budget"
+                      className="w-full rounded border border-foreground/20 bg-background px-2 py-2 text-sm"
+                    />
+                  </div>
+
+                  <div className="sm:col-span-2">
+                    <label className="mb-1 block text-xs text-foreground/70">Supporting documents (URLs)</label>
+                    <textarea
+                      value={newAttachments}
+                      onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setNewAttachments(e.target.value)}
+                      placeholder="One URL per line"
+                      rows={2}
+                      className="w-full rounded border border-foreground/20 bg-background px-2 py-2 text-sm"
+                    />
+                  </div>
+                </div>
+              </details>
+
+              <div className="sticky bottom-0 -mx-4 border-t border-foreground/10 bg-background/95 px-4 py-2 backdrop-blur">
+                <div className="flex flex-wrap justify-end gap-2">
+                  <Button type="submit" size="sm" variant="outline" disabled={!canCreateNewItem}>
+                    Save Draft
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => void createItem(true)}
+                    disabled={!canCreateNewItem}
+                  >
+                    Submit for review
+                  </Button>
+                </div>
+              </div>
+            </form>
+          ) : null}
+        </div>
+      ) : (
+        <div className="rounded-lg border border-foreground/10 p-4 text-sm text-foreground/70">
+          Agenda submissions are closed for this meeting.
+        </div>
+      )}
 
       {/* My items section */}
       <div>
@@ -965,13 +1323,23 @@ export function AgendaItemsPanel({
                       rows={2}
                       className="w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
                     />
-                    <div className="flex gap-2">
-                      <Button type="submit" size="sm" disabled={!submissionOpen || !editTitle.trim() || !!actionBusy}>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button
+                        type="submit"
+                        size="sm"
+                        disabled={
+                          !editTitle.trim() ||
+                          !!actionBusy ||
+                          (!submissionOpen && item.state === "draft") ||
+                          !meetingActive
+                        }
+                      >
                         Save
                       </Button>
                       <Button type="button" variant="outline" size="sm" onClick={cancelEdit}>
                         Cancel
                       </Button>
+                      <span className="text-xs text-foreground/60">Edits are tracked for review.</span>
                     </div>
                   </form>
                 ) : (
@@ -1035,38 +1403,34 @@ export function AgendaItemsPanel({
                     ) : null}
 
                     {/* Actions for own items */}
-                    {item.state === "draft" ? (
-                      <div className="mt-3 flex gap-2">
+                    {item.state === "draft" || item.state === "submitted" ? (
+                      <div className="mt-3 flex flex-wrap gap-2">
                         <Button
                           type="button"
                           size="sm"
                           onClick={() => startEdit(item)}
-                          disabled={!submissionOpen || !!actionBusy}
-                          title={submissionOpen ? "Edit draft" : "Submission deadline has passed"}
+                          disabled={!!actionBusy || !meetingActive || (!submissionOpen && item.state === "draft")}
+                          title={
+                            !meetingActive
+                              ? "Updates are disabled"
+                              : submissionOpen || item.state === "submitted"
+                                ? "Edit item"
+                                : "Submission deadline has passed"
+                          }
                         >
                           Edit
                         </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          onClick={() => handleSubmit(item.id)}
-                          disabled={!submissionOpen || !!actionBusy}
-                          title={submissionOpen ? "Submit for review" : "Submission deadline has passed"}
-                        >
-                          Submit
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleWithdraw(item.id)}
-                          disabled={!!actionBusy}
-                        >
-                          Withdraw
-                        </Button>
-                      </div>
-                    ) : item.state === "submitted" ? (
-                      <div className="mt-3">
+                        {item.state === "draft" ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={() => handleSubmit(item.id)}
+                            disabled={!submissionOpen || !!actionBusy}
+                            title={submissionOpen ? "Submit for review" : "Submission deadline has passed"}
+                          >
+                            Submit
+                          </Button>
+                        ) : null}
                         <Button
                           type="button"
                           variant="outline"
@@ -1078,6 +1442,11 @@ export function AgendaItemsPanel({
                         </Button>
                       </div>
                     ) : null}
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <Button type="button" variant="outline" size="sm" onClick={() => handleCreateTask(item)}>
+                        {item.fiscal_impact ? "Create finance task" : "Create task"}
+                      </Button>
+                    </div>
                   </>
                 )}
               </div>
@@ -1092,32 +1461,101 @@ export function AgendaItemsPanel({
           <h3 className="mb-3 text-sm font-medium">
             All Submissions ({filteredAllItems.length} of {allItems.length})
           </h3>
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+            <div className="text-xs text-foreground/60">You have chair privileges for this meeting.</div>
+            <div className="flex flex-wrap items-center gap-2 text-xs text-foreground/70">
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={allSelectableSelected}
+                  onChange={(e) => toggleSelectAllAdminItems(e.target.checked)}
+                  disabled={selectableAdminItems.length === 0}
+                />
+                <span>Select all submitted ({selectableAdminItems.length})</span>
+              </label>
+              <span>{selectedAdminIds.length} selected</span>
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => void handleBulkReview("accepted")}
+                disabled={selectedAdminIds.length === 0 || !!actionBusy}
+              >
+                Accept selected
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => void handleBulkReview("rejected")}
+                disabled={selectedAdminIds.length === 0 || !!actionBusy}
+              >
+                Reject selected
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => void handleBulkReview("tabled")}
+                disabled={selectedAdminIds.length === 0 || !!actionBusy}
+              >
+                Table selected
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() => setSelectedAdminItems({})}
+                disabled={selectedAdminIds.length === 0 || !!actionBusy}
+              >
+                Clear selection
+              </Button>
+            </div>
+          </div>
           {filteredAllItems.length === 0 ? (
             <div className="text-sm text-foreground/70">
               {agendaFiltersActive ? "No submissions match the current filters." : "No submissions for this meeting."}
             </div>
           ) : (
             <div className="grid gap-3 sm:grid-cols-2">
-              {filteredAllItems.map((item) => (
+              {filteredAllItems.map((item) => {
+                const agendaIndex = orderedAgendaItems.findIndex((agendaItem) => agendaItem.id === item.id);
+                const isAgendaItem = item.state === "accepted" || item.state === "tabled";
+                const canMoveUp = agendaIndex > 0;
+                const canMoveDown = agendaIndex >= 0 && agendaIndex < orderedAgendaItems.length - 1;
+                return (
                 <div key={item.id} className="rounded-lg border border-foreground/10 p-4">
                   <div className="flex flex-wrap items-start justify-between gap-2">
-                    <div>
-                      <div className="font-medium">{item.title}</div>
-                      <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
-                        <span className="rounded bg-foreground/5 px-1.5 py-0.5">
-                          {formatCategory(item.category)}
-                        </span>
-                        <span className={`rounded px-1.5 py-0.5 ${stateColor(item.state)}`}>
-                          {formatState(item.state)}
-                        </span>
-                        {item.is_late ? (
-                          <span
-                            className="rounded bg-orange-100 px-1.5 py-0.5 text-orange-700"
-                            title="Submitted after the deadline"
-                          >
-                            Late
+                    <div className="flex items-start gap-2">
+                      <input
+                        type="checkbox"
+                        className="mt-1"
+                        checked={!!selectedAdminItems[item.id]}
+                        onChange={() => toggleAdminSelection(item.id)}
+                        disabled={item.state !== "submitted" || !!actionBusy}
+                        title={
+                          item.state === "submitted"
+                            ? "Select for bulk review"
+                            : "Only submitted items can be selected"
+                        }
+                      />
+                      <div>
+                        <div className="font-medium">{item.title}</div>
+                        <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
+                          <span className="rounded bg-foreground/5 px-1.5 py-0.5">
+                            {formatCategory(item.category)}
                           </span>
-                        ) : null}
+                          <span className={`rounded px-1.5 py-0.5 ${stateColor(item.state)}`}>
+                            {formatState(item.state)}
+                          </span>
+                          {item.is_late ? (
+                            <span
+                              className="rounded bg-orange-100 px-1.5 py-0.5 text-orange-700"
+                              title="Submitted after the deadline"
+                            >
+                              Late
+                            </span>
+                          ) : null}
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -1159,38 +1597,74 @@ export function AgendaItemsPanel({
                   ) : null}
 
                   {/* Admin review buttons */}
-                  {item.state === "submitted" ? (
-                    <div className="mt-3 flex gap-2">
-                      <Button
-                        type="button"
-                        size="sm"
-                        onClick={() => handleReview(item.id, "accepted")}
-                        disabled={!!actionBusy}
-                      >
-                        Accept
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleReview(item.id, "rejected")}
-                        disabled={!!actionBusy}
-                      >
-                        Reject
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleReview(item.id, "tabled")}
-                        disabled={!!actionBusy}
-                      >
-                        Table
-                      </Button>
-                    </div>
-                  ) : null}
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {item.state === "submitted" ? (
+                      <>
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={() => handleReview(item.id, "accepted")}
+                          disabled={!!actionBusy}
+                        >
+                          Accept
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleReview(item.id, "rejected")}
+                          disabled={!!actionBusy}
+                        >
+                          Reject
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleReview(item.id, "tabled")}
+                          disabled={!!actionBusy}
+                        >
+                          Table
+                        </Button>
+                      </>
+                    ) : null}
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => void handleLateOverride(item.id, !item.is_late)}
+                      disabled={!!actionBusy}
+                    >
+                      {item.is_late ? "Clear late" : "Mark late"}
+                    </Button>
+                    {agendaSort === "agenda" && isAgendaItem ? (
+                      <>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => void handleMoveAgendaItem(item.id, -1)}
+                          disabled={!canMoveUp || !!actionBusy}
+                        >
+                          Move up
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => void handleMoveAgendaItem(item.id, 1)}
+                          disabled={!canMoveDown || !!actionBusy}
+                        >
+                          Move down
+                        </Button>
+                      </>
+                    ) : null}
+                    <Button type="button" variant="outline" size="sm" onClick={() => handleCreateTask(item)}>
+                      {item.fiscal_impact ? "Create finance task" : "Create task"}
+                    </Button>
+                  </div>
                 </div>
-              ))}
+              );})}
             </div>
           )}
         </div>

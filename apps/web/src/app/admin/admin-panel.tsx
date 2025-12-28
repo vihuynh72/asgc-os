@@ -1,10 +1,12 @@
 "use client";
 
-import type { ChangeEvent } from "react";
+import type { ChangeEvent, SyntheticEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { copyTextWithFallback } from "@/lib/clipboard";
 import { addDaysDateOnly, normalizeDateOnlyString, startOfWeekMondayDateOnly, todayDateString } from "@/lib/dateOnly";
 import { allowlistKeysForNormalizedEmail } from "@/lib/invitesAllowlist";
 
@@ -255,6 +257,17 @@ function isValidTimeZone(value: string): boolean {
     return true;
   } catch {
     return false;
+  }
+}
+
+function openNativeDatetimePicker(event: SyntheticEvent<HTMLInputElement>) {
+  const input = event.currentTarget;
+  if (typeof input.showPicker === "function") {
+    try {
+      input.showPicker();
+    } catch {
+      // Ignore if the browser blocks programmatic picker access.
+    }
   }
 }
 
@@ -574,13 +587,36 @@ export function AdminPanel({
   const canSeeAccessTab = tier === "full";
   const canSeeRolesTab = tier === "full";
   const canSeeOfficeConfig = tier === "full" || isEvp;
+  const router = useRouter();
+  const searchParams = useSearchParams();
 
   const [terms, setTerms] = useState<TermRow[]>(initialTerms);
   const [users, setUsers] = useState<UserRow[]>(initialUsers);
   const [selectedTermId, setSelectedTermId] = useState<string>(initialSelectedTermId);
   // Default tab based on permissions
   const defaultTab = canSeeAccessTab ? "access" : canSeeOfficeConfig ? "office_hours" : "meetings";
-  const [adminTab, setAdminTab] = useState<"access" | "office_hours" | "roles" | "meetings">(defaultTab);
+  const requestedTab = searchParams.get("tab");
+  const isTabAllowed = (tab: string | null) => {
+    if (!tab) return false;
+    if (tab === "access") return canSeeAccessTab;
+    if (tab === "office_hours") return canSeeOfficeConfig;
+    if (tab === "roles") return canSeeRolesTab;
+    if (tab === "meetings") return true;
+    return false;
+  };
+  const initialTab = (isTabAllowed(requestedTab) ? requestedTab : defaultTab) as
+    | "access"
+    | "office_hours"
+    | "roles"
+    | "meetings";
+  const [adminTab, setAdminTab] = useState<"access" | "office_hours" | "roles" | "meetings">(initialTab);
+
+  useEffect(() => {
+    if (!requestedTab) return;
+    if (isTabAllowed(requestedTab) && requestedTab !== adminTab) {
+      setAdminTab(requestedTab as "access" | "office_hours" | "roles" | "meetings");
+    }
+  }, [requestedTab, adminTab, canSeeAccessTab, canSeeOfficeConfig, canSeeRolesTab]);
 
   const [globalAdvisorAssignments, setGlobalAdvisorAssignments] = useState<AssignmentRow[]>(
     initialGlobalAdvisorAssignments,
@@ -616,6 +652,9 @@ export function AdminPanel({
   function onSelectAdminTab(nextTab: typeof adminTab) {
     if (nextTab !== "access") setRoleGrantInviteId(null);
     setAdminTab(nextTab);
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("tab", nextTab);
+    router.replace(`?${params.toString()}`);
     if (nextTab === "meetings") {
       void loadMeetings();
       if (committees.length === 0) {
@@ -705,11 +744,17 @@ export function AdminPanel({
   const [meetingPublicCommentInstructions, setMeetingPublicCommentInstructions] = useState<string>("");
   const [meetingStartsAtLocal, setMeetingStartsAtLocal] = useState<string>("");
   const [meetingEndsAtLocal, setMeetingEndsAtLocal] = useState<string>("");
+  const [meetingCopySourceId, setMeetingCopySourceId] = useState<string | null>(null);
   const [meetingSearch, setMeetingSearch] = useState<string>("");
   const [meetingStatusFilter, setMeetingStatusFilter] = useState<string>("all");
   const [meetingTypeFilter, setMeetingTypeFilter] = useState<string>("all");
   const [meetingUpcomingOnly, setMeetingUpcomingOnly] = useState<boolean>(false);
+  const [meetingMissingNoticeOnly, setMeetingMissingNoticeOnly] = useState<boolean>(false);
+  const [meetingMissingAgendaOnly, setMeetingMissingAgendaOnly] = useState<boolean>(false);
+  const [meetingMissingMinutesOnly, setMeetingMissingMinutesOnly] = useState<boolean>(false);
   const [meetingCommitteeFilter, setMeetingCommitteeFilter] = useState<string>("all");
+  const [meetingStartDateFilter, setMeetingStartDateFilter] = useState<string>("");
+  const [meetingEndDateFilter, setMeetingEndDateFilter] = useState<string>("");
   const [meetingSort, setMeetingSort] = useState<"recent" | "upcoming">("recent");
   const [meetingsLastLoadedAt, setMeetingsLastLoadedAt] = useState<string | null>(null);
   const [adminMeetings, setAdminMeetings] = useState<AdminMeetingRow[]>([]);
@@ -1220,12 +1265,12 @@ export function AdminPanel({
       return;
     }
 
-    try {
-      await navigator.clipboard.writeText(emails.join("\n"));
-      setTransientExportPreviewStatus(`Copied ${emails.length} email${emails.length === 1 ? "" : "s"}.`);
-    } catch {
-      setTransientExportPreviewStatus("Copy failed.");
-    }
+    const ok = await copyTextWithFallback(emails.join("\n"), { promptLabel: "Copy email list" });
+    setTransientExportPreviewStatus(
+      ok
+        ? `Copied ${emails.length} email${emails.length === 1 ? "" : "s"}.`
+        : "Clipboard blocked. Use the prompt to copy.",
+    );
   }
 
   function downloadExportPreviewCsv() {
@@ -1404,6 +1449,7 @@ export function AdminPanel({
       setMeetingStartsAtLocal("");
       setMeetingEndsAtLocal("");
       setMeetingCommitteeId("");
+      setMeetingCopySourceId(null);
       await loadMeetings();
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Failed to create meeting";
@@ -1421,10 +1467,11 @@ export function AdminPanel({
     setMeetingRemoteUrl(meeting.remote_url ?? "");
     setMeetingLivestreamUrl(meeting.livestream_url ?? "");
     setMeetingPublicCommentInstructions(meeting.public_comment_instructions ?? "");
-    setMeetingStartsAtLocal(datetimeLocalFromIso(meeting.starts_at));
-    setMeetingEndsAtLocal(datetimeLocalFromIso(meeting.ends_at));
-    setStatus("Meeting copied to create form.");
-    toast.success("Meeting copied to create form");
+    setMeetingStartsAtLocal("");
+    setMeetingEndsAtLocal("");
+    setMeetingCopySourceId(meeting.id);
+    setStatus("Meeting copied. Select a new date and time.");
+    toast.success("Meeting copied. Select a new date and time.");
     meetingCreateRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
@@ -1435,38 +1482,47 @@ export function AdminPanel({
   }
 
   async function copyMeetingLink(meetingId: string) {
-    try {
-      const url = `${window.location.origin}/meetings/${meetingId}`;
-      await navigator.clipboard.writeText(url);
+    const url = `${window.location.origin}/meetings/${meetingId}`;
+    const ok = await copyTextWithFallback(url, { promptLabel: "Copy meeting link" });
+    if (ok) {
       setStatus("Meeting link copied.");
       toast.success("Meeting link copied");
-    } catch {
-      const msg = "Copy failed. Your browser may block clipboard access.";
+    } else {
+      const msg = "Clipboard blocked. Use the prompt to copy.";
       setStatus(msg);
-      toast.error(msg);
+      toast.info(msg);
     }
   }
 
   async function copyMeetingSummary(meeting: AdminMeetingRow, committeeLabel: string) {
-    try {
-      const startLabel = formatDateTimeInZone(meeting.starts_at, officeTimezoneLabel);
-      const endLabel = formatDateTimeInZone(meeting.ends_at, officeTimezoneLabel);
-      const parts = [
-        meeting.title,
-        `${startLabel} → ${endLabel}`,
-        `Type: ${formatMeetingTypeLabel(meeting.meeting_type)}`,
-        meeting.committee_id ? `Committee: ${committeeLabel}` : null,
-        meeting.location ? `Location: ${meeting.location}` : null,
-        meeting.remote_url ? `Remote: ${meeting.remote_url}` : null,
-        meeting.livestream_url ? `Livestream: ${meeting.livestream_url}` : null,
-      ].filter(Boolean) as string[];
-      await navigator.clipboard.writeText(parts.join("\n"));
+    const startLabel = formatDateTimeInZone(meeting.starts_at, officeTimezoneLabel);
+    const endLabel = formatDateTimeInZone(meeting.ends_at, officeTimezoneLabel);
+    const parts = [
+      meeting.title,
+      `${startLabel} → ${endLabel}`,
+      `Type: ${formatMeetingTypeLabel(meeting.meeting_type)}`,
+      meeting.committee_id ? `Committee: ${committeeLabel}` : null,
+      meeting.location ? `Location: ${meeting.location}` : null,
+      meeting.remote_url ? `Remote: ${meeting.remote_url}` : null,
+      meeting.livestream_url ? `Livestream: ${meeting.livestream_url}` : null,
+    ].filter(Boolean) as string[];
+    const ok = await copyTextWithFallback(parts.join("\n"), { promptLabel: "Copy meeting summary" });
+    if (ok) {
       setStatus("Meeting summary copied.");
       toast.success("Meeting summary copied");
-    } catch {
-      const msg = "Copy failed. Your browser may block clipboard access.";
+    } else {
+      const msg = "Clipboard blocked. Use the prompt to copy.";
       setStatus(msg);
-      toast.error(msg);
+      toast.info(msg);
+    }
+  }
+
+  async function copyMeetingUrl(label: string, url: string) {
+    const ok = await copyTextWithFallback(url, { promptLabel: `Copy ${label}` });
+    if (ok) {
+      toast.success(`${label} copied`);
+    } else {
+      toast.info("Clipboard blocked. Use the prompt to copy.");
     }
   }
 
@@ -1479,6 +1535,7 @@ export function AdminPanel({
     setMeetingPublicCommentInstructions("");
     setMeetingStartsAtLocal("");
     setMeetingEndsAtLocal("");
+    setMeetingCopySourceId(null);
     if (meetingType === "committee") {
       setMeetingCommitteeId("");
     }
@@ -2231,13 +2288,13 @@ export function AdminPanel({
   }
 
   async function onCopyInviteEmail(invite: InviteAllowlistRow) {
-    try {
-      await navigator.clipboard.writeText(invite.email);
+    const ok = await copyTextWithFallback(invite.email, { promptLabel: "Copy invite email" });
+    if (ok) {
       toast.success("Invite copied");
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Failed to copy invite";
+    } else {
+      const msg = "Clipboard blocked. Use the prompt to copy.";
       setStatus(msg);
-      toast.error(msg);
+      toast.info(msg);
     }
   }
 
@@ -2283,14 +2340,16 @@ export function AdminPanel({
 
   async function onCopySelectedInviteEmails() {
     if (selectedInvites.length === 0) return;
-    try {
-      await navigator.clipboard.writeText(selectedInvites.map((inv) => inv.email).join("\n"));
+    const ok = await copyTextWithFallback(selectedInvites.map((inv) => inv.email).join("\n"), {
+      promptLabel: "Copy selected invite emails",
+    });
+    if (ok) {
       setStatus(`Copied ${selectedInvites.length} email${selectedInvites.length === 1 ? "" : "s"} to clipboard.`);
       toast.success("Emails copied");
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Failed to copy to clipboard";
+    } else {
+      const msg = "Clipboard blocked. Use the prompt to copy.";
       setStatus(msg);
-      toast.error(msg);
+      toast.info(msg);
     }
   }
 
@@ -2790,13 +2849,28 @@ export function AdminPanel({
 
   const filteredMeetings = (() => {
     const query = meetingSearch.trim().toLowerCase();
+    const startFilterTs = meetingStartDateFilter
+      ? new Date(`${meetingStartDateFilter}T00:00:00`).getTime()
+      : null;
+    const endFilterTs = meetingEndDateFilter
+      ? new Date(`${meetingEndDateFilter}T23:59:59`).getTime()
+      : null;
     const filtered = adminMeetings.filter((m) => {
       if (meetingStatusFilter !== "all" && m.status !== meetingStatusFilter) return false;
       if (meetingTypeFilter !== "all" && m.meeting_type !== meetingTypeFilter) return false;
       if (meetingCommitteeFilter !== "all" && m.committee_id !== meetingCommitteeFilter) return false;
+      if (meetingMissingNoticeOnly && m.notice_posted_at) return false;
+      if (meetingMissingAgendaOnly && m.agenda_posted_at) return false;
+      if (meetingMissingMinutesOnly && m.minutes_posted_at) return false;
       if (meetingUpcomingOnly) {
         const endTs = new Date(m.ends_at).getTime();
         if (Number.isNaN(endTs) || (meetingsLastLoadedTs > 0 && endTs < meetingsLastLoadedTs)) return false;
+      }
+      if (startFilterTs || endFilterTs) {
+        const meetingStart = new Date(m.starts_at).getTime();
+        if (Number.isNaN(meetingStart)) return false;
+        if (startFilterTs && !Number.isNaN(startFilterTs) && meetingStart < startFilterTs) return false;
+        if (endFilterTs && !Number.isNaN(endFilterTs) && meetingStart > endFilterTs) return false;
       }
 
       const haystack = [
@@ -2826,7 +2900,71 @@ export function AdminPanel({
     meetingStatusFilter !== "all" ||
     meetingTypeFilter !== "all" ||
     meetingUpcomingOnly ||
-    meetingCommitteeFilter !== "all";
+    meetingMissingNoticeOnly ||
+    meetingMissingAgendaOnly ||
+    meetingMissingMinutesOnly ||
+    meetingCommitteeFilter !== "all" ||
+    meetingStartDateFilter.trim().length > 0 ||
+    meetingEndDateFilter.trim().length > 0;
+
+  const meetingDateRangeError =
+    meetingStartDateFilter && meetingEndDateFilter && meetingStartDateFilter > meetingEndDateFilter
+      ? "Start date is after end date."
+      : "";
+
+  const filteredMeetingStatusCounts = (() => {
+    const counts = { scheduled: 0, cancelled: 0, completed: 0 };
+    for (const meeting of filteredMeetings) {
+      if (meeting.status === "scheduled") counts.scheduled += 1;
+      else if (meeting.status === "cancelled") counts.cancelled += 1;
+      else if (meeting.status === "completed") counts.completed += 1;
+    }
+    return counts;
+  })();
+
+  const filteredMeetingMissingCounts = (() => {
+    const counts = { notice: 0, agenda: 0, minutes: 0 };
+    for (const meeting of filteredMeetings) {
+      if (!meeting.notice_posted_at) counts.notice += 1;
+      if (!meeting.agenda_posted_at) counts.agenda += 1;
+      if (!meeting.minutes_posted_at) counts.minutes += 1;
+    }
+    return counts;
+  })();
+
+  const meetingActiveFilterLabels = useMemo(() => {
+    const labels: string[] = [];
+    const query = meetingSearch.trim();
+    if (query) labels.push(`Search: "${query}"`);
+    if (meetingStatusFilter !== "all") labels.push(`Status: ${meetingStatusFilter}`);
+    if (meetingTypeFilter !== "all") labels.push(`Type: ${meetingTypeFilter}`);
+    if (meetingCommitteeFilter !== "all") {
+      const label = committeeById.get(meetingCommitteeFilter)?.name ?? meetingCommitteeFilter;
+      labels.push(`Committee: ${label}`);
+    }
+    if (meetingUpcomingOnly) labels.push("Upcoming only");
+    if (meetingMissingNoticeOnly) labels.push("Missing notice");
+    if (meetingMissingAgendaOnly) labels.push("Missing agenda");
+    if (meetingMissingMinutesOnly) labels.push("Missing minutes");
+    if (meetingStartDateFilter || meetingEndDateFilter) {
+      labels.push(`Date: ${meetingStartDateFilter || "any"} → ${meetingEndDateFilter || "any"}`);
+    }
+    if (meetingSort !== "recent") labels.push("Sort: Upcoming");
+    return labels;
+  }, [
+    committeeById,
+    meetingCommitteeFilter,
+    meetingEndDateFilter,
+    meetingSearch,
+    meetingSort,
+    meetingStartDateFilter,
+    meetingStatusFilter,
+    meetingTypeFilter,
+    meetingUpcomingOnly,
+    meetingMissingNoticeOnly,
+    meetingMissingAgendaOnly,
+    meetingMissingMinutesOnly,
+  ]);
 
   const meetingDurationLabel = useMemo(() => {
     if (!meetingStartsAtLocal || !meetingEndsAtLocal) return "";
@@ -2946,6 +3084,28 @@ export function AdminPanel({
     const endLabel = formatDateTimeInZone(endIso, officeTimezoneLabel);
     return `${startLabel} → ${endLabel}`;
   }, [meetingStartsAtLocal, meetingEndsAtLocal, officeTimezoneLabel]);
+  const meetingCopySource = meetingCopySourceId
+    ? adminMeetings.find((meeting) => meeting.id === meetingCopySourceId) ?? null
+    : null;
+  const meetingConflictWarning = useMemo(() => {
+    if (!meetingStartsAtLocal || !meetingEndsAtLocal) return "";
+    const start = new Date(meetingStartsAtLocal);
+    const end = new Date(meetingEndsAtLocal);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) return "";
+    const startMs = start.getTime();
+    const endMs = end.getTime();
+    const conflicts = adminMeetings.filter((meeting) => {
+      if (meeting.status !== "scheduled") return false;
+      const meetingStart = new Date(meeting.starts_at).getTime();
+      const meetingEnd = new Date(meeting.ends_at).getTime();
+      if (Number.isNaN(meetingStart) || Number.isNaN(meetingEnd)) return false;
+      return meetingStart < endMs && meetingEnd > startMs;
+    });
+    if (conflicts.length === 0) return "";
+    const labels = conflicts.slice(0, 2).map((meeting) => meeting.title || "Untitled meeting");
+    const extra = conflicts.length > 2 ? ` +${conflicts.length - 2} more` : "";
+    return `Potential conflict with ${labels.join(", ")}${extra}.`;
+  }, [meetingStartsAtLocal, meetingEndsAtLocal, adminMeetings]);
   const meetingRemoteUrlError =
     meetingRemoteUrl.trim().length > 0 && !isValidHttpUrl(meetingRemoteUrl.trim())
       ? "Remote access URL must start with http:// or https://"
@@ -2987,6 +3147,9 @@ export function AdminPanel({
     : !isReadOnly && meetingCreateDisabledReason
       ? meetingCreateDisabledReason
       : "";
+  const meetingDuplicateNotice = meetingCopySource
+    ? `Duplicating "${meetingCopySource.title || "Untitled meeting"}". Select a new date and time before creating.`
+    : "";
   const committeeNameError = newCommitteeName.trim().length === 0 ? "Committee name is required." : "";
   const committeeKeyError = getCommitteeKeyValidationError(newCommitteeKey, committees);
   const committeeCreateDisabledReason = committeeCreating
@@ -3013,6 +3176,120 @@ export function AdminPanel({
     setMeetingTypeFilter("all");
     setMeetingCommitteeFilter("all");
     setMeetingUpcomingOnly(false);
+    setMeetingMissingNoticeOnly(false);
+    setMeetingMissingAgendaOnly(false);
+    setMeetingMissingMinutesOnly(false);
+    setMeetingStartDateFilter("");
+    setMeetingEndDateFilter("");
+  }
+
+  function applyMeetingDatePreset(preset: "today" | "week" | "next30" | "past30") {
+    const today = todayDateString();
+    if (!today) return;
+    if (preset === "today") {
+      setMeetingStartDateFilter(today);
+      setMeetingEndDateFilter(today);
+      setMeetingUpcomingOnly(false);
+      return;
+    }
+    if (preset === "week") {
+      const start = startOfWeekMondayDateOnly(today) ?? today;
+      const end = addDaysDateOnly(start, 6) ?? start;
+      setMeetingStartDateFilter(start);
+      setMeetingEndDateFilter(end);
+      setMeetingUpcomingOnly(false);
+      return;
+    }
+    if (preset === "next30") {
+      const end = addDaysDateOnly(today, 30) ?? today;
+      setMeetingStartDateFilter(today);
+      setMeetingEndDateFilter(end);
+      setMeetingUpcomingOnly(false);
+      return;
+    }
+    const pastStart = addDaysDateOnly(today, -30) ?? today;
+    setMeetingStartDateFilter(pastStart);
+    setMeetingEndDateFilter(today);
+    setMeetingUpcomingOnly(false);
+  }
+
+  function buildMeetingsCsv(list: AdminMeetingRow[]) {
+    const headers = [
+      "Title",
+      "Status",
+      "Type",
+      "Committee",
+      "Start",
+      "End",
+      "Location",
+      "Remote URL",
+      "Livestream URL",
+      "Notice Posted At",
+      "Agenda Posted At",
+      "Minutes Posted At",
+    ];
+    const rows = list.map((meeting) => [
+      meeting.title,
+      meeting.status,
+      meeting.meeting_type,
+      meeting.committee_id ? committeeById.get(meeting.committee_id)?.name ?? meeting.committee_id : "",
+      meeting.starts_at,
+      meeting.ends_at,
+      meeting.location ?? "",
+      meeting.remote_url ?? "",
+      meeting.livestream_url ?? "",
+      meeting.notice_posted_at ?? "",
+      meeting.agenda_posted_at ?? "",
+      meeting.minutes_posted_at ?? "",
+    ]);
+    return [headers, ...rows].map((row) => row.map(toCsvValue).join(",")).join("\n");
+  }
+
+  async function copyFilteredMeetingSummaries() {
+    if (filteredMeetings.length === 0) {
+      toast.error("No meetings to copy");
+      return;
+    }
+    const lines = filteredMeetings.map((meeting) => {
+      const startLabel = formatDateTimeInZone(meeting.starts_at, officeTimezoneLabel);
+      const endLabel = formatDateTimeInZone(meeting.ends_at, officeTimezoneLabel);
+      const committeeLabel = meeting.committee_id
+        ? committeeById.get(meeting.committee_id)?.name ?? meeting.committee_id
+        : "";
+      return [
+        meeting.title,
+        `${startLabel} → ${endLabel}`,
+        formatMeetingTypeLabel(meeting.meeting_type),
+        committeeLabel ? `Committee: ${committeeLabel}` : null,
+        meeting.location ? `Location: ${meeting.location}` : null,
+      ]
+        .filter(Boolean)
+        .join(" • ");
+    });
+    const ok = await copyTextWithFallback(lines.join("\n"), { promptLabel: "Copy meeting summaries" });
+    if (ok) {
+      toast.success("Meeting summaries copied");
+    } else {
+      toast.info("Clipboard blocked. Use the prompt to copy.");
+    }
+  }
+
+  function downloadFilteredMeetingsCsv() {
+    if (filteredMeetings.length === 0) {
+      toast.error("No meetings to export");
+      return;
+    }
+    const csv = buildMeetingsCsv(filteredMeetings);
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `meetings_${todayDateString() ?? "export"}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    toast.success("Meetings CSV downloaded");
   }
 
   return (
@@ -4936,6 +5213,9 @@ export function AdminPanel({
                       type="datetime-local"
                       className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
                       value={meetingStartsAtLocal}
+                      step={900}
+                      onClick={openNativeDatetimePicker}
+                      onFocus={openNativeDatetimePicker}
                       onChange={(e: ChangeEvent<HTMLInputElement>) => {
                         const next = e.target.value;
                         setMeetingStartsAtLocal(next);
@@ -4964,6 +5244,9 @@ export function AdminPanel({
                       type="datetime-local"
                       className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
                       value={meetingEndsAtLocal}
+                      step={900}
+                      onClick={openNativeDatetimePicker}
+                      onFocus={openNativeDatetimePicker}
                       min={meetingStartsAtLocal || undefined}
                       onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingEndsAtLocal(e.target.value)}
                       aria-invalid={!!meetingEndsError || !!meetingTimeError}
@@ -5092,6 +5375,12 @@ export function AdminPanel({
               </div>
               {meetingCreateHelper ? (
                 <div className="text-xs text-foreground/60">{meetingCreateHelper}</div>
+              ) : null}
+              {meetingDuplicateNotice ? (
+                <div className="text-xs text-amber-600">{meetingDuplicateNotice}</div>
+              ) : null}
+              {meetingConflictWarning ? (
+                <div className="text-xs text-amber-600">{meetingConflictWarning}</div>
               ) : null}
             </div>
           </div>
@@ -5429,6 +5718,25 @@ export function AdminPanel({
                       ))}
                     </select>
                   </label>
+
+                  <label className="space-y-1 text-sm">
+                    <div className="text-foreground/70">Start date</div>
+                    <input
+                      type="date"
+                      className="h-9 w-full rounded-md border bg-transparent px-2 text-sm sm:w-36"
+                      value={meetingStartDateFilter}
+                      onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingStartDateFilter(e.target.value)}
+                    />
+                  </label>
+                  <label className="space-y-1 text-sm">
+                    <div className="text-foreground/70">End date</div>
+                    <input
+                      type="date"
+                      className="h-9 w-full rounded-md border bg-transparent px-2 text-sm sm:w-36"
+                      value={meetingEndDateFilter}
+                      onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingEndDateFilter(e.target.value)}
+                    />
+                  </label>
                 </div>
 
                 <div className="flex flex-wrap items-end gap-2">
@@ -5458,19 +5766,88 @@ export function AdminPanel({
                     />
                     <span className="text-foreground/70">Upcoming only</span>
                   </label>
+                  <div className="flex flex-wrap items-center gap-2 text-sm">
+                    <span className="text-foreground/50">Missing</span>
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={meetingMissingNoticeOnly}
+                        onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingMissingNoticeOnly(e.target.checked)}
+                      />
+                      <span className="text-foreground/70">Notice</span>
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={meetingMissingAgendaOnly}
+                        onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingMissingAgendaOnly(e.target.checked)}
+                      />
+                      <span className="text-foreground/70">Agenda</span>
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={meetingMissingMinutesOnly}
+                        onChange={(e: ChangeEvent<HTMLInputElement>) => setMeetingMissingMinutesOnly(e.target.checked)}
+                      />
+                      <span className="text-foreground/70">Minutes</span>
+                    </label>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1 text-xs text-foreground/60">
+                    <span>Quick ranges</span>
+                    <Button size="sm" variant="ghost" onClick={() => applyMeetingDatePreset("today")}>
+                      Today
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => applyMeetingDatePreset("week")}>
+                      This week
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => applyMeetingDatePreset("next30")}>
+                      Next 30 days
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => applyMeetingDatePreset("past30")}>
+                      Past 30 days
+                    </Button>
+                  </div>
                   <Button variant="ghost" size="sm" onClick={resetMeetingFilters} disabled={!meetingFiltersActive}>
                     Reset
                   </Button>
                   <Button variant="ghost" onClick={() => void loadMeetings()}>
                     Refresh
                   </Button>
+                  <Button variant="ghost" size="sm" onClick={downloadFilteredMeetingsCsv}>
+                    Export CSV
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => void copyFilteredMeetingSummaries()}>
+                    Copy list
+                  </Button>
                 </div>
               </div>
             </div>
             <div className="mt-2 text-xs text-foreground/60">
               Showing {filteredMeetings.length} of {adminMeetings.length} meetings.
+              <span className="ml-2">
+                Scheduled {filteredMeetingStatusCounts.scheduled} • Completed {filteredMeetingStatusCounts.completed} •
+                Cancelled {filteredMeetingStatusCounts.cancelled}
+              </span>
+              <span className="ml-2">
+                Missing notice {filteredMeetingMissingCounts.notice} • Missing agenda {filteredMeetingMissingCounts.agenda}
+                • Missing minutes {filteredMeetingMissingCounts.minutes}
+              </span>
               {meetingsLastLoadedAt ? ` Last refreshed ${formatShortDateTime(meetingsLastLoadedAt)}.` : ""}
             </div>
+            {meetingDateRangeError ? (
+              <div className="mt-1 text-xs text-red-600">{meetingDateRangeError}</div>
+            ) : null}
+            {meetingActiveFilterLabels.length > 0 ? (
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-foreground/60">
+                <span>Active filters</span>
+                {meetingActiveFilterLabels.map((label) => (
+                  <span key={label} className="rounded bg-foreground/5 px-2 py-0.5 text-foreground/70">
+                    {label}
+                  </span>
+                ))}
+              </div>
+            ) : null}
 
             <div className="mt-3 space-y-3">
             {filteredMeetings.length === 0 ? (
@@ -5556,103 +5933,123 @@ export function AdminPanel({
                           <div className="text-xs text-foreground/60">Updated {updatedLabel}</div>
                         ) : null}
                       </div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        {isDirty ? (
-                          <span className="text-xs text-foreground/60">Unsaved changes</span>
-                        ) : null}
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => window.open(`/meetings/${meeting.id}`, "_blank", "noopener")}
-                        >
-                          Meeting hub
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => void copyMeetingLink(meeting.id)}
-                        >
-                          Copy link
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => void copyMeetingSummary(meeting, committeeLabel)}
-                        >
-                          Copy summary
-                        </Button>
-                        {remoteUrl ? (
+                      <div className="flex flex-col items-start gap-2">
+                        {isDirty ? <span className="text-xs text-foreground/60">Unsaved changes</span> : null}
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-xs text-foreground/60">Primary actions</span>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => window.open(`/meetings/${meeting.id}`, "_blank", "noopener")}
+                          >
+                            Open Meeting hub
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => void saveMeeting(meeting)}
+                            disabled={!canSaveMeeting}
+                            title={
+                              isReadOnly
+                                ? "Read-only mode: updates are disabled."
+                                : !isDirty
+                                  ? "No changes to save"
+                                  : draftTitleError
+                                    ? draftTitleError
+                                    : draftTimeError
+                                      ? draftTimeError
+                                      : draftRemoteUrlError
+                                        ? draftRemoteUrlError
+                                        : draftLivestreamUrlError
+                                          ? draftLivestreamUrlError
+                                          : "Save changes"
+                            }
+                          >
+                            Save
+                          </Button>
                           <Button
                             size="sm"
                             variant="ghost"
-                            onClick={() => window.open(remoteUrl, "_blank", "noopener")}
-                            disabled={!remoteUrlOk}
-                            title={remoteUrlOk ? "Open remote link" : "Invalid remote access URL"}
+                            onClick={() => void cancelMeeting(meeting)}
+                            className="text-red-600 hover:bg-red-500/10"
+                            disabled={isReadOnly}
+                            title={isReadOnly ? "Read-only mode: updates are disabled." : "Cancel meeting"}
                           >
-                            Remote link
+                            Cancel
                           </Button>
-                        ) : null}
-                        {livestreamUrl ? (
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-xs text-foreground/60">Secondary actions</span>
+                          <Button size="sm" variant="ghost" onClick={() => void copyMeetingLink(meeting.id)}>
+                            Copy link
+                          </Button>
                           <Button
                             size="sm"
                             variant="ghost"
-                            onClick={() => window.open(livestreamUrl, "_blank", "noopener")}
-                            disabled={!livestreamUrlOk}
-                            title={livestreamUrlOk ? "Open livestream link" : "Invalid livestream URL"}
+                            onClick={() => void copyMeetingSummary(meeting, committeeLabel)}
                           >
-                            Livestream
+                            Copy summary
                           </Button>
-                        ) : null}
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => copyMeetingToCreateForm(meeting)}
-                          disabled={isReadOnly}
-                          title={isReadOnly ? "Read-only mode: updates are disabled." : "Copy to the create form"}
-                        >
-                          Duplicate
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => void saveMeeting(meeting)}
-                          disabled={!canSaveMeeting}
-                          title={
-                            isReadOnly
-                              ? "Read-only mode: updates are disabled."
-                              : !isDirty
-                                ? "No changes to save"
-                                : draftTitleError
-                                  ? draftTitleError
-                                  : draftTimeError
-                                    ? draftTimeError
-                                    : draftRemoteUrlError
-                                      ? draftRemoteUrlError
-                                      : draftLivestreamUrlError
-                                        ? draftLivestreamUrlError
-                                      : "Save changes"
-                          }
-                        >
-                          Save
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => resetMeetingDraft(meeting.id)}
-                          disabled={!isDirty}
-                        >
-                          Reset
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => void cancelMeeting(meeting)}
-                          className="text-red-600 hover:bg-red-500/10"
-                          disabled={isReadOnly}
-                          title={isReadOnly ? "Read-only mode: updates are disabled." : "Cancel meeting"}
-                        >
-                          Cancel
-                        </Button>
+                          {remoteUrl ? (
+                            <>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => window.open(remoteUrl, "_blank", "noopener")}
+                                disabled={!remoteUrlOk}
+                                title={remoteUrlOk ? "Open remote link" : "Invalid remote access URL"}
+                              >
+                                Remote link
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => void copyMeetingUrl("remote link", remoteUrl)}
+                                disabled={!remoteUrlOk}
+                              >
+                                Copy remote
+                              </Button>
+                            </>
+                          ) : null}
+                          {livestreamUrl ? (
+                            <>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => window.open(livestreamUrl, "_blank", "noopener")}
+                                disabled={!livestreamUrlOk}
+                                title={livestreamUrlOk ? "Open livestream link" : "Invalid livestream URL"}
+                              >
+                                Livestream
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => void copyMeetingUrl("livestream link", livestreamUrl)}
+                                disabled={!livestreamUrlOk}
+                              >
+                                Copy livestream
+                              </Button>
+                            </>
+                          ) : null}
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => copyMeetingToCreateForm(meeting)}
+                            disabled={isReadOnly}
+                            title={isReadOnly ? "Read-only mode: updates are disabled." : "Copy to the create form"}
+                          >
+                            Duplicate
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => resetMeetingDraft(meeting.id)}
+                            disabled={!isDirty}
+                          >
+                            Reset
+                          </Button>
+                        </div>
                       </div>
                     </div>
 
@@ -5714,7 +6111,7 @@ export function AdminPanel({
                     </div>
 
                     <div className="mt-2 text-xs text-foreground/60">
-                      Manage agenda items, agenda PDF, and minutes in the Meeting hub.
+                      Use Open Meeting hub to manage agenda items, agenda PDF, and minutes.
                     </div>
 
                     <details className="mt-3 rounded-md border border-foreground/10 bg-foreground/5 px-3 py-2">
@@ -5771,6 +6168,9 @@ export function AdminPanel({
                             type="datetime-local"
                             className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
                             value={draft.starts_at_local}
+                            step={900}
+                            onClick={openNativeDatetimePicker}
+                            onFocus={openNativeDatetimePicker}
                             onChange={(e: ChangeEvent<HTMLInputElement>) =>
                               updateMeetingDraft(meeting.id, { starts_at_local: e.target.value })
                             }
@@ -5783,6 +6183,9 @@ export function AdminPanel({
                             type="datetime-local"
                             className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
                             value={draft.ends_at_local}
+                            step={900}
+                            onClick={openNativeDatetimePicker}
+                            onFocus={openNativeDatetimePicker}
                             min={draft.starts_at_local || undefined}
                             onChange={(e: ChangeEvent<HTMLInputElement>) =>
                               updateMeetingDraft(meeting.id, { ends_at_local: e.target.value })

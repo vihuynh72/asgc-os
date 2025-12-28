@@ -50,6 +50,35 @@ export default async function TasksPage({
   const sp = await searchParams;
   const projectIdFilterRaw = sp.projectId;
   const projectIdFilter = typeof projectIdFilterRaw === "string" ? projectIdFilterRaw : "";
+  const prefillTitle = typeof sp.prefillTitle === "string" ? sp.prefillTitle : "";
+  const prefillDescription = typeof sp.prefillDescription === "string" ? sp.prefillDescription : "";
+  const prefillCommitteeId = typeof sp.committeeId === "string" ? sp.committeeId : "";
+  const prefillPriorityRaw = typeof sp.prefillPriority === "string" ? sp.prefillPriority : "";
+  const prefillPriority =
+    prefillPriorityRaw === "low" || prefillPriorityRaw === "medium" || prefillPriorityRaw === "high"
+      ? prefillPriorityRaw
+      : "";
+  const prefillDue = typeof sp.prefillDue === "string" ? sp.prefillDue : "";
+  const prefillAssigneeId = typeof sp.prefillAssignee === "string" ? sp.prefillAssignee : "";
+  const prefillSource = typeof sp.source === "string" ? sp.source : "";
+  const prefill =
+    prefillTitle ||
+    prefillDescription ||
+    prefillCommitteeId ||
+    prefillPriority ||
+    prefillDue ||
+    prefillAssigneeId ||
+    prefillSource
+      ? {
+          title: prefillTitle,
+          description: prefillDescription,
+          committeeId: prefillCommitteeId,
+          priority: prefillPriority,
+          due: prefillDue,
+          assigneeId: prefillAssigneeId,
+          source: prefillSource,
+        }
+      : null;
 
   const supabase = await getSupabaseServerComponentClient();
   const {
@@ -134,6 +163,7 @@ export default async function TasksPage({
           initialCommittees={((committees ?? []) as CommitteeRow[])}
           projectIdFilter={projectIdFilter}
           viewerUserId={user.id}
+          prefill={prefill ?? undefined}
         />
       </div>
     </PageShell>

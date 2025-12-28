@@ -4,6 +4,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { copyTextWithFallback } from "@/lib/clipboard";
 
 type MeetingActionsProps = {
   meeting: {
@@ -105,14 +106,14 @@ export function MeetingActions({ meeting, officeTz }: MeetingActionsProps) {
   }
 
   async function copyText(label: string, text: string) {
-    try {
-      await navigator.clipboard.writeText(text);
+    const ok = await copyTextWithFallback(text, { promptLabel: `Copy ${label}` });
+    if (ok) {
       setStatus(`${label} copied.`);
       toast.success(`${label} copied`);
-    } catch {
-      const msg = "Copy failed. Your browser may block clipboard access.";
+    } else {
+      const msg = "Clipboard blocked. Use the prompt to copy.";
       setStatus(msg);
-      toast.error(msg);
+      toast.info(msg);
     }
   }
 
@@ -144,6 +145,21 @@ export function MeetingActions({ meeting, officeTz }: MeetingActionsProps) {
     toast.success("Calendar file downloaded");
   }
 
+  function handleShareEmail() {
+    const subject = encodeURIComponent(`ASGC Meeting: ${meeting.title}`);
+    const body = encodeURIComponent(`${buildSummary()}\n\nLink: ${window.location.href}`);
+    window.location.href = `mailto:?subject=${subject}&body=${body}`;
+    setStatus("Email draft opened.");
+  }
+
+  function handleSubscribeCalendar() {
+    const url = new URL("/api/meetings/calendar", window.location.origin).toString();
+    const webcalUrl = url.replace(/^https?:/, "webcal:");
+    window.open(webcalUrl, "_blank", "noopener");
+    setStatus("Calendar feed opened.");
+    toast.success("Calendar feed opened");
+  }
+
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-center gap-2">
@@ -165,6 +181,12 @@ export function MeetingActions({ meeting, officeTz }: MeetingActionsProps) {
         ) : null}
         <Button size="sm" onClick={handleDownloadCalendar}>
           Add to calendar
+        </Button>
+        <Button size="sm" variant="outline" onClick={handleShareEmail}>
+          Share via email
+        </Button>
+        <Button size="sm" variant="outline" onClick={handleSubscribeCalendar}>
+          Subscribe to calendar feed
         </Button>
       </div>
       {status ? (
