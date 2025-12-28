@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 
@@ -107,8 +108,11 @@ export function MeetingActions({ meeting, officeTz }: MeetingActionsProps) {
     try {
       await navigator.clipboard.writeText(text);
       setStatus(`${label} copied.`);
+      toast.success(`${label} copied`);
     } catch {
-      setStatus("Copy failed. Your browser may block clipboard access.");
+      const msg = "Copy failed. Your browser may block clipboard access.";
+      setStatus(msg);
+      toast.error(msg);
     }
   }
 
@@ -137,6 +141,7 @@ export function MeetingActions({ meeting, officeTz }: MeetingActionsProps) {
     link.remove();
     URL.revokeObjectURL(url);
     setStatus("Calendar file downloaded.");
+    toast.success("Calendar file downloaded");
   }
 
   return (

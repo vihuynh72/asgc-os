@@ -605,6 +605,8 @@ export function AdminPanel({
   const [inviteShowBlockedOnly, setInviteShowBlockedOnly] = useState<boolean>(false);
   const [inviteShowPendingOnly, setInviteShowPendingOnly] = useState<boolean>(false);
   const [inviteShowWithGrantsOnly, setInviteShowWithGrantsOnly] = useState<boolean>(false);
+  const [invitePage, setInvitePage] = useState<number>(1);
+  const [invitePageSize, setInvitePageSize] = useState<number>(50);
   const [selectedInviteIds, setSelectedInviteIds] = useState<Record<string, boolean>>({});
   const [roleGrantInviteId, setRoleGrantInviteId] = useState<string | null>(null);
   const [roleGrantRoleKey, setRoleGrantRoleKey] = useState<RoleKey>("volunteer");
@@ -627,6 +629,10 @@ export function AdminPanel({
 
   const [newBanPattern, setNewBanPattern] = useState<string>("");
   const [newBanNotes, setNewBanNotes] = useState<string>("");
+  const [banSearch, setBanSearch] = useState<string>("");
+  const [showInactiveBans, setShowInactiveBans] = useState<boolean>(false);
+  const [banPage, setBanPage] = useState<number>(1);
+  const [banPageSize, setBanPageSize] = useState<number>(25);
 
   const [selectedUserId, setSelectedUserId] = useState<string>("");
   const [selectedRoleKey, setSelectedRoleKey] = useState<RoleKey>("volunteer");
@@ -998,12 +1004,61 @@ export function AdminPanel({
     bootstrapGrantsByEmail,
   ]);
 
+  useEffect(() => {
+    setInvitePage(1);
+  }, [
+    inviteSearch,
+    showInactiveInvites,
+    inviteShowDomainsOnly,
+    inviteShowBlockedOnly,
+    inviteShowPendingOnly,
+    inviteShowWithGrantsOnly,
+    invitePageSize,
+  ]);
+
+  const filteredInvitesCount = filteredInvites.length;
+  const invitePageCount = Math.max(1, Math.ceil(filteredInvitesCount / invitePageSize));
+  const invitePageResolved = Math.min(invitePage, invitePageCount);
+  const invitePageStart = (invitePageResolved - 1) * invitePageSize;
+  const paginatedInvites = filteredInvites.slice(invitePageStart, invitePageStart + invitePageSize);
+
+  useEffect(() => {
+    if (invitePage > invitePageCount) {
+      setInvitePage(invitePageCount);
+    }
+  }, [invitePage, invitePageCount]);
+
+  const filteredBans = useMemo(() => {
+    const q = banSearch.trim().toLowerCase();
+    return invitesBlocklist.filter((ban) => {
+      if (!showInactiveBans && !ban.is_active) return false;
+      if (!q) return true;
+      const hay = `${ban.pattern} ${ban.notes ?? ""}`.toLowerCase();
+      return hay.includes(q);
+    });
+  }, [invitesBlocklist, banSearch, showInactiveBans]);
+
+  useEffect(() => {
+    setBanPage(1);
+  }, [banSearch, showInactiveBans, banPageSize]);
+
+  const filteredBansCount = filteredBans.length;
+  const banPageCount = Math.max(1, Math.ceil(filteredBansCount / banPageSize));
+  const banPageResolved = Math.min(banPage, banPageCount);
+  const banPageStart = (banPageResolved - 1) * banPageSize;
+  const paginatedBans = filteredBans.slice(banPageStart, banPageStart + banPageSize);
+
+  useEffect(() => {
+    if (banPage > banPageCount) {
+      setBanPage(banPageCount);
+    }
+  }, [banPage, banPageCount]);
+
   const selectedInvites = useMemo(
     () => invitesAllowlist.filter((inv) => Boolean(selectedInviteIds[inv.id])),
     [invitesAllowlist, selectedInviteIds],
   );
 
-  const filteredInvitesCount = filteredInvites.length;
   const inviteFiltersActive =
     inviteSearch.trim().length > 0 ||
     showInactiveInvites ||
@@ -1022,8 +1077,8 @@ export function AdminPanel({
   }
 
   const allFilteredInvitesSelected = useMemo(
-    () => filteredInvites.length > 0 && filteredInvites.every((inv) => Boolean(selectedInviteIds[inv.id])),
-    [filteredInvites, selectedInviteIds],
+    () => paginatedInvites.length > 0 && paginatedInvites.every((inv) => Boolean(selectedInviteIds[inv.id])),
+    [paginatedInvites, selectedInviteIds],
   );
 
   const selectedRole = useMemo(
@@ -2121,6 +2176,8 @@ export function AdminPanel({
       toast.error("Invite is blocked. Remove the ban first.");
       return;
     }
+    const ok = window.confirm(`Send a sign-in link to ${invite.email}?`);
+    if (!ok) return;
 
     setStatus(`Sending sign-in link to ${invite.email}...`);
     try {
@@ -2150,6 +2207,21 @@ export function AdminPanel({
   function setAllFilteredInvitesSelected(isSelected: boolean) {
     setSelectedInviteIds((prev) => {
       const next = { ...prev };
+      for (const inv of paginatedInvites) {
+        if (isSelected) next[inv.id] = true;
+        else delete next[inv.id];
+      }
+      return next;
+    });
+  }
+
+  function setAllInvitesAcrossFiltered(isSelected: boolean) {
+    if (isSelected && filteredInvitesCount > 200) {
+      const ok = window.confirm(`Select all ${filteredInvitesCount} filtered entries?`);
+      if (!ok) return;
+    }
+    setSelectedInviteIds((prev) => {
+      const next = { ...prev };
       for (const inv of filteredInvites) {
         if (isSelected) next[inv.id] = true;
         else delete next[inv.id];
@@ -2158,13 +2230,67 @@ export function AdminPanel({
     });
   }
 
+  async function onCopyInviteEmail(invite: InviteAllowlistRow) {
+    try {
+      await navigator.clipboard.writeText(invite.email);
+      toast.success("Invite copied");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Failed to copy invite";
+      setStatus(msg);
+      toast.error(msg);
+    }
+  }
+
+  function toCsvValue(value: string | number | boolean | null | undefined): string {
+    const stringValue = value === null || value === undefined ? "" : String(value);
+    if (/[",\n]/.test(stringValue)) {
+      return `"${stringValue.replace(/"/g, "\"\"")}"`;
+    }
+    return stringValue;
+  }
+
+  function buildInvitesCsv(invites: InviteAllowlistRow[]): string {
+    const headers = ["Email", "Name", "Active", "Blocked", "Domain Entry", "Invited At", "Revoked At"];
+    const rows = invites.map((inv) => [
+      inv.email,
+      inv.notes ?? "",
+      inv.is_active ? "yes" : "no",
+      isInviteBlocked(inv) ? "yes" : "no",
+      inv.email_normalized.startsWith("@") ? "yes" : "no",
+      inv.invited_at,
+      inv.revoked_at ?? "",
+    ]);
+    return [headers, ...rows].map((row) => row.map(toCsvValue).join(",")).join("\n");
+  }
+
+  function exportInvitesCsv(invites: InviteAllowlistRow[], label: string) {
+    if (invites.length === 0) {
+      toast.error("No invites to export");
+      return;
+    }
+    const csv = buildInvitesCsv(invites);
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `allowlist_${label}_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    toast.success("CSV downloaded");
+  }
+
   async function onCopySelectedInviteEmails() {
     if (selectedInvites.length === 0) return;
     try {
       await navigator.clipboard.writeText(selectedInvites.map((inv) => inv.email).join("\n"));
       setStatus(`Copied ${selectedInvites.length} email${selectedInvites.length === 1 ? "" : "s"} to clipboard.`);
+      toast.success("Emails copied");
     } catch (e) {
-      setStatus(e instanceof Error ? e.message : "Failed to copy to clipboard");
+      const msg = e instanceof Error ? e.message : "Failed to copy to clipboard";
+      setStatus(msg);
+      toast.error(msg);
     }
   }
 
@@ -2561,7 +2687,10 @@ export function AdminPanel({
     }
   }
 
-  async function onEndAssignment(assignmentId: string) {
+  async function onEndAssignment(assignmentId: string, label?: string) {
+    const notifyLabel = revokeNotify ? " This will notify the member." : "";
+    const confirmLabel = label ? `End role assignment for ${label}?` : "End this role assignment?";
+    if (!window.confirm(`${confirmLabel}${notifyLabel}`)) return;
     setStatus("Ending role assignment...");
     try {
       const notify = revokeNotify;
@@ -2959,7 +3088,7 @@ export function AdminPanel({
 
       {adminTab === "roles" ? (
         <>
-      <section className="space-y-3">
+      <section id="admin-meetings-notifications" className="space-y-3">
         <div className="space-y-1">
           <h2 className="text-lg font-semibold">Terms</h2>
           <p className="text-sm text-foreground/70">
@@ -3297,16 +3426,40 @@ export function AdminPanel({
             <input
               type="checkbox"
               checked={allFilteredInvitesSelected}
-              disabled={filteredInvites.length === 0}
+              disabled={paginatedInvites.length === 0}
               onChange={(e: ChangeEvent<HTMLInputElement>) => setAllFilteredInvitesSelected(e.target.checked)}
             />
-            <span className="text-foreground/70">Select visible</span>
+            <span className="text-foreground/70">Select page</span>
           </label>
 
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-xs text-foreground/60">Selected: {selectedInvites.length}</span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setAllInvitesAcrossFiltered(true)}
+              disabled={filteredInvitesCount === 0}
+            >
+              Select all filtered
+            </Button>
             <Button variant="outline" size="sm" onClick={() => void onCopySelectedInviteEmails()} disabled={selectedInvites.length === 0}>
               Copy emails
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => exportInvitesCsv(selectedInvites, "selected")}
+              disabled={selectedInvites.length === 0}
+            >
+              Export selected CSV
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => exportInvitesCsv(filteredInvites, "filtered")}
+              disabled={filteredInvitesCount === 0}
+            >
+              Export filtered CSV
             </Button>
             <Button variant="outline" size="sm" onClick={() => void onBulkSetInviteActive(false)} disabled={selectedInvites.length === 0}>
               Revoke
@@ -3333,14 +3486,49 @@ export function AdminPanel({
         </div>
 
         <div className="rounded-md border">
-          <div className="border-b px-3 py-2 text-xs text-foreground/60">
-            Showing {filteredInvitesCount} of {invitesAllowlist.length} allowlist entries.
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b px-3 py-2 text-xs text-foreground/60">
+            <span>
+              Showing {paginatedInvites.length} of {filteredInvitesCount} filtered entries ({invitesAllowlist.length} total).
+            </span>
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="flex items-center gap-2">
+                <span>Rows</span>
+                <select
+                  className="h-8 rounded-md border bg-transparent px-2 text-xs"
+                  value={invitePageSize}
+                  onChange={(e: ChangeEvent<HTMLSelectElement>) => setInvitePageSize(Number(e.target.value))}
+                >
+                  <option value={25}>25</option>
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                </select>
+              </label>
+              <span>
+                Page {invitePageResolved} of {invitePageCount}
+              </span>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setInvitePage((prev) => Math.max(1, prev - 1))}
+                disabled={invitePageResolved <= 1}
+              >
+                Prev
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setInvitePage((prev) => Math.min(invitePageCount, prev + 1))}
+                disabled={invitePageResolved >= invitePageCount}
+              >
+                Next
+              </Button>
+            </div>
           </div>
-          {filteredInvites.length === 0 ? (
+          {filteredInvitesCount === 0 ? (
             <div className="px-3 py-2 text-sm text-foreground/70">No allowlist entries found.</div>
           ) : (
             <div className="divide-y">
-              {filteredInvites.map((inv) => {
+              {paginatedInvites.map((inv) => {
                 const isDomain = inv.email_normalized.startsWith("@");
                 const grants = !isDomain ? (bootstrapGrantsByEmail.get(inv.email_normalized) ?? []) : [];
                 const user = !isDomain ? usersByEmail.get(inv.email_normalized) ?? null : null;
@@ -3366,6 +3554,8 @@ export function AdminPanel({
                       ? `${activeRolesLabel}: ${activeRoleLabels.join(", ")}`
                       : `${activeRolesLabel}: —`
                     : `${activeRolesLabel}: — (no account yet)`;
+                const isPending = !isDomain && inv.is_active && !user;
+                const copyLabel = isDomain ? "Copy pattern" : "Copy email";
 
                 return (
                   <div
@@ -3388,6 +3578,7 @@ export function AdminPanel({
                         {isInviteBlocked(inv) ? (
                           <span className="ml-2 text-xs text-foreground/60">(blocked)</span>
                         ) : null}
+                        {isPending ? <span className="ml-2 text-xs text-foreground/60">(pending sign-in)</span> : null}
                       </div>
                       <div className="mt-1 truncate text-xs text-foreground/60" title={inv.notes ?? ""}>
                         {inv.notes ? `Name: ${inv.notes}` : "Name: —"} • Invited: {inv.invited_at.slice(0, 10)}
@@ -3422,6 +3613,14 @@ export function AdminPanel({
                     </div>
 
                     <div className="flex flex-wrap items-center justify-end gap-2 md:flex-nowrap">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => void onCopyInviteEmail(inv)}
+                        title={copyLabel}
+                      >
+                        {copyLabel}
+                      </Button>
                       <Button
                         variant="ghost"
                         size="sm"
@@ -3580,7 +3779,16 @@ export function AdminPanel({
                                   <span className="font-medium">{roleLabel}</span>
                                   <span className="text-foreground/70">{` • ${termLabel}`}</span>
                                 </div>
-                                <Button variant="ghost" size="sm" onClick={() => void onEndAssignment(a.id)}>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() =>
+                                    void onEndAssignment(
+                                      a.id,
+                                      `${invite.email} — ${roleLabel}${termLabel ? ` (${termLabel})` : ""}`,
+                                    )
+                                  }
+                                >
                                   End role
                                 </Button>
                               </div>
@@ -3721,12 +3929,74 @@ export function AdminPanel({
             </Button>
           </div>
 
+          <div className="mt-3 flex flex-wrap items-end gap-3">
+            <label className="space-y-1 text-sm">
+              <div className="text-foreground/70">Search bans</div>
+              <input
+                type="search"
+                className="h-9 w-64 rounded-md border bg-transparent px-2 text-sm"
+                value={banSearch}
+                onChange={(e: ChangeEvent<HTMLInputElement>) => setBanSearch(e.target.value)}
+                placeholder="Filter by pattern or notes..."
+              />
+            </label>
+            <Button variant="ghost" size="sm" onClick={() => setBanSearch("")} disabled={!banSearch.trim()}>
+              Clear search
+            </Button>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={showInactiveBans}
+                onChange={(e: ChangeEvent<HTMLInputElement>) => setShowInactiveBans(e.target.checked)}
+              />
+              <span className="text-foreground/70">Show inactive</span>
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <span className="text-foreground/70">Rows</span>
+              <select
+                className="h-9 rounded-md border bg-transparent px-2 text-sm"
+                value={banPageSize}
+                onChange={(e: ChangeEvent<HTMLSelectElement>) => setBanPageSize(Number(e.target.value))}
+              >
+                <option value={10}>10</option>
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+              </select>
+            </label>
+          </div>
+
           <div className="mt-3 rounded-md border">
-            {invitesBlocklist.length === 0 ? (
-              <div className="px-3 py-2 text-sm text-foreground/70">No bans found.</div>
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b px-3 py-2 text-xs text-foreground/60">
+              <span>
+                Showing {paginatedBans.length} of {filteredBansCount} filtered bans ({invitesBlocklist.length} total).
+              </span>
+              <div className="flex items-center gap-2">
+                <span>
+                  Page {banPageResolved} of {banPageCount}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setBanPage((prev) => Math.max(1, prev - 1))}
+                  disabled={banPageResolved <= 1}
+                >
+                  Prev
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setBanPage((prev) => Math.min(banPageCount, prev + 1))}
+                  disabled={banPageResolved >= banPageCount}
+                >
+                  Next
+                </Button>
+              </div>
+            </div>
+            {filteredBansCount === 0 ? (
+              <div className="px-3 py-2 text-sm text-foreground/70">No bans match the current filters.</div>
             ) : (
               <div className="divide-y">
-                {invitesBlocklist.map((ban) => (
+                {paginatedBans.map((ban) => (
                   <div key={ban.id} className="grid gap-2 px-3 py-2 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
                     <div className="min-w-0">
                       <div className="truncate text-sm font-medium" title={ban.pattern}>
@@ -4524,6 +4794,24 @@ export function AdminPanel({
 
       {adminTab === "meetings" ? (
         <>
+      <nav className="rounded-md border bg-foreground/5 px-3 py-2 text-sm">
+        <div className="text-xs text-foreground/60">Jump to</div>
+        <div className="mt-2 flex flex-wrap gap-2">
+          <a className="rounded-full border border-foreground/10 bg-background px-3 py-1 text-xs" href="#admin-meetings-notifications">
+            Notifications
+          </a>
+          <a className="rounded-full border border-foreground/10 bg-background px-3 py-1 text-xs" href="#admin-meetings-create">
+            Create meeting
+          </a>
+          <a className="rounded-full border border-foreground/10 bg-background px-3 py-1 text-xs" href="#admin-meetings-committees">
+            Committees
+          </a>
+          <a className="rounded-full border border-foreground/10 bg-background px-3 py-1 text-xs" href="#admin-meetings-existing">
+            Existing meetings
+          </a>
+        </div>
+      </nav>
+
       <section className="space-y-3">
         <div className="space-y-1">
           <h2 className="text-lg font-semibold">Notifications</h2>
@@ -4545,7 +4833,11 @@ export function AdminPanel({
 
         <div className="grid gap-4 xl:grid-cols-[1fr_1.6fr]">
           <div className="space-y-4">
-            <div className="rounded-lg border border-foreground/10 p-4" ref={meetingCreateRef}>
+            <div
+              id="admin-meetings-create"
+              className="rounded-lg border border-foreground/10 p-4"
+              ref={meetingCreateRef}
+            >
             <div className="text-sm font-medium">Create meeting</div>
             <div className="mt-1 text-xs text-foreground/60">
               Workflow: create the meeting → collect agenda items → publish agenda & minutes in the Meeting hub.
@@ -4804,7 +5096,7 @@ export function AdminPanel({
             </div>
           </div>
 
-            <div className="rounded-lg border border-foreground/10 p-4">
+            <div id="admin-meetings-committees" className="rounded-lg border border-foreground/10 p-4">
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <div className="text-sm font-medium">Committees</div>
@@ -5066,7 +5358,7 @@ export function AdminPanel({
             </div>
           </div>
 
-          <div className="rounded-lg border border-foreground/10 p-4">
+          <div id="admin-meetings-existing" className="rounded-lg border border-foreground/10 p-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <div className="text-sm font-medium">Existing meetings</div>
@@ -5820,7 +6112,12 @@ export function AdminPanel({
                         <div className="truncate text-sm">{u ? formatUserLabel(u) : a.user_id}</div>
                         <div className="text-xs text-foreground/70">{a.role_key}</div>
                       </div>
-                      <Button variant="ghost" onClick={() => void onEndAssignment(a.id)}>
+                      <Button
+                        variant="ghost"
+                        onClick={() =>
+                          void onEndAssignment(a.id, `${u ? formatUserLabel(u) : a.user_id} — ${a.role_key}`)
+                        }
+                      >
                         End
                       </Button>
                     </div>
@@ -5850,7 +6147,17 @@ export function AdminPanel({
                           {showAllTermAssignments ? ` • ${termLabel}` : ""}
                         </div>
                       </div>
-                      <Button variant="ghost" onClick={() => void onEndAssignment(a.id)}>
+                      <Button
+                        variant="ghost"
+                        onClick={() =>
+                          void onEndAssignment(
+                            a.id,
+                            `${u ? formatUserLabel(u) : a.user_id} — ${a.role_key}${
+                              showAllTermAssignments ? ` (${termLabel})` : ""
+                            }`,
+                          )
+                        }
+                      >
                         End
                       </Button>
                     </div>
@@ -5902,7 +6209,10 @@ export function AdminPanel({
                           <div className="truncate text-sm">{primary}</div>
                           <div className="text-xs text-foreground/70">{meta}</div>
                         </div>
-                        <Button variant="ghost" onClick={() => void onEndAssignment(row.assignment_id)}>
+                        <Button
+                          variant="ghost"
+                          onClick={() => void onEndAssignment(row.assignment_id, `${primary} — ${meta}`)}
+                        >
                           End role
                         </Button>
                       </div>
@@ -5929,7 +6239,10 @@ export function AdminPanel({
                           <div className="truncate text-sm">{primary}</div>
                           <div className="text-xs text-foreground/70">{meta}</div>
                         </div>
-                        <Button variant="ghost" onClick={() => void onEndAssignment(row.assignment_id)}>
+                        <Button
+                          variant="ghost"
+                          onClick={() => void onEndAssignment(row.assignment_id, `${primary} — ${meta}`)}
+                        >
                           End role
                         </Button>
                       </div>
@@ -5956,7 +6269,10 @@ export function AdminPanel({
                           <div className="truncate text-sm">{primary}</div>
                           <div className="text-xs text-foreground/70">{meta}</div>
                         </div>
-                        <Button variant="ghost" onClick={() => void onEndAssignment(row.assignment_id)}>
+                        <Button
+                          variant="ghost"
+                          onClick={() => void onEndAssignment(row.assignment_id, `${primary} — ${meta}`)}
+                        >
                           End role
                         </Button>
                       </div>

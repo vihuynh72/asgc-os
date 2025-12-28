@@ -189,6 +189,12 @@ export default async function MeetingDetailPage({ params }: { params: Params }) 
   const agendaPostedAt = typedMeeting.agenda_posted_at;
   const noticePostedAt = typedMeeting.notice_posted_at;
   const meetingStatusBadge = statusBadge(typedMeeting.status);
+  const meetingStatusNotice =
+    typedMeeting.status === "cancelled"
+      ? "This meeting was cancelled. Agenda submissions and document uploads are disabled."
+      : typedMeeting.status === "completed"
+        ? "This meeting is completed. Agenda submissions and document uploads are closed."
+        : "";
   const agendaOnTime =
     agendaPostedAt && postingDeadline
       ? new Date(agendaPostedAt).getTime() <= new Date(postingDeadline).getTime()
@@ -204,6 +210,11 @@ export default async function MeetingDetailPage({ params }: { params: Params }) 
       description={`${formatMeetingType(typedMeeting.meeting_type)} meeting`}
     >
       <div className="space-y-6">
+        {meetingStatusNotice ? (
+          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {meetingStatusNotice}
+          </div>
+        ) : null}
         <div className="grid gap-6 lg:grid-cols-[1.6fr_1fr]">
           <div className="space-y-4">
             <div className="rounded-lg border border-foreground/10 p-4">
@@ -378,6 +389,7 @@ export default async function MeetingDetailPage({ params }: { params: Params }) 
               meetingStartsAt={typedMeeting.starts_at}
               meetingType={typedMeeting.meeting_type}
               officeTz={officeTz}
+              meetingStatus={typedMeeting.status}
             />
           </div>
           <div>
@@ -388,6 +400,7 @@ export default async function MeetingDetailPage({ params }: { params: Params }) 
               isAdmin={isAdminUser}
               initialDocs={typedDocs}
               acceptedAgendaCount={acceptedAgendaCount}
+              meetingStatus={typedMeeting.status}
             />
           </div>
         </div>

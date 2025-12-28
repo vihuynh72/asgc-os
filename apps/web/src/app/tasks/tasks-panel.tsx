@@ -74,6 +74,13 @@ function toIsoFromDateInput(value: string): string | null {
   return d.toISOString();
 }
 
+function isTaskOverdue(task: TaskRow): boolean {
+  if (!task.due_at || task.status === "done") return false;
+  const due = new Date(task.due_at);
+  if (Number.isNaN(due.getTime())) return false;
+  return due.getTime() < Date.now();
+}
+
 export function TasksPanel({
   initialTasks,
   initialCommittees,
@@ -93,7 +100,12 @@ export function TasksPanel({
   const [filterQuery, setFilterQuery] = useState<string>("");
   const [filterStatus, setFilterStatus] = useState<TaskRow["status"] | "">("");
   const [filterCommitteeId, setFilterCommitteeId] = useState<string>("");
+  const [filterPriority, setFilterPriority] = useState<TaskRow["priority"] | "">("");
+  const [filterAssignee, setFilterAssignee] = useState<"" | "me" | "assigned" | "unassigned">("");
+  const [filterOverdueOnly, setFilterOverdueOnly] = useState<boolean>(false);
   const [sortKey, setSortKey] = useState<"updated" | "due" | "title">("updated");
+  const [taskPage, setTaskPage] = useState<number>(1);
+  const [taskPageSize, setTaskPageSize] = useState<number>(10);
 
   const [newCommitteeId, setNewCommitteeId] = useState<string>(initialCommittees[0]?.id ?? "");
   const [newTitle, setNewTitle] = useState<string>("");
@@ -125,6 +137,21 @@ export function TasksPanel({
     if (filterCommitteeId) {
       next = next.filter((t) => t.committee_id === filterCommitteeId);
     }
+    if (filterPriority) {
+      next = next.filter((t) => t.priority === filterPriority);
+    }
+    if (filterAssignee) {
+      if (filterAssignee === "me") {
+        next = next.filter((t) => t.assigned_to === viewerUserId);
+      } else if (filterAssignee === "assigned") {
+        next = next.filter((t) => !!t.assigned_to);
+      } else if (filterAssignee === "unassigned") {
+        next = next.filter((t) => !t.assigned_to);
+      }
+    }
+    if (filterOverdueOnly) {
+      next = next.filter((t) => isTaskOverdue(t));
+    }
     if (query) {
       next = next.filter((t) => {
         const committeeName = committeesById.get(t.committee_id)?.name ?? "";
@@ -150,7 +177,26 @@ export function TasksPanel({
 
     sorted.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
     return sorted;
-  }, [committeesById, filterCommitteeId, filterQuery, filterStatus, sortKey, tasks]);
+  }, [
+    committeesById,
+    filterAssignee,
+    filterCommitteeId,
+    filterOverdueOnly,
+    filterPriority,
+    filterQuery,
+    filterStatus,
+    sortKey,
+    tasks,
+    viewerUserId,
+  ]);
+
+  const overdueCount = useMemo(() => filteredTasks.filter(isTaskOverdue).length, [filteredTasks]);
+  const pageCount = Math.max(1, Math.ceil(filteredTasks.length / taskPageSize));
+  const resolvedTaskPage = Math.min(taskPage, pageCount);
+  const paginatedTasks = useMemo(() => {
+    const start = (resolvedTaskPage - 1) * taskPageSize;
+    return filteredTasks.slice(start, start + taskPageSize);
+  }, [filteredTasks, resolvedTaskPage, taskPageSize]);
 
   async function loadAssignees(committeeId: string) {
     if (!committeeId) return;
@@ -484,13 +530,16 @@ export function TasksPanel({
         </div>
 
         <div className="rounded-md border p-3">
-          <div className="grid gap-3 md:grid-cols-5">
+          <div className="grid gap-3 md:grid-cols-7">
             <label className="space-y-1 text-sm md:col-span-2">
               <div className="text-foreground/70">Search</div>
               <input
                 className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
                 value={filterQuery}
-                onChange={(e: ChangeEvent<HTMLInputElement>) => setFilterQuery(e.target.value)}
+                onChange={(e: ChangeEvent<HTMLInputElement>) => {
+                  setFilterQuery(e.target.value);
+                  setTaskPage(1);
+                }}
                 placeholder="Title, description, committee…"
               />
             </label>
@@ -500,9 +549,10 @@ export function TasksPanel({
               <select
                 className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
                 value={filterStatus}
-                onChange={(e: ChangeEvent<HTMLSelectElement>) =>
-                  setFilterStatus(e.target.value as TaskRow["status"] | "")
-                }
+                onChange={(e: ChangeEvent<HTMLSelectElement>) => {
+                  setFilterStatus(e.target.value as TaskRow["status"] | "");
+                  setTaskPage(1);
+                }}
               >
                 <option value="">All</option>
                 <option value="todo">To do</option>
@@ -516,7 +566,10 @@ export function TasksPanel({
               <select
                 className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
                 value={filterCommitteeId}
-                onChange={(e: ChangeEvent<HTMLSelectElement>) => setFilterCommitteeId(e.target.value)}
+                onChange={(e: ChangeEvent<HTMLSelectElement>) => {
+                  setFilterCommitteeId(e.target.value);
+                  setTaskPage(1);
+                }}
               >
                 <option value="">All</option>
                 {committees.map((committee) => (
@@ -528,11 +581,48 @@ export function TasksPanel({
             </label>
 
             <label className="space-y-1 text-sm">
+              <div className="text-foreground/70">Priority</div>
+              <select
+                className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                value={filterPriority}
+                onChange={(e: ChangeEvent<HTMLSelectElement>) => {
+                  setFilterPriority(e.target.value as TaskRow["priority"] | "");
+                  setTaskPage(1);
+                }}
+              >
+                <option value="">All</option>
+                <option value="high">High</option>
+                <option value="medium">Medium</option>
+                <option value="low">Low</option>
+              </select>
+            </label>
+
+            <label className="space-y-1 text-sm">
+              <div className="text-foreground/70">Assignee</div>
+              <select
+                className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                value={filterAssignee}
+                onChange={(e: ChangeEvent<HTMLSelectElement>) => {
+                  setFilterAssignee(e.target.value as typeof filterAssignee);
+                  setTaskPage(1);
+                }}
+              >
+                <option value="">All</option>
+                <option value="me">Assigned to me</option>
+                <option value="assigned">Assigned</option>
+                <option value="unassigned">Unassigned</option>
+              </select>
+            </label>
+
+            <label className="space-y-1 text-sm">
               <div className="text-foreground/70">Sort by</div>
               <select
                 className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
                 value={sortKey}
-                onChange={(e: ChangeEvent<HTMLSelectElement>) => setSortKey(e.target.value as typeof sortKey)}
+                onChange={(e: ChangeEvent<HTMLSelectElement>) => {
+                  setSortKey(e.target.value as typeof sortKey);
+                  setTaskPage(1);
+                }}
               >
                 <option value="updated">Recently updated</option>
                 <option value="due">Due date</option>
@@ -542,22 +632,87 @@ export function TasksPanel({
           </div>
 
           <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-foreground/60">
-            <span>
-              Showing {filteredTasks.length} of {tasks.length} tasks
-            </span>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                setFilterQuery("");
-                setFilterStatus("");
-                setFilterCommitteeId("");
-                setSortKey("updated");
-              }}
-              disabled={!filterQuery && !filterStatus && !filterCommitteeId && sortKey === "updated"}
-            >
-              Clear filters
-            </Button>
+            <div className="flex flex-wrap items-center gap-3">
+              <span>
+                Showing {paginatedTasks.length} of {filteredTasks.length} filtered ({tasks.length} total)
+              </span>
+              <span>{overdueCount > 0 ? `${overdueCount} overdue` : "No overdue tasks"}</span>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={filterOverdueOnly}
+                  onChange={(e: ChangeEvent<HTMLInputElement>) => {
+                    setFilterOverdueOnly(e.target.checked);
+                    setTaskPage(1);
+                  }}
+                />
+                <span>Overdue only</span>
+              </label>
+              <label className="flex items-center gap-2">
+                <span>Rows</span>
+                <select
+                  className="h-8 rounded-md border bg-transparent px-2 text-xs"
+                  value={taskPageSize}
+                  onChange={(e: ChangeEvent<HTMLSelectElement>) => {
+                    setTaskPageSize(Number(e.target.value));
+                    setTaskPage(1);
+                  }}
+                >
+                  <option value={10}>10</option>
+                  <option value={25}>25</option>
+                  <option value={50}>50</option>
+                </select>
+              </label>
+              <span>
+                Page {resolvedTaskPage} of {pageCount}
+              </span>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setTaskPage(Math.max(1, resolvedTaskPage - 1))}
+                disabled={resolvedTaskPage <= 1}
+              >
+                Prev
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setTaskPage(Math.min(pageCount, resolvedTaskPage + 1))}
+                disabled={resolvedTaskPage >= pageCount}
+              >
+                Next
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => void reload()}>
+                Refresh list
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setFilterQuery("");
+                  setFilterStatus("");
+                  setFilterCommitteeId("");
+                  setFilterPriority("");
+                  setFilterAssignee("");
+                  setFilterOverdueOnly(false);
+                  setSortKey("updated");
+                  setTaskPage(1);
+                }}
+                disabled={
+                  !filterQuery &&
+                  !filterStatus &&
+                  !filterCommitteeId &&
+                  !filterPriority &&
+                  !filterAssignee &&
+                  !filterOverdueOnly &&
+                  sortKey === "updated"
+                }
+              >
+                Clear filters
+              </Button>
+            </div>
           </div>
         </div>
 
@@ -568,20 +723,26 @@ export function TasksPanel({
                 {tasks.length === 0 ? "No tasks yet." : "No tasks match the current filters."}
               </div>
             ) : (
-              filteredTasks.map((t) => {
+              paginatedTasks.map((t) => {
                 const committee = committeesById.get(t.committee_id);
                 const isExpanded = expandedTaskId === t.id;
                 const comments = commentsByTaskId[t.id] ?? [];
                 const attachments = attachmentsByTaskId[t.id] ?? [];
+                const overdue = isTaskOverdue(t);
                 return (
                   <div key={t.id} className="px-3 py-2">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div className="min-w-0 flex-1">
                         <div className="truncate text-sm font-medium">{t.title}</div>
-                        <div className="text-xs text-foreground/70">
-                          {committee ? committee.name : t.committee_id}
-                          {t.due_at ? ` • Due ${formatDateInputValue(t.due_at)}` : ""}
-                          {t.assigned_to ? ` • ${taskAssigneeLabel(t)}` : " • Unassigned"}
+                        <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-foreground/70">
+                          <span>{committee ? committee.name : t.committee_id}</span>
+                          {t.due_at ? <span>Due {formatDateInputValue(t.due_at)}</span> : null}
+                          <span>{t.assigned_to ? taskAssigneeLabel(t) : "Unassigned"}</span>
+                          {overdue ? (
+                            <span className="rounded bg-red-500/10 px-1.5 py-0.5 text-[11px] text-red-600">
+                              Overdue
+                            </span>
+                          ) : null}
                         </div>
                       </div>
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 
@@ -53,6 +53,44 @@ function formatMetadata(metadata: Record<string, unknown>): string {
   return JSON.stringify(metadata, null, 2);
 }
 
+function toCsvValue(value: string | number | null | undefined): string {
+  const stringValue = value === null || value === undefined ? "" : String(value);
+  if (/[",\n]/.test(stringValue)) {
+    return `"${stringValue.replace(/"/g, "\"\"")}"`;
+  }
+  return stringValue;
+}
+
+function buildAuditCsv(rows: AuditLogRow[]): string {
+  const headers = [
+    "Occurred At",
+    "Action Key",
+    "Actor Name",
+    "Actor Email",
+    "Actor User ID",
+    "Target Type",
+    "Target ID",
+    "Metadata",
+  ];
+  const lines = rows.map((row) => [
+    row.occurred_at,
+    row.action_key,
+    row.actor_display_name ?? "",
+    row.actor_email ?? "",
+    row.actor_user_id ?? "",
+    row.target_type ?? "",
+    row.target_id ?? "",
+    Object.keys(row.metadata).length > 0 ? JSON.stringify(row.metadata) : "",
+  ]);
+  return [headers, ...lines].map((line) => line.map(toCsvValue).join(",")).join("\n");
+}
+
+function normalizeDateParam(value: string | null): string {
+  if (!value) return "";
+  if (value.length >= 10) return value.slice(0, 10);
+  return value;
+}
+
 export function AuditLogPanel() {
   const [logs, setLogs] = useState<AuditLogRow[]>([]);
   const [actionKeys, setActionKeys] = useState<string[]>([]);
@@ -61,6 +99,8 @@ export function AuditLogPanel() {
   const [hasMore, setHasMore] = useState(false);
   const [offset, setOffset] = useState(0);
   const limit = 50;
+  const [filtersReady, setFiltersReady] = useState(false);
+  const [reloadToken, setReloadToken] = useState(0);
 
   // Filters
   const [filterAction, setFilterAction] = useState<string>("");
@@ -70,15 +110,31 @@ export function AuditLogPanel() {
   const [filterStartDate, setFilterStartDate] = useState<string>("");
   const [filterEndDate, setFilterEndDate] = useState<string>("");
 
+  const buildFilterParams = useCallback(() => {
+    const params = new URLSearchParams();
+    if (filterAction) params.set("action_key", filterAction);
+    if (filterActor) params.set("actor", filterActor);
+    if (filterTargetType) params.set("target_type", filterTargetType);
+    if (filterTargetId) params.set("target_id", filterTargetId);
+    if (filterStartDate) params.set("start", filterStartDate);
+    if (filterEndDate) params.set("end", filterEndDate);
+    return params;
+  }, [filterAction, filterActor, filterTargetId, filterTargetType, filterEndDate, filterStartDate]);
+
+  const syncUrl = useCallback(() => {
+    const params = buildFilterParams();
+    const query = params.toString();
+    const next = query ? `?${query}` : "";
+    window.history.replaceState(null, "", `${window.location.pathname}${next}`);
+  }, [buildFilterParams]);
+
   const loadLogs = useCallback(async (reset = false) => {
     setLoading(true);
     try {
       const currentOffset = reset ? 0 : offset;
-      const params = new URLSearchParams({ limit: String(limit), offset: String(currentOffset) });
-      if (filterAction) params.set("action_key", filterAction);
-      if (filterActor) params.set("actor", filterActor);
-      if (filterTargetType) params.set("target_type", filterTargetType);
-      if (filterTargetId) params.set("target_id", filterTargetId);
+      const params = buildFilterParams();
+      params.set("limit", String(limit));
+      params.set("offset", String(currentOffset));
       if (filterStartDate) params.set("start", new Date(filterStartDate).toISOString());
       if (filterEndDate) params.set("end", new Date(filterEndDate + "T23:59:59").toISOString());
 
@@ -102,18 +158,30 @@ export function AuditLogPanel() {
   }, [offset, filterAction, filterActor, filterTargetType, filterTargetId, filterStartDate, filterEndDate]);
 
   useEffect(() => {
-    void loadLogs(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const params = new URLSearchParams(window.location.search);
+    setFilterAction(params.get("action_key") ?? "");
+    setFilterActor(params.get("actor") ?? "");
+    setFilterTargetType(params.get("target_type") ?? "");
+    setFilterTargetId(params.get("target_id") ?? "");
+    setFilterStartDate(normalizeDateParam(params.get("start")));
+    setFilterEndDate(normalizeDateParam(params.get("end")));
+    setFiltersReady(true);
   }, []);
+
+  useEffect(() => {
+    if (!filtersReady) return;
+    void loadLogs(true);
+  }, [filtersReady, loadLogs, reloadToken]);
 
   const handleFilter = () => {
     setOffset(0);
-    void loadLogs(true);
+    setReloadToken((prev) => prev + 1);
+    syncUrl();
   };
 
   const handleRefresh = () => {
     setOffset(0);
-    void loadLogs(true);
+    setReloadToken((prev) => prev + 1);
   };
 
   const handleClearFilters = () => {
@@ -124,8 +192,52 @@ export function AuditLogPanel() {
     setFilterStartDate("");
     setFilterEndDate("");
     setOffset(0);
-    void loadLogs(true);
+    setReloadToken((prev) => prev + 1);
+    window.history.replaceState(null, "", window.location.pathname);
   };
+
+  const summary = useMemo(() => {
+    const total = logs.length;
+    const actors = new Set<string>();
+    logs.forEach((log) => {
+      actors.add(log.actor_user_id ?? log.actor_email ?? log.actor_display_name ?? "system");
+    });
+    const newest = logs[0]?.occurred_at ?? "";
+    const oldest = logs[logs.length - 1]?.occurred_at ?? "";
+    return { total, uniqueActors: actors.size, newest, oldest };
+  }, [logs]);
+
+  const summaryRange = summary.total ? `${formatDate(summary.oldest)} → ${formatDate(summary.newest)}` : "—";
+
+  function handleExportCsv() {
+    if (logs.length === 0) {
+      toast.error("No logs to export");
+      return;
+    }
+    const csv = buildAuditCsv(logs);
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `audit_logs_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    toast.success("CSV downloaded");
+  }
+
+  async function handleCopyFilterLink() {
+    const params = buildFilterParams();
+    const query = params.toString();
+    const url = `${window.location.origin}${window.location.pathname}${query ? `?${query}` : ""}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      toast.success("Filter link copied");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to copy link");
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -214,6 +326,19 @@ export function AuditLogPanel() {
             </Button>
             <Button variant="ghost" onClick={handleRefresh} disabled={loading}>
               Refresh
+            </Button>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-foreground/60">
+          <span>
+            Loaded {summary.total} entries • Unique actors {summary.uniqueActors} • Range {summaryRange}
+          </span>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" size="sm" onClick={handleCopyFilterLink}>
+              Copy filter link
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleExportCsv} disabled={logs.length === 0}>
+              Export CSV (loaded)
             </Button>
           </div>
         </div>

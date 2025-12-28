@@ -151,12 +151,14 @@ export function MeetingDocsPanel({
   isAdmin,
   initialDocs,
   acceptedAgendaCount,
+  meetingStatus,
 }: {
   meetingId: string;
   committeeId: string | null;
   isAdmin: boolean;
   initialDocs: DocRow[];
   acceptedAgendaCount: number;
+  meetingStatus: string;
 }) {
   const [docs, setDocs] = useState<DocRow[]>(initialDocs);
   const [status, setStatus] = useState<string>("");
@@ -176,8 +178,10 @@ export function MeetingDocsPanel({
   const [agendaDescription, setAgendaDescription] = useState<string>("");
   const [agendaVersionSourceId, setAgendaVersionSourceId] = useState<string>("");
   const [agendaMarkPosted, setAgendaMarkPosted] = useState<boolean>(true);
-  const canUploadMinutes = !!uploadFile && minutesTitle.trim().length > 0 && !minutesUploading;
-  const canUploadAgenda = !!agendaFile && agendaTitle.trim().length > 0 && !agendaUploading;
+  const meetingIsCancelled = meetingStatus === "cancelled";
+  const canEdit = isAdmin && !meetingIsCancelled;
+  const canUploadMinutes = canEdit && !!uploadFile && minutesTitle.trim().length > 0 && !minutesUploading;
+  const canUploadAgenda = canEdit && !!agendaFile && agendaTitle.trim().length > 0 && !agendaUploading;
 
   const fallbackVisibility = committeeId ? "committee_only" : "internal";
 
@@ -186,7 +190,7 @@ export function MeetingDocsPanel({
   const minutesGroups = useMemo(() => groupDocsByVersion(minutesDocs), [minutesDocs]);
   const agendaGroups = useMemo(() => groupDocsByVersion(agendaDocs), [agendaDocs]);
   const latestAgendaDoc = agendaGroups[0]?.docs[0] ?? null;
-  const canGenerateAgenda = isAdmin && acceptedAgendaCount > 0;
+  const canGenerateAgenda = canEdit && acceptedAgendaCount > 0;
 
   const reload = useCallback(async () => {
     const qs = new URLSearchParams({ meeting_id: meetingId });
@@ -195,7 +199,10 @@ export function MeetingDocsPanel({
   }, [meetingId]);
 
   async function markMeetingPosted(type: "agenda" | "minutes") {
-    if (!isAdmin) return;
+    if (!canEdit) {
+      setStatus("Meeting is cancelled. Posting updates are disabled.");
+      return;
+    }
     const payload =
       type === "agenda"
         ? { agenda_posted_at: new Date().toISOString() }
@@ -217,6 +224,10 @@ export function MeetingDocsPanel({
   async function handleMinutesUpload(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
 
+    if (!canEdit) {
+      setStatus("Meeting is cancelled. Uploads are disabled.");
+      return;
+    }
     if (!uploadFile) {
       setStatus("Select a minutes file");
       return;
@@ -298,6 +309,10 @@ export function MeetingDocsPanel({
   async function handleAgendaUpload(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
 
+    if (!canEdit) {
+      setStatus("Meeting is cancelled. Uploads are disabled.");
+      return;
+    }
     if (!agendaFile) {
       setStatus("Select an agenda file");
       return;
@@ -397,7 +412,10 @@ export function MeetingDocsPanel({
   }
 
   async function handleToggleVisibility(doc: DocRow) {
-    if (!isAdmin) return;
+    if (!canEdit) {
+      setStatus("Meeting is cancelled. Updates are disabled.");
+      return;
+    }
     const nextVisibility = doc.visibility === "public" ? fallbackVisibility : "public";
     setStatus(`Setting visibility to ${nextVisibility}...`);
     try {
@@ -417,6 +435,10 @@ export function MeetingDocsPanel({
   }
 
   async function handleGenerateAgenda() {
+    if (!canEdit) {
+      setStatus("Meeting is cancelled. Agenda generation is disabled.");
+      return;
+    }
     if (!canGenerateAgenda) {
       setStatus("Add at least one accepted agenda item before generating a PDF.");
       return;
@@ -439,6 +461,11 @@ export function MeetingDocsPanel({
 
   return (
     <div className="space-y-6">
+      {meetingIsCancelled ? (
+        <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          This meeting was cancelled. Agenda and minutes uploads are disabled.
+        </div>
+      ) : null}
       {status ? (
         <div className="text-sm text-foreground/70" role="status" aria-live="polite">
           {status}
@@ -453,7 +480,7 @@ export function MeetingDocsPanel({
           </div>
         </div>
 
-        {isAdmin ? (
+        {canEdit ? (
           <details className="mt-4 rounded-md border border-foreground/10 bg-foreground/5 px-3 py-2" open={minutesDocs.length === 0}>
             <summary className="cursor-pointer text-sm font-medium text-foreground/80">
               Upload minutes
@@ -551,6 +578,8 @@ export function MeetingDocsPanel({
               </div>
             </form>
           </details>
+        ) : isAdmin ? (
+          <div className="mt-4 text-sm text-foreground/70">Uploads are disabled for cancelled meetings.</div>
         ) : (
           <div className="mt-4 text-sm text-foreground/70">Only admins can upload minutes.</div>
         )}
@@ -596,7 +625,7 @@ export function MeetingDocsPanel({
                     ) : null}
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
-                    {isAdmin ? (
+                    {canEdit ? (
                       <Button
                         type="button"
                         variant="ghost"
@@ -608,7 +637,7 @@ export function MeetingDocsPanel({
                           : "Publish"}
                       </Button>
                     ) : null}
-                    {isAdmin ? (
+                    {canEdit ? (
                       <Button type="button" variant="ghost" size="sm" onClick={() => void markMeetingPosted("minutes")}>
                         Mark posted now
                       </Button>
@@ -641,7 +670,9 @@ export function MeetingDocsPanel({
                 title={
                   canGenerateAgenda
                     ? "Generate agenda PDF"
-                    : "Add at least one accepted agenda item to enable PDF generation"
+                    : meetingIsCancelled
+                      ? "Meeting is cancelled"
+                      : "Add at least one accepted agenda item to enable PDF generation"
                 }
               >
                 Generate Agenda PDF
@@ -663,11 +694,13 @@ export function MeetingDocsPanel({
         ) : null}
         {!canGenerateAgenda && isAdmin ? (
           <div className="mt-2 text-xs text-foreground/60">
-            Add at least one accepted agenda item to generate the PDF.
+            {meetingIsCancelled
+              ? "Agenda generation is disabled for cancelled meetings."
+              : "Add at least one accepted agenda item to generate the PDF."}
           </div>
         ) : null}
 
-        {isAdmin ? (
+        {canEdit ? (
           <details className="mt-4 rounded-md border border-foreground/10 bg-foreground/5 px-3 py-2" open={agendaDocs.length === 0}>
             <summary className="cursor-pointer text-sm font-medium text-foreground/80">
               Upload agenda
@@ -765,6 +798,8 @@ export function MeetingDocsPanel({
               </div>
             </form>
           </details>
+        ) : isAdmin ? (
+          <div className="mt-4 text-sm text-foreground/70">Uploads are disabled for cancelled meetings.</div>
         ) : null}
 
         {agendaGroups.length === 0 ? (
@@ -808,7 +843,7 @@ export function MeetingDocsPanel({
                     ) : null}
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
-                    {isAdmin ? (
+                    {canEdit ? (
                       <Button
                         type="button"
                         variant="ghost"
@@ -820,7 +855,7 @@ export function MeetingDocsPanel({
                           : "Publish"}
                       </Button>
                     ) : null}
-                    {isAdmin ? (
+                    {canEdit ? (
                       <Button type="button" variant="ghost" size="sm" onClick={() => void markMeetingPosted("agenda")}>
                         Mark posted now
                       </Button>

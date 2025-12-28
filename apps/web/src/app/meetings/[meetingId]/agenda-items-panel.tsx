@@ -194,6 +194,26 @@ function formatDeadline(iso: string | null | undefined, timeZone?: string | null
   }).format(d);
 }
 
+function formatAgendaError(message: string): string {
+  const key = message.trim().toLowerCase();
+  if (key.includes("meeting_not_scheduled") || key.includes("meeting_not_schedueld")) {
+    return "This meeting is not scheduled. Agenda submissions are disabled.";
+  }
+  if (key.includes("meeting_not_found")) {
+    return "Meeting not found.";
+  }
+  if (key.includes("submission_closed")) {
+    return "Submission deadline has passed.";
+  }
+  if (key.includes("title_required")) {
+    return "Title is required.";
+  }
+  if (key.includes("unauthorized")) {
+    return "You are not authorized to submit agenda items.";
+  }
+  return message;
+}
+
 function buildFallbackDeadline(meetingId: string, meetingStartsAt: string, meetingType?: string | null): DeadlineInfo | null {
   if (!isValidIso(meetingStartsAt)) return null;
   const start = new Date(meetingStartsAt);
@@ -223,6 +243,7 @@ export function AgendaItemsPanel({
   meetingStartsAt,
   meetingType,
   officeTz,
+  meetingStatus,
 }: {
   meetingId: string;
   initialItems: AgendaItem[];
@@ -232,6 +253,7 @@ export function AgendaItemsPanel({
   meetingStartsAt?: string | null;
   meetingType?: string | null;
   officeTz?: string | null;
+  meetingStatus: string;
 }) {
   const [items, setItems] = useState<AgendaItem[]>(initialItems);
   const [deadline, setDeadline] = useState<DeadlineInfo | null>(initialDeadline);
@@ -283,7 +305,8 @@ export function AgendaItemsPanel({
     return fallbackDeadline ?? deadline ?? null;
   }, [deadline, fallbackDeadline]);
 
-  const submissionOpen = effectiveDeadline ? effectiveDeadline.is_submission_open : true;
+  const meetingActive = meetingStatus === "scheduled";
+  const submissionOpen = meetingActive && (effectiveDeadline ? effectiveDeadline.is_submission_open : true);
   const submissionClosed = !submissionOpen;
   const hoursUntilDeadline =
     typeof effectiveDeadline?.hours_until_deadline === "number" ? effectiveDeadline.hours_until_deadline : null;
@@ -291,12 +314,23 @@ export function AgendaItemsPanel({
     ? formatDeadline(effectiveDeadline.submission_deadline, officeTz)
     : null;
   const lateSubmissionsAllowed =
-    !!effectiveDeadline?.is_past_deadline && !!effectiveDeadline?.is_submission_open;
+    meetingActive && !!effectiveDeadline?.is_past_deadline && !!effectiveDeadline?.is_submission_open;
   const canCreateNewItem = submissionOpen && newTitle.trim().length > 0 && !createBusy && !actionBusy;
 
   const showNewFormResolved = showNewForm && submissionOpen;
 
+  const meetingStatusNotice =
+    meetingStatus === "cancelled"
+      ? "This meeting was cancelled. Agenda submissions are disabled."
+      : meetingStatus === "completed"
+        ? "This meeting is completed. Agenda submissions are closed."
+        : "";
+
   async function createItem(submitImmediately: boolean) {
+    if (!meetingActive) {
+      setStatus(meetingStatusNotice || "Submissions are disabled for this meeting.");
+      return;
+    }
     if (submissionClosed) {
       setStatus("Submission deadline has passed.");
       return;
@@ -337,7 +371,7 @@ export function AgendaItemsPanel({
       setShowNewForm(false);
       await reload();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to create";
+      const msg = formatAgendaError(err instanceof Error ? err.message : "Failed to create");
       setStatus(msg);
       toast.error(msg);
     } finally {
@@ -368,6 +402,10 @@ export function AgendaItemsPanel({
   async function handleUpdate(e: FormEvent<HTMLFormElement>, itemId: string) {
     e.preventDefault();
 
+    if (!meetingActive) {
+      setStatus(meetingStatusNotice || "Updates are disabled for this meeting.");
+      return;
+    }
     if (submissionClosed) {
       setStatus("Submission deadline has passed.");
       return;
@@ -403,7 +441,7 @@ export function AgendaItemsPanel({
       setEditingId(null);
       await reload();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to update";
+      const msg = formatAgendaError(err instanceof Error ? err.message : "Failed to update");
       setStatus(msg);
       toast.error(msg);
     } finally {
@@ -412,6 +450,10 @@ export function AgendaItemsPanel({
   }
 
   async function handleSubmit(itemId: string) {
+    if (!meetingActive) {
+      setStatus(meetingStatusNotice || "Submissions are disabled for this meeting.");
+      return;
+    }
     if (submissionClosed) {
       setStatus("Submission deadline has passed.");
       return;
@@ -434,7 +476,7 @@ export function AgendaItemsPanel({
       toast.success("Agenda item submitted");
       await reload();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to submit";
+      const msg = formatAgendaError(err instanceof Error ? err.message : "Failed to submit");
       setStatus(msg);
       toast.error(msg);
     } finally {
@@ -443,6 +485,10 @@ export function AgendaItemsPanel({
   }
 
   async function handleWithdraw(itemId: string) {
+    if (!meetingActive) {
+      setStatus(meetingStatusNotice || "Submissions are disabled for this meeting.");
+      return;
+    }
     if (!confirm("Withdraw this item?")) return;
 
     if (actionBusy) return;
@@ -458,7 +504,7 @@ export function AgendaItemsPanel({
       toast.success("Agenda item withdrawn");
       await reload();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to withdraw";
+      const msg = formatAgendaError(err instanceof Error ? err.message : "Failed to withdraw");
       setStatus(msg);
       toast.error(msg);
     } finally {
@@ -467,6 +513,10 @@ export function AgendaItemsPanel({
   }
 
   async function handleReview(itemId: string, newState: "accepted" | "rejected" | "tabled") {
+    if (!meetingActive) {
+      setStatus(meetingStatusNotice || "Review actions are disabled for this meeting.");
+      return;
+    }
     const stateLabel = newState === "accepted" ? "accept" : newState === "rejected" ? "reject" : "table";
     if (!confirm(`Are you sure you want to ${stateLabel} this item?`)) return;
 
@@ -487,7 +537,7 @@ export function AgendaItemsPanel({
       toast.success(`Agenda item ${stateLabel}ed`);
       await reload();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to review";
+      const msg = formatAgendaError(err instanceof Error ? err.message : "Failed to review");
       setStatus(msg);
       toast.error(msg);
     } finally {
@@ -587,6 +637,11 @@ export function AgendaItemsPanel({
 
   return (
     <div className="space-y-6">
+      {meetingStatusNotice ? (
+        <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          {meetingStatusNotice}
+        </div>
+      ) : null}
       {status ? (
         <div className="text-sm text-foreground/70" role="status" aria-live="polite">
           {status}
@@ -633,12 +688,16 @@ export function AgendaItemsPanel({
                   : `${Math.abs(hoursUntilDeadline).toFixed(1)} hours past the deadline`}
               </div>
             ) : null}
-            {lateSubmissionsAllowed ? (
-              <div className="text-xs text-foreground/70">
-                Late submissions are allowed. Items will be marked late.
-              </div>
-            ) : null}
+          {lateSubmissionsAllowed ? (
+            <div className="text-xs text-foreground/70">
+              Late submissions are allowed. Items will be marked late.
+            </div>
+          ) : null}
+          <div className="text-xs text-foreground/60">
+            States: Draft = saved by you. Submitted = pending admin review. Accepted = on agenda. Rejected/Withdrawn = not
+            on agenda.
           </div>
+        </div>
         </div>
 
         <div className="rounded-lg border border-foreground/10 p-4">
