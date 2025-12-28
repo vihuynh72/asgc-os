@@ -494,7 +494,7 @@ function formatMinutesValue(value: number | string | null | undefined): string {
   return n === null ? "—" : formatMinutes(n);
 }
 
-function toCsvValue(value: string | number | null | undefined): string {
+function toCsvValue(value: string | number | boolean | null | undefined): string {
   if (value === null || value === undefined) return "";
   const raw = String(value);
   if (raw.includes(",") || raw.includes("\"") || raw.includes("\n")) {
@@ -596,14 +596,17 @@ export function AdminPanel({
   // Default tab based on permissions
   const defaultTab = canSeeAccessTab ? "access" : canSeeOfficeConfig ? "office_hours" : "meetings";
   const requestedTab = searchParams.get("tab");
-  const isTabAllowed = (tab: string | null) => {
-    if (!tab) return false;
-    if (tab === "access") return canSeeAccessTab;
-    if (tab === "office_hours") return canSeeOfficeConfig;
-    if (tab === "roles") return canSeeRolesTab;
-    if (tab === "meetings") return true;
-    return false;
-  };
+  const isTabAllowed = useCallback(
+    (tab: string | null) => {
+      if (!tab) return false;
+      if (tab === "access") return canSeeAccessTab;
+      if (tab === "office_hours") return canSeeOfficeConfig;
+      if (tab === "roles") return canSeeRolesTab;
+      if (tab === "meetings") return true;
+      return false;
+    },
+    [canSeeAccessTab, canSeeOfficeConfig, canSeeRolesTab],
+  );
   const initialTab = (isTabAllowed(requestedTab) ? requestedTab : defaultTab) as
     | "access"
     | "office_hours"
@@ -616,7 +619,7 @@ export function AdminPanel({
     if (isTabAllowed(requestedTab) && requestedTab !== adminTab) {
       setAdminTab(requestedTab as "access" | "office_hours" | "roles" | "meetings");
     }
-  }, [requestedTab, adminTab, canSeeAccessTab, canSeeOfficeConfig, canSeeRolesTab]);
+  }, [requestedTab, adminTab, isTabAllowed]);
 
   const [globalAdvisorAssignments, setGlobalAdvisorAssignments] = useState<AssignmentRow[]>(
     initialGlobalAdvisorAssignments,
@@ -2298,14 +2301,6 @@ export function AdminPanel({
     }
   }
 
-  function toCsvValue(value: string | number | boolean | null | undefined): string {
-    const stringValue = value === null || value === undefined ? "" : String(value);
-    if (/[",\n]/.test(stringValue)) {
-      return `"${stringValue.replace(/"/g, "\"\"")}"`;
-    }
-    return stringValue;
-  }
-
   function buildInvitesCsv(invites: InviteAllowlistRow[]): string {
     const headers = ["Email", "Name", "Active", "Blocked", "Domain Entry", "Invited At", "Revoked At"];
     const rows = invites.map((inv) => [
@@ -2817,10 +2812,13 @@ export function AdminPanel({
     return byRole;
   }, [officeHourRequirements, selectedTermId]);
 
-  const committeeById = new Map<string, CommitteeRow>();
-  for (const committee of committees) {
-    committeeById.set(committee.id, committee);
-  }
+  const committeeById = useMemo(() => {
+    const map = new Map<string, CommitteeRow>();
+    for (const committee of committees) {
+      map.set(committee.id, committee);
+    }
+    return map;
+  }, [committees]);
   const filteredCommittees = useMemo(() => {
     const query = committeeSearch.trim().toLowerCase();
     if (!query) return committees;

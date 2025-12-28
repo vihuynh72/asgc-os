@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from "react";
+import { useMemo, useState, type ChangeEvent, type FormEvent } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -164,12 +164,21 @@ export function TasksPanel({
   const [taskPage, setTaskPage] = useState<number>(1);
   const [taskPageSize, setTaskPageSize] = useState<number>(10);
 
-  const [newCommitteeId, setNewCommitteeId] = useState<string>(initialCommittees[0]?.id ?? "");
-  const [newTitle, setNewTitle] = useState<string>("");
-  const [newDescription, setNewDescription] = useState<string>("");
-  const [newPriority, setNewPriority] = useState<TaskRow["priority"]>("medium");
-  const [newDue, setNewDue] = useState<string>("");
-  const [newAssigneeId, setNewAssigneeId] = useState<string>(viewerUserId);
+  const defaultCommitteeId = initialCommittees[0]?.id ?? "";
+  const initialCommitteeId =
+    prefill?.committeeId && initialCommittees.some((c) => c.id === prefill.committeeId)
+      ? prefill.committeeId
+      : defaultCommitteeId;
+  const initialPriority: TaskRow["priority"] =
+    prefill?.priority === "high" || prefill?.priority === "low" || prefill?.priority === "medium"
+      ? prefill.priority
+      : "medium";
+  const [newCommitteeId, setNewCommitteeId] = useState<string>(initialCommitteeId);
+  const [newTitle, setNewTitle] = useState<string>(prefill?.title ?? "");
+  const [newDescription, setNewDescription] = useState<string>(prefill?.description ?? "");
+  const [newPriority, setNewPriority] = useState<TaskRow["priority"]>(initialPriority);
+  const [newDue, setNewDue] = useState<string>(prefill?.due ?? "");
+  const [newAssigneeId, setNewAssigneeId] = useState<string>(prefill?.assigneeId ?? viewerUserId);
 
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   const [commentsByTaskId, setCommentsByTaskId] = useState<Record<string, TaskCommentRow[]>>({});
@@ -178,7 +187,6 @@ export function TasksPanel({
   const [newAttachmentUrlByTaskId, setNewAttachmentUrlByTaskId] = useState<Record<string, string>>({});
   const [newAttachmentLabelByTaskId, setNewAttachmentLabelByTaskId] = useState<Record<string, string>>({});
   const [prefillDismissed, setPrefillDismissed] = useState<boolean>(false);
-  const prefillAppliedRef = useRef(false);
 
   const committeesById = useMemo(() => {
     const m = new Map<string, CommitteeRow>();
@@ -204,19 +212,6 @@ export function TasksPanel({
   const prefillCommitteeMissing = Boolean(
     prefill?.committeeId && !committees.some((c) => c.id === prefill.committeeId),
   );
-
-  useEffect(() => {
-    if (!prefill || prefillAppliedRef.current) return;
-    if (prefill.title) setNewTitle(prefill.title);
-    if (prefill.description) setNewDescription(prefill.description);
-    if (prefill.priority) setNewPriority(prefill.priority as TaskRow["priority"]);
-    if (prefill.due) setNewDue(prefill.due);
-    if (prefill.assigneeId) setNewAssigneeId(prefill.assigneeId);
-    if (prefill.committeeId && committees.some((c) => c.id === prefill.committeeId)) {
-      setNewCommitteeId(prefill.committeeId);
-    }
-    prefillAppliedRef.current = true;
-  }, [committees, prefill]);
 
   const filteredTasks = useMemo(() => {
     const query = filterQuery.trim().toLowerCase();
