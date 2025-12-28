@@ -6,31 +6,15 @@ import { getSupabaseServerComponentClient } from "@/lib/supabaseServerComponent"
 
 const primaryLinks = [
   { href: "/dashboard", label: "Dashboard" },
-  { href: "/meetings", label: "Meetings" },
-  { href: "/tasks", label: "Tasks" },
   { href: "/office-hours", label: "Office Hours" },
+  { href: "/tasks", label: "Tasks" },
+  { href: "/meetings", label: "Meetings" },
+  { href: "/clubs", label: "Clubs" },
+  { href: "/icc", label: "ICC" },
+  { href: "/finance", label: "Finance" },
+  { href: "/docs", label: "Docs" },
 ];
-
-const secondarySections = [
-  {
-    label: "Community",
-    items: [
-      { href: "/clubs", label: "Clubs" },
-      { href: "/icc", label: "ICC" },
-    ],
-  },
-  {
-    label: "Resources",
-    items: [
-      { href: "/docs", label: "Docs" },
-      { href: "/finance", label: "Finance" },
-    ],
-  },
-  {
-    label: "Admin",
-    items: [{ href: "/admin", label: "Admin" }],
-  },
-];
+const adminLink = { href: "/admin", label: "Admin" };
 
 const publicLinks = [{ href: "/office-hours/kiosk", label: "Office Hours Form" }];
 
@@ -54,14 +38,7 @@ export async function SiteNav() {
     isAdmin = false;
   }
 
-  const sections = user
-    ? secondarySections
-        .map((section) => ({
-          ...section,
-          items: section.items.filter((item) => item.href !== "/admin" || isAdmin),
-        }))
-        .filter((section) => section.items.length > 0)
-    : null;
+  const navLinks = user ? (isAdmin ? [...primaryLinks, adminLink] : primaryLinks) : publicLinks;
 
   return (
     <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
@@ -69,7 +46,7 @@ export async function SiteNav() {
         <Link href="/dashboard" className="font-semibold">
           ASGC OS
         </Link>
-        <SiteNavLinks primary={user ? primaryLinks : publicLinks} sections={sections ?? undefined} />
+        <SiteNavLinks primary={navLinks} />
 
         <div className="flex shrink-0 items-center gap-2">
           {user ? (
