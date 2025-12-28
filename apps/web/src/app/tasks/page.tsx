@@ -1,5 +1,6 @@
 import { PageShell } from "@/components/page-shell";
 import { getSupabaseServerComponentClient } from "@/lib/supabaseServerComponent";
+import type { TaskPrefill } from "@/lib/task-types";
 
 import { SuggestedTasksPanel } from "./suggested-tasks-panel";
 import { TasksPanel } from "./tasks-panel";
@@ -54,14 +55,15 @@ export default async function TasksPage({
   const prefillDescription = typeof sp.prefillDescription === "string" ? sp.prefillDescription : "";
   const prefillCommitteeId = typeof sp.committeeId === "string" ? sp.committeeId : "";
   const prefillPriorityRaw = typeof sp.prefillPriority === "string" ? sp.prefillPriority : "";
-  const prefillPriority =
-    prefillPriorityRaw === "low" || prefillPriorityRaw === "medium" || prefillPriorityRaw === "high"
-      ? prefillPriorityRaw
-      : "";
+  const parsePriority = (value: string): TaskPrefill["priority"] => {
+    if (value === "low" || value === "medium" || value === "high") return value;
+    return "";
+  };
+  const prefillPriority = parsePriority(prefillPriorityRaw);
   const prefillDue = typeof sp.prefillDue === "string" ? sp.prefillDue : "";
   const prefillAssigneeId = typeof sp.prefillAssignee === "string" ? sp.prefillAssignee : "";
   const prefillSource = typeof sp.source === "string" ? sp.source : "";
-  const prefill =
+  const prefill: TaskPrefill | null =
     prefillTitle ||
     prefillDescription ||
     prefillCommitteeId ||
