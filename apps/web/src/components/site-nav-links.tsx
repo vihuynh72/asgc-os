@@ -3,8 +3,10 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+
 type NavItem = { href: string; label: string };
-type NavGroup = { label: string; items: NavItem[] };
+type NavSection = { label: string; items: NavItem[] };
 
 function isActive(pathname: string, href: string): boolean {
   if (href === "/") return pathname === "/";
@@ -12,77 +14,83 @@ function isActive(pathname: string, href: string): boolean {
 }
 
 export function SiteNavLinks({
-  groups,
-  links,
+  primary,
+  sections,
 }: {
-  groups?: NavGroup[];
-  links?: NavItem[];
+  primary?: NavItem[];
+  sections?: NavSection[];
 }) {
   const pathname = usePathname() ?? "/";
-
-  if (groups && groups.length > 0) {
-    const activeGroup =
-      groups.find((group) => group.items.some((item) => isActive(pathname, item.href))) ?? groups[0];
-    return (
-      <nav aria-label="Primary" className="flex min-w-0 flex-1 flex-col gap-2">
-        <div className="flex flex-wrap items-center gap-2 text-xs">
-          {groups.map((group) => {
-            const isGroupActive = group.label === activeGroup.label;
-            const href = group.items[0]?.href ?? "/";
-            return (
-              <Link
-                key={group.label}
-                href={href}
-                className={`rounded-full border px-2 py-1 transition-colors ${
-                  isGroupActive
-                    ? "border-foreground/30 bg-foreground/10 text-foreground"
-                    : "border-foreground/10 text-foreground/70 hover:text-foreground"
-                }`}
-                aria-current={isGroupActive ? "page" : undefined}
-              >
-                {group.label}
-              </Link>
-            );
-          })}
-        </div>
-        <div className="flex min-w-0 flex-1 gap-4 overflow-x-auto whitespace-nowrap text-sm">
-          {activeGroup.items.map((item) => {
-            const active = isActive(pathname, item.href);
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={`transition-colors ${
-                  active ? "font-semibold text-foreground underline underline-offset-4" : "text-foreground/80 hover:text-foreground"
-                }`}
-                aria-current={active ? "page" : undefined}
-              >
-                {item.label}
-              </Link>
-            );
-          })}
-        </div>
-      </nav>
-    );
-  }
+  const primaryLinks = primary ?? [];
+  const navSections = sections ?? [];
+  const activeSection =
+    navSections.find((section) => section.items.some((item) => isActive(pathname, item.href))) ?? null;
+  const hasSections = navSections.length > 0;
 
   return (
-    <nav aria-label="Primary" className="flex min-w-0 flex-1 gap-4 overflow-x-auto whitespace-nowrap text-sm">
-      {(links ?? []).map((item) => {
-        const active = isActive(pathname, item.href);
-        return (
-          <Link
-            key={item.href}
-            href={item.href}
-            className={`transition-colors ${
-              active ? "font-semibold text-foreground underline underline-offset-4" : "text-foreground/80 hover:text-foreground"
-            }`}
-            aria-current={active ? "page" : undefined}
-          >
-            {item.label}
-          </Link>
-        );
-      })}
+    <nav aria-label="Primary" className="flex min-w-0 flex-1 items-center gap-3">
+      <div className="flex min-w-0 flex-1 items-center gap-4 overflow-x-auto whitespace-nowrap text-sm">
+        {primaryLinks.map((item) => {
+          const active = isActive(pathname, item.href);
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              className={`rounded-sm px-1 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 ${
+                active ? "font-semibold text-foreground" : "text-foreground/70 hover:text-foreground"
+              }`}
+              aria-current={active ? "page" : undefined}
+            >
+              {item.label}
+            </Link>
+          );
+        })}
+      </div>
+
+      {hasSections ? (
+        <Popover>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              className={`rounded-md px-2 py-1 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 ${
+                activeSection
+                  ? "bg-muted/60 text-foreground"
+                  : "text-foreground/70 hover:bg-muted/60 hover:text-foreground"
+              }`}
+            >
+              {activeSection?.label ?? "More"}
+            </button>
+          </PopoverTrigger>
+          <PopoverContent align="end" className="w-56 p-3">
+            <div className="space-y-3">
+              {navSections.map((section) => (
+                <div key={section.label} className="space-y-1">
+                  <div className="px-2 text-[0.7rem] font-semibold uppercase tracking-wide text-foreground/50">
+                    {section.label}
+                  </div>
+                  {section.items.map((item) => {
+                    const active = isActive(pathname, item.href);
+                    return (
+                      <Link
+                        key={item.href}
+                        href={item.href}
+                        className={`flex items-center rounded-md px-2 py-1 text-sm transition-colors ${
+                          active
+                            ? "bg-muted/60 font-medium text-foreground"
+                            : "text-foreground/70 hover:bg-muted/60 hover:text-foreground"
+                        }`}
+                        aria-current={active ? "page" : undefined}
+                      >
+                        {item.label}
+                      </Link>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+          </PopoverContent>
+        </Popover>
+      ) : null}
     </nav>
   );
 }

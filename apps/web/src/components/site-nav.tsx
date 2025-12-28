@@ -4,16 +4,14 @@ import { SiteNavLinks } from "@/components/site-nav-links";
 import { Button } from "@/components/ui/button";
 import { getSupabaseServerComponentClient } from "@/lib/supabaseServerComponent";
 
-const navGroups = [
-  {
-    label: "Core",
-    items: [
-      { href: "/dashboard", label: "Dashboard" },
-      { href: "/meetings", label: "Meetings" },
-      { href: "/tasks", label: "Tasks" },
-      { href: "/office-hours", label: "Office Hours" },
-    ],
-  },
+const primaryLinks = [
+  { href: "/dashboard", label: "Dashboard" },
+  { href: "/meetings", label: "Meetings" },
+  { href: "/tasks", label: "Tasks" },
+  { href: "/office-hours", label: "Office Hours" },
+];
+
+const secondarySections = [
   {
     label: "Community",
     items: [
@@ -56,22 +54,22 @@ export async function SiteNav() {
     isAdmin = false;
   }
 
-  const groups = user
-    ? navGroups
-        .map((group) => ({
-          ...group,
-          items: group.items.filter((item) => item.href !== "/admin" || isAdmin),
+  const sections = user
+    ? secondarySections
+        .map((section) => ({
+          ...section,
+          items: section.items.filter((item) => item.href !== "/admin" || isAdmin),
         }))
-        .filter((group) => group.items.length > 0)
+        .filter((section) => section.items.length > 0)
     : null;
 
   return (
     <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
       <div className="mx-auto flex h-14 w-full max-w-5xl items-center justify-between gap-4 px-4">
-        <Link href="/" className="font-semibold">
+        <Link href="/dashboard" className="font-semibold">
           ASGC OS
         </Link>
-        <SiteNavLinks groups={groups ?? undefined} links={!user ? publicLinks : undefined} />
+        <SiteNavLinks primary={user ? primaryLinks : publicLinks} sections={sections ?? undefined} />
 
         <div className="flex shrink-0 items-center gap-2">
           {user ? (
