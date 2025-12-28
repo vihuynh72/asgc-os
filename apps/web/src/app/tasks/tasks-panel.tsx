@@ -5,6 +5,7 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { copyTextWithFallback } from "@/lib/clipboard";
+import type { TaskPrefill } from "@/lib/task-types";
 
 type CommitteeRow = {
   id: string;
@@ -48,16 +49,6 @@ type AssigneeRow = {
   id: string;
   display_name: string | null;
   role_key: string;
-};
-
-type TaskPrefill = {
-  title?: string;
-  description?: string;
-  committeeId?: string;
-  priority?: TaskRow["priority"] | "";
-  due?: string;
-  assigneeId?: string;
-  source?: string;
 };
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
