@@ -1,5 +1,6 @@
 import { PageShell } from "@/components/page-shell";
 import { getSupabaseServerComponentClient } from "@/lib/supabaseServerComponent";
+import type { CSSProperties } from "react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
@@ -314,6 +315,25 @@ export default async function DashboardPage() {
   const openMinutes = openSession?.checkin_at
     ? Math.max(0, Math.floor((nowMs - Date.parse(openSession.checkin_at)) / 60000))
     : 0;
+  const targetMinutes = Math.max(totalMinutes + deficitMinutes, totalMinutes, 0);
+  const inOfficeTargetMinutes = Math.max(
+    inOfficeMinutes + inOfficeDeficitMinutes,
+    inOfficeMinutes,
+    0,
+  );
+  const totalProgress =
+    targetMinutes > 0 ? Math.min(Math.max(totalMinutes / targetMinutes, 0), 1) : 0;
+  const inOfficeProgress =
+    inOfficeTargetMinutes > 0
+      ? Math.min(Math.max(inOfficeMinutes / inOfficeTargetMinutes, 0), 1)
+      : 0;
+  const hasHours = totalMinutes > 0 || inOfficeMinutes > 0;
+  const deficitToneClass =
+    deficitMinutes > 0 ? "text-rose-600" : hasHours ? "text-emerald-600" : "text-foreground";
+  const deficitSubhead =
+    deficitMinutes > 0 ? "Below weekly target" : hasHours ? "Meeting your weekly target" : "No hours logged yet";
+  const nextTask = tasks[0] ?? null;
+  const nextMeeting = meetings[0] ?? null;
 
   const delegatedAssigneeIds = Array.from(
     new Set(
@@ -334,262 +354,302 @@ export default async function DashboardPage() {
       p.display_name,
     ]),
   );
+  const dashStyle = (value: number): CSSProperties => ({ "--dash-delay": value } as CSSProperties);
+  const cardClassName = "rounded-2xl border bg-card p-4 shadow-sm";
+  const actionPillClassName =
+    "rounded-md border border-foreground/10 px-2 py-1 text-[0.7rem] font-semibold uppercase tracking-wide text-foreground/70 transition-colors hover:border-foreground/30 hover:text-foreground";
+  const emptyStateClassName =
+    "mt-3 rounded-md border border-dashed border-foreground/20 bg-background/60 p-3 text-sm text-foreground/70";
+  const emptyLinkClassName =
+    "mt-1 inline-flex text-xs font-semibold text-foreground/70 underline underline-offset-4 hover:text-foreground";
+  const listItemClassName =
+    "block rounded-md border border-foreground/10 px-3 py-2 transition-colors hover:border-foreground/20 hover:bg-foreground/5";
+  const quickActionClassName =
+    "flex items-center gap-2 rounded-md border border-transparent bg-muted/40 px-3 py-2 text-sm font-medium text-foreground/80 transition-colors hover:border-foreground/20 hover:bg-muted/60 hover:text-foreground";
 
   return (
     <PageShell
       title="Dashboard"
       description="Hours, tasks, meetings, and shifts at a glance."
-      containerClassName="max-w-6xl"
+      containerClassName="max-w-7xl"
     >
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_280px]">
-        <div className="space-y-6">
-          <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            <div className="rounded-xl border bg-card p-4 shadow-sm">
-              <div className="flex items-center gap-2 text-[0.7rem] font-semibold uppercase tracking-wide text-foreground/60">
-                <IconClock className="h-4 w-4" />
-                Deficit
-              </div>
-              <div
-                className={`mt-2 text-2xl font-semibold ${
-                  deficitMinutes > 0 ? "text-rose-600" : "text-emerald-600"
-                }`}
+      <div className="relative">
+        <div className="pointer-events-none absolute inset-x-0 -top-10 -z-10 h-56 rounded-[28px] bg-gradient-to-br from-primary/15 via-transparent to-transparent" />
+        <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
+          <div className="space-y-6">
+            <section className="grid gap-4 lg:grid-cols-3">
+              <section
+                className={`dash-fade-up relative overflow-hidden ${cardClassName} p-6 lg:col-span-2`}
+                style={dashStyle(1)}
               >
-                {deficitMinutes > 0 ? formatHours(deficitMinutes) : "0h 0m"}
-              </div>
-              <div className="mt-1 text-xs text-foreground/60">
-                {deficitMinutes > 0 ? "Below target" : "On track"}
-              </div>
-            </div>
-
-            <div className="rounded-xl border bg-card p-4 shadow-sm">
-              <div className="flex items-center gap-2 text-[0.7rem] font-semibold uppercase tracking-wide text-foreground/60">
-                <IconChecklist className="h-4 w-4" />
-                Tasks
-              </div>
-              <div className="mt-2 text-2xl font-semibold">{tasks.length}</div>
-              <div className="mt-1 text-xs text-foreground/60">
-                {taskOverdueCount} overdue, {taskDueSoonCount} due soon
-              </div>
-            </div>
-
-            <div className="rounded-xl border bg-card p-4 shadow-sm">
-              <div className="flex items-center gap-2 text-[0.7rem] font-semibold uppercase tracking-wide text-foreground/60">
-                <IconCalendar className="h-4 w-4" />
-                Meetings
-              </div>
-              <div className="mt-2 text-2xl font-semibold">{meetingsTodayCount}</div>
-              <div className="mt-1 text-xs text-foreground/60">
-                {meetingsWeekCount} in the next 7 days
-              </div>
-            </div>
-          </section>
-
-          <section className="grid gap-4 lg:grid-cols-2">
-            <section className="rounded-xl border bg-card p-4 shadow-sm">
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2 text-sm font-semibold">
-                  <IconClock className="h-4 w-4 text-foreground/70" />
-                  Weekly hours
-                </div>
-                <span
-                  className={`rounded-full px-2 py-0.5 text-[0.7rem] font-semibold ${
-                    deficitMinutes > 0 ? "bg-rose-100 text-rose-700" : "bg-emerald-100 text-emerald-700"
-                  }`}
-                >
-                  {deficitMinutes > 0 ? `${formatHours(deficitMinutes)} deficit` : "On track"}
-                </span>
-              </div>
-              <p className="mt-1 text-xs text-foreground/60">
-                Totals include closed sessions + approved exceptions.
-              </p>
-              <div className="mt-4 space-y-3 text-sm">
-                <div className="flex items-baseline justify-between gap-3">
-                  <div className="text-foreground/70">Total</div>
-                  <div className="font-semibold">{formatHours(totalMinutes)}</div>
-                </div>
-                <div className="flex items-baseline justify-between gap-3">
-                  <div className="text-foreground/70">In office</div>
-                  <div className="font-semibold">{formatHours(inOfficeMinutes)}</div>
-                </div>
-                <div className="flex items-baseline justify-between gap-3">
-                  <div className="text-foreground/70">Deficit (in office)</div>
-                  <div
-                    className={`font-medium ${
-                      inOfficeDeficitMinutes > 0 ? "text-rose-600" : "text-foreground"
-                    }`}
-                  >
-                    {formatHours(inOfficeDeficitMinutes)}
+                <div className="pointer-events-none absolute inset-0 -z-10 bg-gradient-to-br from-primary/10 via-transparent to-transparent" />
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div>
+                    <div className="flex items-center gap-2 text-[0.7rem] font-semibold uppercase tracking-wide text-foreground/60">
+                      <IconClock className="h-4 w-4" />
+                      Hours status
+                    </div>
+                    <div className={`mt-2 text-3xl font-semibold ${deficitToneClass}`}>
+                      {deficitMinutes > 0 ? formatHours(deficitMinutes) : "On track"}
+                    </div>
+                    <p className="mt-1 text-sm text-foreground/70">{deficitSubhead}</p>
                   </div>
+                  {weekStartLabel ? (
+                    <span className="rounded-full border border-foreground/10 bg-background/70 px-3 py-1 text-[0.7rem] font-semibold uppercase tracking-wide text-foreground/70">
+                      Week of {weekStartLabel}
+                    </span>
+                  ) : null}
                 </div>
+                {hasHours ? (
+                  <div className="mt-5 grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <div className="flex items-baseline justify-between text-sm">
+                        <span className="text-foreground/70">Total hours</span>
+                        <span className="font-semibold">{formatHours(totalMinutes)}</span>
+                      </div>
+                      <div className="h-2 w-full rounded-full bg-muted/60">
+                        <div
+                          className="h-2 rounded-full bg-gradient-to-r from-primary to-accent"
+                          style={{ width: `${Math.round(totalProgress * 100)}%` }}
+                        />
+                      </div>
+                      <div className="text-xs text-foreground/60">
+                        Target {formatHours(targetMinutes)} • {Math.round(totalProgress * 100)}%
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <div className="flex items-baseline justify-between text-sm">
+                        <span className="text-foreground/70">In office</span>
+                        <span className="font-semibold">{formatHours(inOfficeMinutes)}</span>
+                      </div>
+                      <div className="h-2 w-full rounded-full bg-muted/60">
+                        <div
+                          className="h-2 rounded-full bg-foreground/70"
+                          style={{ width: `${Math.round(inOfficeProgress * 100)}%` }}
+                        />
+                      </div>
+                      <div className="text-xs text-foreground/60">
+                        {inOfficeDeficitMinutes > 0
+                          ? `${formatHours(inOfficeDeficitMinutes)} in-office deficit`
+                          : "In-office on track"}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className={emptyStateClassName}>
+                    No hours logged this week.
+                    <Link
+                      className="ml-2 font-semibold text-foreground/80 underline underline-offset-4 hover:text-foreground"
+                      href="/office-hours"
+                    >
+                      Log hours
+                    </Link>
+                  </div>
+                )}
                 {openSession?.checkin_at ? (
-                  <div className="rounded-md border border-foreground/10 bg-muted/40 px-3 py-2 text-xs text-foreground/70">
+                  <div className="mt-4 rounded-md border border-foreground/10 bg-muted/40 px-3 py-2 text-xs text-foreground/70">
                     In progress: {formatHours(openMinutes)} since {formatInOfficeTz(openSession.checkin_at)}
                   </div>
                 ) : null}
-                {weekStartLabel ? (
-                  <div className="pt-1 text-xs text-foreground/60">Week of {weekStartLabel}</div>
-                ) : null}
+              </section>
+
+              <div className="grid gap-4">
+                <section className={`dash-fade-up ${cardClassName}`} style={dashStyle(2)}>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2 text-[0.7rem] font-semibold uppercase tracking-wide text-foreground/60">
+                      <IconChecklist className="h-4 w-4" />
+                      Tasks
+                    </div>
+                    <Link className={actionPillClassName} href="/tasks">
+                      Open
+                    </Link>
+                  </div>
+                  <div className="mt-3 text-2xl font-semibold">{tasks.length}</div>
+                  <div className="mt-1 text-xs text-foreground/60">
+                    {taskOverdueCount} overdue • {taskDueSoonCount} due in 7 days
+                  </div>
+                  {nextTask ? (
+                    <div className="mt-3 rounded-md border border-foreground/10 bg-muted/40 px-3 py-2 text-xs text-foreground/70">
+                      Next: {nextTask.title}
+                      {nextTask.due_at ? ` • due ${formatInOfficeTz(nextTask.due_at)}` : ""}
+                    </div>
+                  ) : (
+                    <div className="mt-3 text-xs text-foreground/60">All caught up.</div>
+                  )}
+                </section>
+
+                <section className={`dash-fade-up ${cardClassName}`} style={dashStyle(3)}>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2 text-[0.7rem] font-semibold uppercase tracking-wide text-foreground/60">
+                      <IconCalendar className="h-4 w-4" />
+                      Meetings
+                    </div>
+                    <Link className={actionPillClassName} href="/meetings">
+                      Open
+                    </Link>
+                  </div>
+                  <div className="mt-3 text-2xl font-semibold">{meetingsTodayCount}</div>
+                  <div className="mt-1 text-xs text-foreground/60">
+                    {meetingsWeekCount} in the next 7 days
+                  </div>
+                  {nextMeeting ? (
+                    <div className="mt-3 rounded-md border border-foreground/10 bg-muted/40 px-3 py-2 text-xs text-foreground/70">
+                      Next: {nextMeeting.title} • {formatInOfficeTz(nextMeeting.starts_at)}
+                    </div>
+                  ) : (
+                    <div className="mt-3 text-xs text-foreground/60">No upcoming meetings.</div>
+                  )}
+                </section>
               </div>
             </section>
 
-            <section className="rounded-xl border bg-card p-4 shadow-sm">
-              <div className="flex items-baseline justify-between gap-3">
-                <div className="flex items-center gap-2 text-sm font-semibold">
-                  <IconChecklist className="h-4 w-4 text-foreground/70" />
-                  Tasks
-                </div>
-                <Link className="text-xs text-foreground/70 underline" href="/tasks">
-                  Open tasks
-                </Link>
-              </div>
-              <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-foreground/60">
-                <span>{tasks.length} open</span>
-                <span>{taskOverdueCount} overdue</span>
-                <span>{taskDueSoonCount} due in 7 days</span>
-              </div>
-              {tasks.length === 0 ? (
-                <div className="mt-3 rounded-md border border-dashed border-foreground/20 p-3 text-sm text-foreground/70">
-                  <p>All caught up on assigned tasks.</p>
-                  <Link className="mt-1 inline-flex text-xs text-foreground/70 underline" href="/tasks">
-                    Create a task
+            <section className="grid gap-4 lg:grid-cols-2">
+              <section className={`dash-fade-up ${cardClassName}`} style={dashStyle(4)}>
+                <div className="flex items-baseline justify-between gap-3">
+                  <div className="flex items-center gap-2 text-sm font-semibold">
+                    <IconChecklist className="h-4 w-4 text-foreground/70" />
+                    Assigned tasks
+                  </div>
+                  <Link className={actionPillClassName} href="/tasks">
+                    Open tasks
                   </Link>
                 </div>
-              ) : (
-                <div className="mt-3 space-y-2">
-                  {tasks.map((t) => {
-                    const overdue = isOverdue(t.due_at, nowMs);
-                    const dueSoon = !overdue && isDueSoon(t.due_at, nowMs, 7);
-                    const dueLabel = t.due_at ? `Due ${formatInOfficeTz(t.due_at)}` : "No due date";
-                    const dueClass = overdue
-                      ? "bg-rose-100 text-rose-700"
-                      : dueSoon
-                      ? "bg-amber-100 text-amber-700"
-                      : "bg-muted/60 text-foreground/70";
-                    return (
-                      <div
-                        key={t.id}
-                        className="flex items-start justify-between gap-3 rounded-md border border-foreground/10 px-3 py-2 transition-colors hover:border-foreground/20 hover:bg-foreground/5"
-                      >
-                        <div className="min-w-0">
-                          <div className="truncate text-sm font-medium">{t.title}</div>
-                          <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
-                            <span className="rounded-full border border-foreground/10 px-2 py-0.5 text-foreground/70">
-                              {t.status.toUpperCase()}
-                            </span>
-                            <span className={`rounded-full px-2 py-0.5 ${dueClass}`}>{dueLabel}</span>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
+                <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-foreground/60">
+                  <span>{tasks.length} open</span>
+                  <span>{taskOverdueCount} overdue</span>
+                  <span>{taskDueSoonCount} due in 7 days</span>
                 </div>
-              )}
-
-              {delegatedTasks.length > 0 ? (
-                <div className="mt-5 border-t pt-4">
-                  <div className="text-xs font-medium text-foreground/70">Delegated</div>
-                  <div className="mt-2 space-y-2">
-                    {delegatedTasks.map((t) => {
-                      const assignee = t.assigned_to
-                        ? (delegatedAssignees.get(t.assigned_to) ?? t.assigned_to)
-                        : "Unassigned";
+                {tasks.length === 0 ? (
+                  <div className={emptyStateClassName}>
+                    <p>All caught up on assigned tasks.</p>
+                    <Link className={emptyLinkClassName} href="/tasks">
+                      Create a task
+                    </Link>
+                  </div>
+                ) : (
+                  <div className="mt-3 space-y-2">
+                    {tasks.map((t) => {
+                      const overdue = isOverdue(t.due_at, nowMs);
+                      const dueSoon = !overdue && isDueSoon(t.due_at, nowMs, 7);
+                      const dueLabel = t.due_at ? `Due ${formatInOfficeTz(t.due_at)}` : "No due date";
+                      const dueClass = overdue
+                        ? "bg-rose-100 text-rose-700"
+                        : dueSoon
+                        ? "bg-amber-100 text-amber-700"
+                        : "bg-muted/60 text-foreground/70";
                       return (
-                        <div
-                          key={t.id}
-                          className="flex items-start justify-between gap-3 rounded-md border border-foreground/10 px-3 py-2 transition-colors hover:border-foreground/20 hover:bg-foreground/5"
-                        >
+                        <div key={t.id} className={listItemClassName}>
                           <div className="min-w-0">
                             <div className="truncate text-sm font-medium">{t.title}</div>
-                            <div className="mt-1 text-xs text-foreground/70">
-                              {assignee}
-                              {t.due_at ? ` • due ${formatInOfficeTz(t.due_at)}` : ""}
+                            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
+                              <span className="rounded-full border border-foreground/10 px-2 py-0.5 text-[0.7rem] font-semibold text-foreground/70">
+                                {t.status.toUpperCase()}
+                              </span>
+                              <span className={`rounded-full px-2 py-0.5 text-[0.7rem] font-semibold ${dueClass}`}>
+                                {dueLabel}
+                              </span>
                             </div>
                           </div>
                         </div>
                       );
                     })}
                   </div>
-                </div>
-              ) : null}
-            </section>
-          </section>
+                )}
 
-          <section className="grid gap-4 lg:grid-cols-2">
-            <section className="rounded-xl border bg-card p-4 shadow-sm">
-              <div className="flex items-baseline justify-between gap-3">
-                <div className="flex items-center gap-2 text-sm font-semibold">
-                  <IconCalendar className="h-4 w-4 text-foreground/70" />
-                  Meetings
-                </div>
-                <Link className="text-xs text-foreground/70 underline" href="/meetings">
-                  Open meetings
-                </Link>
-              </div>
-              <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-foreground/60">
-                <span>{meetingsTodayCount} today</span>
-                <span>{meetingsWeekCount} next 7 days</span>
-              </div>
-              {meetings.length === 0 ? (
-                <div className="mt-3 rounded-md border border-dashed border-foreground/20 p-3 text-sm text-foreground/70">
-                  <p>No upcoming meetings scheduled.</p>
-                  <Link className="mt-1 inline-flex text-xs text-foreground/70 underline" href="/meetings">
-                    Browse meetings
+                {delegatedTasks.length > 0 ? (
+                  <div className="mt-5 border-t border-foreground/10 pt-4">
+                    <div className="text-xs font-medium text-foreground/70">Delegated</div>
+                    <div className="mt-2 space-y-2">
+                      {delegatedTasks.map((t) => {
+                        const assignee = t.assigned_to
+                          ? (delegatedAssignees.get(t.assigned_to) ?? t.assigned_to)
+                          : "Unassigned";
+                        return (
+                          <div key={t.id} className={listItemClassName}>
+                            <div className="min-w-0">
+                              <div className="truncate text-sm font-medium">{t.title}</div>
+                              <div className="mt-1 text-xs text-foreground/70">
+                                {assignee}
+                                {t.due_at ? ` • due ${formatInOfficeTz(t.due_at)}` : ""}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : null}
+              </section>
+
+              <section className={`dash-fade-up ${cardClassName}`} style={dashStyle(5)}>
+                <div className="flex items-baseline justify-between gap-3">
+                  <div className="flex items-center gap-2 text-sm font-semibold">
+                    <IconCalendar className="h-4 w-4 text-foreground/70" />
+                    Meetings
+                  </div>
+                  <Link className={actionPillClassName} href="/meetings">
+                    Open meetings
                   </Link>
                 </div>
-              ) : (
-                <div className="mt-3 space-y-2">
-                  {meetings.map((m) => (
-                    <Link
-                      key={m.id}
-                      href={`/meetings/${m.id}`}
-                      className="block rounded-md border border-foreground/10 px-3 py-2 transition-colors hover:border-foreground/20 hover:bg-foreground/5"
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="truncate text-sm font-medium">{m.title}</div>
-                          <div className="mt-1 text-xs text-foreground/70">
-                            {formatMeetingType(m.meeting_type)}
-                            {m.location ? ` • ${m.location}` : ""}
-                          </div>
-                        </div>
-                        <span className="rounded-full border border-foreground/10 px-2 py-0.5 text-[0.7rem] text-foreground/70">
-                          {m.status}
-                        </span>
-                      </div>
-                      <div className="mt-2 text-xs text-foreground/70">
-                        {formatInOfficeTz(m.starts_at)} → {formatInOfficeTz(m.ends_at)}
-                      </div>
-                    </Link>
-                  ))}
+                <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-foreground/60">
+                  <span>{meetingsTodayCount} today</span>
+                  <span>{meetingsWeekCount} next 7 days</span>
                 </div>
-              )}
+                {meetings.length === 0 ? (
+                  <div className={emptyStateClassName}>
+                    <p>No upcoming meetings scheduled.</p>
+                    <Link className={emptyLinkClassName} href="/meetings">
+                      Browse meetings
+                    </Link>
+                  </div>
+                ) : (
+                  <div className="mt-3 space-y-2">
+                    {meetings.map((m) => (
+                      <Link key={m.id} href={`/meetings/${m.id}`} className={listItemClassName}>
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="truncate text-sm font-medium">{m.title}</div>
+                            <div className="mt-1 text-xs text-foreground/70">
+                              {formatMeetingType(m.meeting_type)}
+                              {m.location ? ` • ${m.location}` : ""}
+                            </div>
+                          </div>
+                          <span className="rounded-full border border-foreground/10 px-2 py-0.5 text-[0.7rem] font-semibold text-foreground/70">
+                            {m.status}
+                          </span>
+                        </div>
+                        <div className="mt-2 text-xs text-foreground/70">
+                          {formatInOfficeTz(m.starts_at)} → {formatInOfficeTz(m.ends_at)}
+                        </div>
+                      </Link>
+                    ))}
+                  </div>
+                )}
+              </section>
             </section>
 
-            <section className="rounded-xl border bg-card p-4 shadow-sm">
+            <section className={`dash-fade-up ${cardClassName}`} style={dashStyle(6)}>
               <div className="flex items-baseline justify-between gap-3">
                 <div className="flex items-center gap-2 text-sm font-semibold">
                   <IconClock className="h-4 w-4 text-foreground/70" />
                   Upcoming shifts
                 </div>
-                <Link className="text-xs text-foreground/70 underline" href="/office-hours">
+                <Link className={actionPillClassName} href="/office-hours">
                   Office hours
                 </Link>
               </div>
               <div className="mt-2 text-xs text-foreground/60">{shifts.length} scheduled</div>
               {shifts.length === 0 ? (
-                <div className="mt-3 rounded-md border border-dashed border-foreground/20 p-3 text-sm text-foreground/70">
+                <div className={emptyStateClassName}>
                   <p>No upcoming shifts scheduled.</p>
-                  <Link className="mt-1 inline-flex text-xs text-foreground/70 underline" href="/office-hours">
+                  <Link className={emptyLinkClassName} href="/office-hours">
                     Pick up a shift
                   </Link>
                 </div>
               ) : (
-                <div className="mt-3 space-y-2">
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
                   {shifts.map((s) => (
-                    <div
-                      key={s.id}
-                      className="rounded-md border border-foreground/10 px-3 py-2 transition-colors hover:border-foreground/20 hover:bg-foreground/5"
-                    >
+                    <div key={s.id} className={listItemClassName}>
                       <div className="text-sm text-foreground/80">
                         {formatInOfficeTz(s.starts_at)} → {formatInOfficeTz(s.ends_at)}
                       </div>
@@ -599,87 +659,79 @@ export default async function DashboardPage() {
                 </div>
               )}
             </section>
-          </section>
-        </div>
-
-        <aside className="order-first space-y-4 xl:order-last xl:sticky xl:top-20 xl:self-start">
-          <section className="rounded-xl border bg-card p-4 shadow-sm">
-            <div className="flex items-center gap-2 text-[0.7rem] font-semibold uppercase tracking-wide text-foreground/60">
-              <IconZap className="h-4 w-4" />
-              Quick actions
-            </div>
-            <div className="mt-3 grid gap-2 text-sm">
-              <Link
-                href="/office-hours"
-                className="flex items-center justify-between rounded-md border border-transparent bg-muted/40 px-2 py-2 text-sm font-medium text-foreground/80 transition-colors hover:border-foreground/20 hover:bg-muted/60 hover:text-foreground"
-              >
-                Log hours
-              </Link>
-              <Link
-                href="/tasks"
-                className="flex items-center justify-between rounded-md border border-transparent bg-muted/40 px-2 py-2 text-sm font-medium text-foreground/80 transition-colors hover:border-foreground/20 hover:bg-muted/60 hover:text-foreground"
-              >
-                Create task
-              </Link>
-              <Link
-                href="/meetings"
-                className="flex items-center justify-between rounded-md border border-transparent bg-muted/40 px-2 py-2 text-sm font-medium text-foreground/80 transition-colors hover:border-foreground/20 hover:bg-muted/60 hover:text-foreground"
-              >
-                View meetings
-              </Link>
-              <Link
-                href="/finance"
-                className="flex items-center justify-between rounded-md border border-transparent bg-muted/40 px-2 py-2 text-sm font-medium text-foreground/80 transition-colors hover:border-foreground/20 hover:bg-muted/60 hover:text-foreground"
-              >
-                Open finance
-              </Link>
-            </div>
-          </section>
-
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-1">
-            <section className="rounded-xl border bg-card p-4 shadow-sm">
-              <div className="flex items-center gap-2 text-[0.7rem] font-semibold uppercase tracking-wide text-foreground/60">
-                <IconUsers className="h-4 w-4" />
-                Community
-              </div>
-              <div className="mt-2 space-y-1 text-sm">
-                <Link
-                  href="/clubs"
-                  className="flex items-center justify-between rounded-md px-2 py-1 text-foreground/70 transition-colors hover:bg-muted/60 hover:text-foreground"
-                >
-                  Clubs
-                </Link>
-                <Link
-                  href="/icc"
-                  className="flex items-center justify-between rounded-md px-2 py-1 text-foreground/70 transition-colors hover:bg-muted/60 hover:text-foreground"
-                >
-                  ICC
-                </Link>
-              </div>
-            </section>
-
-            <section className="rounded-xl border bg-card p-4 shadow-sm">
-              <div className="flex items-center gap-2 text-[0.7rem] font-semibold uppercase tracking-wide text-foreground/60">
-                <IconFolder className="h-4 w-4" />
-                Resources
-              </div>
-              <div className="mt-2 space-y-1 text-sm">
-                <Link
-                  href="/docs"
-                  className="flex items-center justify-between rounded-md px-2 py-1 text-foreground/70 transition-colors hover:bg-muted/60 hover:text-foreground"
-                >
-                  Docs
-                </Link>
-                <Link
-                  href="/finance"
-                  className="flex items-center justify-between rounded-md px-2 py-1 text-foreground/70 transition-colors hover:bg-muted/60 hover:text-foreground"
-                >
-                  Finance
-                </Link>
-              </div>
-            </section>
           </div>
-        </aside>
+
+          <aside className="order-first space-y-4 xl:order-last xl:sticky xl:top-20 xl:self-start">
+            <section className={`dash-fade-up ${cardClassName}`} style={dashStyle(7)}>
+              <div className="flex items-center gap-2 text-[0.7rem] font-semibold uppercase tracking-wide text-foreground/60">
+                <IconZap className="h-4 w-4" />
+                Quick actions
+              </div>
+              <div className="mt-3 grid gap-2 text-sm">
+                <Link href="/office-hours" className={quickActionClassName}>
+                  <IconClock className="h-4 w-4 text-foreground/70" />
+                  Log hours
+                </Link>
+                <Link href="/tasks" className={quickActionClassName}>
+                  <IconChecklist className="h-4 w-4 text-foreground/70" />
+                  Create task
+                </Link>
+                <Link href="/meetings" className={quickActionClassName}>
+                  <IconCalendar className="h-4 w-4 text-foreground/70" />
+                  View meetings
+                </Link>
+                <Link href="/finance" className={quickActionClassName}>
+                  <IconFolder className="h-4 w-4 text-foreground/70" />
+                  Open finance
+                </Link>
+              </div>
+            </section>
+
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-1">
+              <section className={`dash-fade-up ${cardClassName}`} style={dashStyle(8)}>
+                <div className="flex items-center gap-2 text-[0.7rem] font-semibold uppercase tracking-wide text-foreground/60">
+                  <IconUsers className="h-4 w-4" />
+                  Community
+                </div>
+                <div className="mt-2 space-y-1 text-sm">
+                  <Link
+                    href="/clubs"
+                    className="flex items-center justify-between rounded-md px-2 py-1 text-foreground/70 transition-colors hover:bg-muted/60 hover:text-foreground"
+                  >
+                    Clubs
+                  </Link>
+                  <Link
+                    href="/icc"
+                    className="flex items-center justify-between rounded-md px-2 py-1 text-foreground/70 transition-colors hover:bg-muted/60 hover:text-foreground"
+                  >
+                    ICC
+                  </Link>
+                </div>
+              </section>
+
+              <section className={`dash-fade-up ${cardClassName}`} style={dashStyle(9)}>
+                <div className="flex items-center gap-2 text-[0.7rem] font-semibold uppercase tracking-wide text-foreground/60">
+                  <IconFolder className="h-4 w-4" />
+                  Resources
+                </div>
+                <div className="mt-2 space-y-1 text-sm">
+                  <Link
+                    href="/docs"
+                    className="flex items-center justify-between rounded-md px-2 py-1 text-foreground/70 transition-colors hover:bg-muted/60 hover:text-foreground"
+                  >
+                    Docs
+                  </Link>
+                  <Link
+                    href="/finance"
+                    className="flex items-center justify-between rounded-md px-2 py-1 text-foreground/70 transition-colors hover:bg-muted/60 hover:text-foreground"
+                  >
+                    Finance
+                  </Link>
+                </div>
+              </section>
+            </div>
+          </aside>
+        </div>
       </div>
     </PageShell>
   );
