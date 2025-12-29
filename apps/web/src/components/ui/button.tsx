@@ -18,9 +18,9 @@ export function Button({
     <button
       type={type}
       className={cn(
-        "inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors",
+        "inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium transition-colors active:translate-y-px",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
-        "disabled:pointer-events-none disabled:opacity-50",
+        "disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-40",
         variant === "default" &&
           "bg-primary text-primary-foreground hover:bg-primary/90",
         variant === "ghost" &&

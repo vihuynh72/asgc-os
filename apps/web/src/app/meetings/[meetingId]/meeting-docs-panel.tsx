@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState, type ChangeEvent, type FormE
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { IconCheck, IconDownload, IconFileText, IconUpload } from "@/components/ui/icons";
 import type { DocRow } from "@/lib/doc-types";
 
 
@@ -195,17 +196,23 @@ export function MeetingDocsPanel({
   const latestAgendaDoc = agendaGroups[0]?.docs[0] ?? null;
   const canGenerateAgenda = canEdit && acceptedAgendaCount > 0;
 
+  function confirmMarkPosted(type: "agenda" | "minutes") {
+    const label = type === "agenda" ? "agenda" : "minutes";
+    return confirm(`Mark ${label} as posted? This will make the document publicly available.`);
+  }
+
   const reload = useCallback(async () => {
     const qs = new URLSearchParams({ meeting_id: meetingId });
     const { docs: nextDocs } = await fetchJson<{ docs: DocRow[] }>(`/api/docs?${qs.toString()}`);
     setDocs(nextDocs ?? []);
   }, [meetingId]);
 
-  async function markMeetingPosted(type: "agenda" | "minutes") {
+  async function markMeetingPosted(type: "agenda" | "minutes", options?: { skipConfirm?: boolean }) {
     if (!canEdit) {
       setStatus("Meeting is cancelled. Posting updates are disabled.");
       return;
     }
+    if (!options?.skipConfirm && !confirmMarkPosted(type)) return;
     const payload =
       type === "agenda"
         ? { agenda_posted_at: new Date().toISOString() }
@@ -251,6 +258,10 @@ export function MeetingDocsPanel({
       return;
     }
 
+    if (minutesMarkPosted && !confirmMarkPosted("minutes")) {
+      return;
+    }
+
     const contentType = inferMimeType(uploadFile);
     setStatus("Getting upload URL...");
 
@@ -293,7 +304,7 @@ export function MeetingDocsPanel({
         }),
       });
       if (minutesMarkPosted) {
-        await markMeetingPosted("minutes");
+        await markMeetingPosted("minutes", { skipConfirm: true });
       }
 
       setStatus("");
@@ -340,6 +351,10 @@ export function MeetingDocsPanel({
       return;
     }
 
+    if (agendaMarkPosted && !confirmMarkPosted("agenda")) {
+      return;
+    }
+
     const contentType = inferMimeType(agendaFile);
     setStatus("Getting upload URL...");
 
@@ -382,7 +397,7 @@ export function MeetingDocsPanel({
         }),
       });
       if (agendaMarkPosted) {
-        await markMeetingPosted("agenda");
+        await markMeetingPosted("agenda", { skipConfirm: true });
       }
 
       setStatus("");
@@ -454,7 +469,10 @@ export function MeetingDocsPanel({
       setStatus("Add at least one accepted agenda item before generating a PDF.");
       return;
     }
-    if (!confirm("Generate a new agenda PDF?")) return;
+    const confirmMessage = `Generate a new agenda PDF? This will include ${acceptedAgendaCount} accepted item${
+      acceptedAgendaCount === 1 ? "" : "s"
+    }.`;
+    if (!confirm(confirmMessage)) return;
     setStatus("Generating agenda PDF...");
     try {
       await fetchJson(`/api/meetings/${encodeURIComponent(meetingId)}/agenda-pdf`, {
@@ -601,7 +619,14 @@ export function MeetingDocsPanel({
               </div>
               <div className="flex justify-end">
                 <Button type="submit" size="sm" disabled={!canUploadMinutes}>
-                  {minutesUploading ? `Uploading ${minutesUploadProgress ?? 0}%` : "Upload Minutes"}
+                  {minutesUploading ? (
+                    `Uploading ${minutesUploadProgress ?? 0}%`
+                  ) : (
+                    <>
+                      <IconUpload className="h-3.5 w-3.5" />
+                      Upload Minutes
+                    </>
+                  )}
                 </Button>
               </div>
             </form>
@@ -609,7 +634,9 @@ export function MeetingDocsPanel({
         ) : isAdmin ? (
           <div className="mt-4 text-sm text-foreground/70">Uploads are disabled for cancelled meetings.</div>
         ) : (
-          <div className="mt-4 text-sm text-foreground/70">Only admins can upload minutes.</div>
+          <div className="mt-4 text-sm text-foreground/70">
+            Only admins can upload minutes. Contact your committee chair or an admin for help.
+          </div>
         )}
 
         {minutesGroups.length === 0 ? (
@@ -645,6 +672,7 @@ export function MeetingDocsPanel({
                               {new Date(doc.created_at).toLocaleString()} • {formatBytes(doc.size_bytes)} • {doc.mime_type ?? "Unknown type"}
                             </span>
                             <Button type="button" variant="ghost" size="sm" onClick={() => handleDownload(doc)}>
+                              <IconDownload className="h-3.5 w-3.5" />
                               Download
                             </Button>
                           </div>
@@ -667,10 +695,12 @@ export function MeetingDocsPanel({
                     ) : null}
                     {canEdit ? (
                       <Button type="button" variant="ghost" size="sm" onClick={() => void markMeetingPosted("minutes")}>
+                        <IconCheck className="h-3.5 w-3.5" />
                         Mark posted now
                       </Button>
                     ) : null}
                     <Button type="button" variant="outline" size="sm" onClick={() => handleDownload(latest)}>
+                      <IconDownload className="h-3.5 w-3.5" />
                       Download
                     </Button>
                   </div>
@@ -703,10 +733,12 @@ export function MeetingDocsPanel({
                       : "Add at least one accepted agenda item to enable PDF generation"
                 }
               >
+                <IconFileText className="h-3.5 w-3.5" />
                 Generate Agenda PDF
               </Button>
               {latestAgendaDoc ? (
                 <Button type="button" variant="ghost" size="sm" onClick={() => handleDownload(latestAgendaDoc)}>
+                  <IconDownload className="h-3.5 w-3.5" />
                   Preview latest
                 </Button>
               ) : null}
@@ -837,14 +869,25 @@ export function MeetingDocsPanel({
               </div>
               <div className="flex justify-end">
                 <Button type="submit" size="sm" disabled={!canUploadAgenda}>
-                  {agendaUploading ? `Uploading ${agendaUploadProgress ?? 0}%` : "Upload Agenda"}
+                  {agendaUploading ? (
+                    `Uploading ${agendaUploadProgress ?? 0}%`
+                  ) : (
+                    <>
+                      <IconUpload className="h-3.5 w-3.5" />
+                      Upload Agenda
+                    </>
+                  )}
                 </Button>
               </div>
             </form>
           </details>
         ) : isAdmin ? (
           <div className="mt-4 text-sm text-foreground/70">Uploads are disabled for cancelled meetings.</div>
-        ) : null}
+        ) : (
+          <div className="mt-4 text-sm text-foreground/70">
+            Only admins can upload agenda documents. Contact your committee chair or an admin for help.
+          </div>
+        )}
 
         {agendaGroups.length === 0 ? (
           <div className="mt-4 text-sm text-foreground/70">No agenda documents yet.</div>
@@ -879,6 +922,7 @@ export function MeetingDocsPanel({
                               {new Date(doc.created_at).toLocaleString()} • {formatBytes(doc.size_bytes)} • {doc.mime_type ?? "Unknown type"}
                             </span>
                             <Button type="button" variant="ghost" size="sm" onClick={() => handleDownload(doc)}>
+                              <IconDownload className="h-3.5 w-3.5" />
                               Download
                             </Button>
                           </div>
@@ -901,10 +945,12 @@ export function MeetingDocsPanel({
                     ) : null}
                     {canEdit ? (
                       <Button type="button" variant="ghost" size="sm" onClick={() => void markMeetingPosted("agenda")}>
+                        <IconCheck className="h-3.5 w-3.5" />
                         Mark posted now
                       </Button>
                     ) : null}
                     <Button type="button" variant="outline" size="sm" onClick={() => handleDownload(latest)}>
+                      <IconDownload className="h-3.5 w-3.5" />
                       Download
                     </Button>
                   </div>

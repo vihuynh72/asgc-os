@@ -4,6 +4,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { IconCalendar, IconCopy, IconLink, IconMail } from "@/components/ui/icons";
 import { copyTextWithFallback } from "@/lib/clipboard";
 
 type MeetingActionsProps = {
@@ -164,28 +165,35 @@ export function MeetingActions({ meeting, officeTz }: MeetingActionsProps) {
     <div className="space-y-2">
       <div className="flex flex-wrap items-center gap-2">
         <Button size="sm" variant="outline" onClick={() => void copyText("Meeting link", window.location.href)}>
+          <IconLink className="h-3.5 w-3.5" />
           Copy link
         </Button>
         <Button size="sm" variant="outline" onClick={() => void copyText("Meeting summary", buildSummary())}>
+          <IconCopy className="h-3.5 w-3.5" />
           Copy summary
         </Button>
         {meeting.remote_url ? (
           <Button size="sm" variant="outline" onClick={() => void copyText("Remote link", meeting.remote_url!)}>
+            <IconLink className="h-3.5 w-3.5" />
             Copy remote link
           </Button>
         ) : null}
         {meeting.livestream_url ? (
           <Button size="sm" variant="outline" onClick={() => void copyText("Livestream link", meeting.livestream_url!)}>
+            <IconLink className="h-3.5 w-3.5" />
             Copy livestream link
           </Button>
         ) : null}
         <Button size="sm" onClick={handleDownloadCalendar}>
+          <IconCalendar className="h-3.5 w-3.5" />
           Add to calendar
         </Button>
         <Button size="sm" variant="outline" onClick={handleShareEmail}>
+          <IconMail className="h-3.5 w-3.5" />
           Share via email
         </Button>
         <Button size="sm" variant="outline" onClick={handleSubscribeCalendar}>
+          <IconCalendar className="h-3.5 w-3.5" />
           Subscribe to calendar feed
         </Button>
       </div>

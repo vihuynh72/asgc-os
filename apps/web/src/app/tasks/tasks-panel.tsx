@@ -1,9 +1,24 @@
 "use client";
 
-import { useMemo, useState, type ChangeEvent, type FormEvent } from "react";
+import { useMemo, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import {
+  IconAlert,
+  IconCheck,
+  IconChevronDown,
+  IconChevronUp,
+  IconClock,
+  IconCopy,
+  IconDownload,
+  IconFilter,
+  IconPlus,
+  IconRefresh,
+  IconSearch,
+  IconTrash,
+  IconX,
+} from "@/components/ui/icons";
 import { copyTextWithFallback } from "@/lib/clipboard";
 import type { TaskPrefill } from "@/lib/task-types";
 
@@ -51,6 +66,50 @@ type AssigneeRow = {
   role_key: string;
 };
 
+type TaskTemplate = {
+  id: string;
+  label: string;
+  title: string;
+  description: string;
+  priority: "low" | "medium" | "high";
+  dueOffsetDays?: number;
+};
+
+const TASK_TEMPLATES: TaskTemplate[] = [
+  {
+    id: "event-planning",
+    label: "Event planning",
+    title: "Plan upcoming event",
+    description: "Outline timeline, logistics, speakers, and promotional plan.",
+    priority: "high",
+    dueOffsetDays: 21,
+  },
+  {
+    id: "budget-review",
+    label: "Budget review",
+    title: "Review budget request",
+    description: "Validate amounts, attach quotes, and confirm compliance.",
+    priority: "medium",
+    dueOffsetDays: 7,
+  },
+  {
+    id: "meeting-follow-up",
+    label: "Meeting follow-up",
+    title: "Send meeting follow-up",
+    description: "Distribute notes, assign action items, and update docs.",
+    priority: "medium",
+    dueOffsetDays: 3,
+  },
+  {
+    id: "doc-update",
+    label: "Document update",
+    title: "Update shared document",
+    description: "Revise content, add references, and publish final copy.",
+    priority: "low",
+    dueOffsetDays: 10,
+  },
+];
+
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init);
   const data = (await res.json().catch(() => ({}))) as T;
@@ -68,6 +127,19 @@ function formatDateInputValue(iso: string | null): string {
   return "";
 }
 
+function formatDateOnly(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function addDays(date: Date, days: number): Date {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
 function toIsoFromDateInput(value: string): string | null {
   const v = value.trim();
   if (!v) return null;
@@ -77,6 +149,22 @@ function toIsoFromDateInput(value: string): string | null {
   return d.toISOString();
 }
 
+function isDateInPast(value: string): boolean {
+  const d = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return false;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return d.getTime() < today.getTime();
+}
+
+function isValidHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
 function isTaskOverdue(task: TaskRow): boolean {
   if (!task.due_at || task.status === "done") return false;
   const due = new Date(task.due_at);
@@ -145,12 +233,14 @@ export function TasksPanel({
 
   const [status, setStatus] = useState<string>("");
   const [filterQuery, setFilterQuery] = useState<string>("");
-  const [filterStatus, setFilterStatus] = useState<TaskRow["status"] | "">("");
+  const [filterStatuses, setFilterStatuses] = useState<TaskRow["status"][]>([]);
   const [filterCommitteeId, setFilterCommitteeId] = useState<string>("");
-  const [filterPriority, setFilterPriority] = useState<TaskRow["priority"] | "">("");
+  const [filterPriorities, setFilterPriorities] = useState<TaskRow["priority"][]>([]);
   const [filterAssignee, setFilterAssignee] = useState<"" | "me" | "assigned" | "unassigned">("");
   const [filterOverdueOnly, setFilterOverdueOnly] = useState<boolean>(false);
   const [filterDueSoonOnly, setFilterDueSoonOnly] = useState<boolean>(false);
+  const [filterDueStart, setFilterDueStart] = useState<string>("");
+  const [filterDueEnd, setFilterDueEnd] = useState<string>("");
   const [sortKey, setSortKey] = useState<"updated" | "due" | "title" | "priority">("updated");
   const [taskPage, setTaskPage] = useState<number>(1);
   const [taskPageSize, setTaskPageSize] = useState<number>(10);
@@ -170,6 +260,12 @@ export function TasksPanel({
   const [newPriority, setNewPriority] = useState<TaskRow["priority"]>(initialPriority);
   const [newDue, setNewDue] = useState<string>(prefill?.due ?? "");
   const [newAssigneeId, setNewAssigneeId] = useState<string>(prefill?.assigneeId ?? viewerUserId);
+  const [templateId, setTemplateId] = useState<string>("");
+  const [templateNote, setTemplateNote] = useState<string>("");
+  const [createErrors, setCreateErrors] = useState<{ committee?: string; title?: string }>({});
+  const [createdTaskBanner, setCreatedTaskBanner] = useState<{ id: string; title: string } | null>(null);
+  const [highlightedTaskId, setHighlightedTaskId] = useState<string | null>(null);
+  const highlightTimeoutRef = useRef<number | null>(null);
 
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   const [commentsByTaskId, setCommentsByTaskId] = useState<Record<string, TaskCommentRow[]>>({});
@@ -184,6 +280,14 @@ export function TasksPanel({
     for (const c of committees) m.set(c.id, c);
     return m;
   }, [committees]);
+
+  const statusOptions = useMemo(() => ["todo", "doing", "done"] as const, []);
+  const priorityOptions = useMemo(() => ["high", "medium", "low"] as const, []);
+
+  const dueWarning = useMemo(() => {
+    if (!newDue) return "";
+    return isDateInPast(newDue) ? "Due date is in the past." : "";
+  }, [newDue]);
 
   const prefillActive = Boolean(
     prefill?.title ||
@@ -208,14 +312,14 @@ export function TasksPanel({
     const query = filterQuery.trim().toLowerCase();
     let next = tasks;
 
-    if (filterStatus) {
-      next = next.filter((t) => t.status === filterStatus);
+    if (filterStatuses.length > 0) {
+      next = next.filter((t) => filterStatuses.includes(t.status));
     }
     if (filterCommitteeId) {
       next = next.filter((t) => t.committee_id === filterCommitteeId);
     }
-    if (filterPriority) {
-      next = next.filter((t) => t.priority === filterPriority);
+    if (filterPriorities.length > 0) {
+      next = next.filter((t) => filterPriorities.includes(t.priority));
     }
     if (filterAssignee) {
       if (filterAssignee === "me") {
@@ -231,6 +335,24 @@ export function TasksPanel({
     }
     if (filterDueSoonOnly) {
       next = next.filter((t) => isTaskDueSoon(t));
+    }
+    if (filterDueStart || filterDueEnd) {
+      const startTs = filterDueStart ? new Date(`${filterDueStart}T00:00:00`).getTime() : null;
+      const endTs = filterDueEnd ? new Date(`${filterDueEnd}T23:59:59`).getTime() : null;
+      const invalidRange =
+        filterDueStart && filterDueEnd && filterDueStart.trim() && filterDueEnd.trim()
+          ? filterDueStart > filterDueEnd
+          : false;
+      if (!invalidRange) {
+        next = next.filter((t) => {
+          if (!t.due_at) return false;
+          const due = new Date(t.due_at).getTime();
+          if (Number.isNaN(due)) return false;
+          if (startTs && !Number.isNaN(startTs) && due < startTs) return false;
+          if (endTs && !Number.isNaN(endTs) && due > endTs) return false;
+          return true;
+        });
+      }
     }
     if (query) {
       next = next.filter((t) => {
@@ -271,11 +393,13 @@ export function TasksPanel({
     committeesById,
     filterAssignee,
     filterCommitteeId,
+    filterDueEnd,
     filterDueSoonOnly,
+    filterDueStart,
     filterOverdueOnly,
-    filterPriority,
+    filterPriorities,
     filterQuery,
-    filterStatus,
+    filterStatuses,
     sortKey,
     tasks,
     viewerUserId,
@@ -298,6 +422,184 @@ export function TasksPanel({
     const start = (resolvedTaskPage - 1) * taskPageSize;
     return filteredTasks.slice(start, start + taskPageSize);
   }, [filteredTasks, resolvedTaskPage, taskPageSize]);
+
+  const dueRangeError =
+    filterDueStart && filterDueEnd && filterDueStart.trim() && filterDueEnd.trim() && filterDueStart > filterDueEnd
+      ? "Start date is after end date."
+      : "";
+
+  const taskFiltersActive =
+    filterQuery.trim().length > 0 ||
+    filterStatuses.length > 0 ||
+    filterCommitteeId.length > 0 ||
+    filterPriorities.length > 0 ||
+    filterAssignee.length > 0 ||
+    filterOverdueOnly ||
+    filterDueSoonOnly ||
+    filterDueStart.trim().length > 0 ||
+    filterDueEnd.trim().length > 0 ||
+    sortKey !== "updated";
+
+  const donePercent = filteredTasks.length
+    ? Math.round((statusCounts.done / filteredTasks.length) * 100)
+    : 0;
+
+  const activeFilterChips = useMemo(() => {
+    const chips: Array<{ key: string; label: string; onClear: () => void }> = [];
+    const query = filterQuery.trim();
+    if (query)
+      chips.push({
+        key: "query",
+        label: `Search: "${query}"`,
+        onClear: () => {
+          setFilterQuery("");
+          setTaskPage(1);
+        },
+      });
+    if (filterStatuses.length > 0) {
+      chips.push({
+        key: "status",
+        label: `Status: ${filterStatuses.map(formatTaskStatus).join(", ")}`,
+        onClear: () => {
+          setFilterStatuses([]);
+          setTaskPage(1);
+        },
+      });
+    }
+    if (filterCommitteeId) {
+      const label = committeesById.get(filterCommitteeId)?.name ?? filterCommitteeId;
+      chips.push({
+        key: "committee",
+        label: `Committee: ${label}`,
+        onClear: () => {
+          setFilterCommitteeId("");
+          setTaskPage(1);
+        },
+      });
+    }
+    if (filterPriorities.length > 0) {
+      chips.push({
+        key: "priority",
+        label: `Priority: ${filterPriorities.map(formatTaskPriority).join(", ")}`,
+        onClear: () => {
+          setFilterPriorities([]);
+          setTaskPage(1);
+        },
+      });
+    }
+    if (filterAssignee) {
+      const label =
+        filterAssignee === "me"
+          ? "Assigned to me"
+          : filterAssignee === "assigned"
+            ? "Assigned"
+            : "Unassigned";
+      chips.push({
+        key: "assignee",
+        label,
+        onClear: () => {
+          setFilterAssignee("");
+          setTaskPage(1);
+        },
+      });
+    }
+    if (filterOverdueOnly) {
+      chips.push({
+        key: "overdue",
+        label: "Overdue only",
+        onClear: () => {
+          setFilterOverdueOnly(false);
+          setTaskPage(1);
+        },
+      });
+    }
+    if (filterDueSoonOnly) {
+      chips.push({
+        key: "dueSoon",
+        label: "Due soon only",
+        onClear: () => {
+          setFilterDueSoonOnly(false);
+          setTaskPage(1);
+        },
+      });
+    }
+    if (filterDueStart || filterDueEnd) {
+      chips.push({
+        key: "dueRange",
+        label: `Due: ${filterDueStart || "any"} to ${filterDueEnd || "any"}`,
+        onClear: () => {
+          setFilterDueStart("");
+          setFilterDueEnd("");
+          setTaskPage(1);
+        },
+      });
+    }
+    if (sortKey !== "updated") {
+      chips.push({
+        key: "sort",
+        label: `Sort: ${sortKey}`,
+        onClear: () => {
+          setSortKey("updated");
+          setTaskPage(1);
+        },
+      });
+    }
+    return chips;
+  }, [
+    committeesById,
+    filterAssignee,
+    filterCommitteeId,
+    filterDueEnd,
+    filterDueSoonOnly,
+    filterDueStart,
+    filterOverdueOnly,
+    filterPriorities,
+    filterQuery,
+    filterStatuses,
+    sortKey,
+  ]);
+
+  const createdHiddenByFilters = useMemo(() => {
+    if (!createdTaskBanner) return false;
+    const exists = tasks.some((task) => task.id === createdTaskBanner.id);
+    if (!exists) return false;
+    return !filteredTasks.some((task) => task.id === createdTaskBanner.id);
+  }, [createdTaskBanner, filteredTasks, tasks]);
+
+  function jumpToTask(taskId: string) {
+    const index = filteredTasks.findIndex((task) => task.id === taskId);
+    if (index < 0) {
+      toast.error("That task is hidden by the current filters.");
+      return;
+    }
+    const targetPage = Math.floor(index / taskPageSize) + 1;
+    if (taskPage !== targetPage) {
+      setTaskPage(targetPage);
+    }
+
+    let attempts = 0;
+    const scrollAttempt = () => {
+      const el = document.getElementById(`task-${taskId}`);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        if (el instanceof HTMLElement) {
+          el.focus({ preventScroll: true });
+        }
+        return;
+      }
+      if (attempts < 6) {
+        attempts += 1;
+        window.requestAnimationFrame(scrollAttempt);
+      }
+    };
+
+    window.requestAnimationFrame(scrollAttempt);
+    setHighlightedTaskId(taskId);
+    if (highlightTimeoutRef.current) {
+      window.clearTimeout(highlightTimeoutRef.current);
+    }
+    highlightTimeoutRef.current = window.setTimeout(() => setHighlightedTaskId(null), 2000);
+  }
 
   async function loadAssignees(committeeId: string) {
     if (!committeeId) return;
@@ -324,6 +626,51 @@ export function TasksPanel({
 
     setCommentsByTaskId((prev) => ({ ...prev, [taskId]: commentsRes.comments }));
     setAttachmentsByTaskId((prev) => ({ ...prev, [taskId]: attachmentsRes.attachments }));
+  }
+
+  function applyTemplate(template: TaskTemplate) {
+    const hasValues = newTitle.trim() || newDescription.trim();
+    if (hasValues && !window.confirm("Replace the current title and description with the template?")) {
+      return;
+    }
+    setNewTitle(template.title);
+    setNewDescription(template.description);
+    setNewPriority(template.priority);
+    if (typeof template.dueOffsetDays === "number") {
+      setNewDue(formatDateOnly(addDays(new Date(), template.dueOffsetDays)));
+    }
+    setCreateErrors((prev) => ({ ...prev, title: undefined }));
+    setTemplateNote(`Template "${template.label}" applied.`);
+  }
+
+  function toggleStatusFilter(value: TaskRow["status"]) {
+    setFilterStatuses((prev) => {
+      const next = prev.includes(value) ? prev.filter((s) => s !== value) : [...prev, value];
+      return next;
+    });
+    setTaskPage(1);
+  }
+
+  function togglePriorityFilter(value: TaskRow["priority"]) {
+    setFilterPriorities((prev) => {
+      const next = prev.includes(value) ? prev.filter((p) => p !== value) : [...prev, value];
+      return next;
+    });
+    setTaskPage(1);
+  }
+
+  function resetFilters() {
+    setFilterQuery("");
+    setFilterStatuses([]);
+    setFilterCommitteeId("");
+    setFilterPriorities([]);
+    setFilterAssignee("");
+    setFilterOverdueOnly(false);
+    setFilterDueSoonOnly(false);
+    setFilterDueStart("");
+    setFilterDueEnd("");
+    setSortKey("updated");
+    setTaskPage(1);
   }
 
   async function toggleExpanded(taskId: string, committeeId: string) {
@@ -404,6 +751,12 @@ export function TasksPanel({
     const url = (newAttachmentUrlByTaskId[taskId] ?? "").trim();
     const label = (newAttachmentLabelByTaskId[taskId] ?? "").trim();
     if (!url) return;
+    if (!isValidHttpUrl(url)) {
+      const msg = "Enter a valid http(s) URL.";
+      setStatus(msg);
+      toast.error(msg);
+      return;
+    }
 
     setStatus("Adding link...");
     try {
@@ -466,14 +819,22 @@ export function TasksPanel({
 
   async function onCreateTask(e: FormEvent) {
     e.preventDefault();
-    if (!newCommitteeId) {
-      setStatus("Pick a committee first.");
+    const nextErrors: { committee?: string; title?: string } = {};
+    if (!newCommitteeId) nextErrors.committee = "Committee is required.";
+    if (!newTitle.trim()) nextErrors.title = "Title is required.";
+    setCreateErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) {
+      setStatus("Fix the highlighted fields to continue.");
       return;
+    }
+    if (newDue && isDateInPast(newDue)) {
+      const proceed = window.confirm("The due date is in the past. Create the task anyway?");
+      if (!proceed) return;
     }
 
     setStatus("Creating task...");
     try {
-      await fetchJson<{ task: TaskRow }>("/api/tasks", {
+      const { task } = await fetchJson<{ task: TaskRow }>("/api/tasks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -490,6 +851,11 @@ export function TasksPanel({
       setNewTitle("");
       setNewDescription("");
       setNewDue("");
+      setTemplateId("");
+      setTemplateNote("");
+      setCreateErrors({});
+      setCreatedTaskBanner({ id: task.id, title: task.title });
+      setTaskPage(1);
       setStatus("");
       toast.success("Task created");
       await reload();
@@ -572,6 +938,19 @@ export function TasksPanel({
       .join("\n");
   }
 
+  function buildTaskSummary(task: TaskRow) {
+    const due = task.due_at ? `Due ${formatDateInputValue(task.due_at)}` : "No due date";
+    const committee = committeesById.get(task.committee_id)?.name ?? task.committee_id;
+    const assignee = task.assigned_to ? taskAssigneeLabel(task) : "Unassigned";
+    const details = [
+      task.title,
+      `${committee} • ${formatTaskStatus(task.status)} • ${formatTaskPriority(task.priority)}`,
+      `${assignee} • ${due}`,
+    ];
+    if (task.description) details.push(task.description);
+    return details.join("\n");
+  }
+
   async function handleCopyTaskList() {
     if (filteredTasks.length === 0) {
       toast.error("No tasks to copy");
@@ -580,6 +959,15 @@ export function TasksPanel({
     const ok = await copyTextWithFallback(buildTaskCopyText(filteredTasks), { promptLabel: "Copy task list" });
     if (ok) {
       toast.success("Task list copied");
+    } else {
+      toast.info("Clipboard blocked. Use the prompt to copy.");
+    }
+  }
+
+  async function handleCopyTask(task: TaskRow) {
+    const ok = await copyTextWithFallback(buildTaskSummary(task), { promptLabel: "Copy task summary" });
+    if (ok) {
+      toast.success("Task summary copied");
     } else {
       toast.info("Clipboard blocked. Use the prompt to copy.");
     }
@@ -610,6 +998,8 @@ export function TasksPanel({
     setNewDue("");
     setNewAssigneeId(viewerUserId);
     if (committees[0]?.id) setNewCommitteeId(committees[0].id);
+    setTemplateId("");
+    setTemplateNote("");
     setPrefillDismissed(true);
   }
 
@@ -618,6 +1008,41 @@ export function TasksPanel({
       {status ? (
         <div className="rounded-md border px-3 py-2 text-sm text-foreground/80" role="status" aria-live="polite">
           {status}
+        </div>
+      ) : null}
+      {createdTaskBanner ? (
+        <div className="rounded-md border border-foreground/10 bg-foreground/5 px-3 py-2 text-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <div className="font-medium">Task created</div>
+              <div className="text-xs text-foreground/70">{createdTaskBanner.title}</div>
+              {createdHiddenByFilters ? (
+                <div className="mt-1 text-xs text-red-600">
+                  This task is hidden by your current filters.
+                </div>
+              ) : null}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => jumpToTask(createdTaskBanner.id)}
+              >
+                <IconChevronDown className="h-3.5 w-3.5" />
+                Jump to task
+              </Button>
+              {createdHiddenByFilters ? (
+                <Button size="sm" variant="ghost" onClick={resetFilters}>
+                  <IconFilter className="h-3.5 w-3.5" />
+                  Clear filters
+                </Button>
+              ) : null}
+              <Button size="sm" variant="ghost" onClick={() => setCreatedTaskBanner(null)}>
+                <IconX className="h-3.5 w-3.5" />
+                Dismiss
+              </Button>
+            </div>
+          </div>
         </div>
       ) : null}
 
@@ -640,6 +1065,7 @@ export function TasksPanel({
             ) : null}
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <Button size="sm" variant="outline" onClick={clearPrefill}>
+                <IconX className="h-3.5 w-3.5" />
                 Clear prefill
               </Button>
               <Button
@@ -647,6 +1073,7 @@ export function TasksPanel({
                 variant="ghost"
                 onClick={() => document.getElementById("task-create-form")?.scrollIntoView({ behavior: "smooth" })}
               >
+                <IconChevronDown className="h-3.5 w-3.5" />
                 Jump to form
               </Button>
             </div>
@@ -658,7 +1085,9 @@ export function TasksPanel({
         ) : (
           <form id="task-create-form" className="grid gap-3 md:grid-cols-5" onSubmit={onCreateTask}>
             <label className="space-y-1 text-sm md:col-span-2">
-              <div className="text-foreground/70">Committee</div>
+              <div className="flex items-center gap-1 text-foreground/70">
+                Committee <span className="text-red-500">*</span>
+              </div>
               <select
                 className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
                 value={newCommitteeId}
@@ -666,8 +1095,10 @@ export function TasksPanel({
                   const next = e.target.value;
                   setNewCommitteeId(next);
                   setNewAssigneeId(viewerUserId);
+                  setCreateErrors((prev) => ({ ...prev, committee: undefined }));
                   void loadAssignees(next);
                 }}
+                aria-invalid={!!createErrors.committee}
               >
                 {committees.map((c) => (
                   <option key={c.id} value={c.id}>
@@ -675,16 +1106,52 @@ export function TasksPanel({
                   </option>
                 ))}
               </select>
+              {createErrors.committee ? (
+                <div className="text-xs text-red-600">{createErrors.committee}</div>
+              ) : null}
             </label>
 
             <label className="space-y-1 text-sm md:col-span-3">
-              <div className="text-foreground/70">Title</div>
+              <div className="text-foreground/70">Template (optional)</div>
+              <select
+                className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                value={templateId}
+                onChange={(e: ChangeEvent<HTMLSelectElement>) => {
+                  const nextId = e.target.value;
+                  setTemplateId(nextId);
+                  setTemplateNote("");
+                  const template = TASK_TEMPLATES.find((item) => item.id === nextId);
+                  if (template) applyTemplate(template);
+                }}
+              >
+                <option value="">Choose a template</option>
+                {TASK_TEMPLATES.map((template) => (
+                  <option key={template.id} value={template.id}>
+                    {template.label}
+                  </option>
+                ))}
+              </select>
+              {templateNote ? <div className="text-xs text-foreground/60">{templateNote}</div> : null}
+            </label>
+
+            <label className="space-y-1 text-sm md:col-span-5">
+              <div className="flex items-center gap-1 text-foreground/70">
+                Title <span className="text-red-500">*</span>
+              </div>
               <input
                 className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
                 value={newTitle}
-                onChange={(e: ChangeEvent<HTMLInputElement>) => setNewTitle(e.target.value)}
+                onChange={(e: ChangeEvent<HTMLInputElement>) => {
+                  setNewTitle(e.target.value);
+                  setCreateErrors((prev) => ({ ...prev, title: undefined }));
+                  setTemplateNote("");
+                }}
                 placeholder="e.g., Draft agenda for next meeting"
+                aria-invalid={!!createErrors.title}
               />
+              {createErrors.title ? (
+                <div className="text-xs text-red-600">{createErrors.title}</div>
+              ) : null}
             </label>
 
             <label className="space-y-1 text-sm md:col-span-5">
@@ -692,7 +1159,10 @@ export function TasksPanel({
               <textarea
                 className="min-h-20 w-full rounded-md border bg-transparent px-2 py-2 text-sm"
                 value={newDescription}
-                onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setNewDescription(e.target.value)}
+                onChange={(e: ChangeEvent<HTMLTextAreaElement>) => {
+                  setNewDescription(e.target.value);
+                  setTemplateNote("");
+                }}
                 placeholder="Optional context, links, or acceptance criteria…"
               />
             </label>
@@ -714,7 +1184,7 @@ export function TasksPanel({
               </select>
             </label>
 
-            <label className="space-y-1 text-sm">
+            <label className="space-y-1 text-sm md:col-span-1">
               <div className="text-foreground/70">Priority</div>
               <select
                 className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
@@ -727,7 +1197,7 @@ export function TasksPanel({
               </select>
             </label>
 
-            <label className="space-y-1 text-sm">
+            <label className="space-y-1 text-sm md:col-span-2">
               <div className="text-foreground/70">Due date</div>
               <input
                 type="date"
@@ -735,12 +1205,42 @@ export function TasksPanel({
                 value={newDue}
                 onChange={(e: ChangeEvent<HTMLInputElement>) => setNewDue(e.target.value)}
               />
+              {dueWarning ? <div className="text-xs text-amber-600">{dueWarning}</div> : null}
+              <div className="flex flex-wrap items-center gap-2 text-xs text-foreground/60">
+                <span className="text-foreground/50">Quick set</span>
+                <Button type="button" variant="ghost" size="sm" onClick={() => setNewDue(formatDateOnly(new Date()))}>
+                  Today
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setNewDue(formatDateOnly(addDays(new Date(), 7)))}
+                >
+                  +7 days
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setNewDue(formatDateOnly(addDays(new Date(), 14)))}
+                >
+                  +14 days
+                </Button>
+                <Button type="button" variant="ghost" size="sm" onClick={() => setNewDue("")} disabled={!newDue}>
+                  Clear
+                </Button>
+              </div>
             </label>
 
             <div className="flex items-end md:col-span-5">
-              <Button type="submit" disabled={!newTitle.trim() || !newCommitteeId}>
-                Create
-              </Button>
+              <div className="flex w-full items-center justify-between gap-2">
+                <span className="text-xs text-foreground/60">* Required fields</span>
+                <Button type="submit" disabled={!newTitle.trim() || !newCommitteeId}>
+                  <IconPlus className="h-3.5 w-3.5" />
+                  Create task
+                </Button>
+              </div>
             </div>
           </form>
         )}
@@ -760,21 +1260,26 @@ export function TasksPanel({
             <label className="space-y-1 text-sm md:col-span-2">
               <div className="text-foreground/70">Search</div>
               <div className="flex items-center gap-2">
-                <input
-                  className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-                  value={filterQuery}
-                  onChange={(e: ChangeEvent<HTMLInputElement>) => {
-                    setFilterQuery(e.target.value);
-                    setTaskPage(1);
-                  }}
-                  placeholder="Title, description, committee…"
-                />
+                <div className="relative w-full">
+                  <IconSearch className="pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-foreground/40" />
+                  <input
+                    type="search"
+                    className="h-9 w-full rounded-md border bg-transparent px-8 text-sm"
+                    value={filterQuery}
+                    onChange={(e: ChangeEvent<HTMLInputElement>) => {
+                      setFilterQuery(e.target.value);
+                      setTaskPage(1);
+                    }}
+                    placeholder="Title, description, committee…"
+                  />
+                </div>
                 <Button
                   variant="ghost"
                   size="sm"
                   onClick={() => setFilterQuery("")}
                   disabled={!filterQuery.trim()}
                 >
+                  <IconX className="h-3.5 w-3.5" />
                   Clear
                 </Button>
               </div>
@@ -784,13 +1289,23 @@ export function TasksPanel({
               <div className="text-foreground/70">Status</div>
               <select
                 className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-                value={filterStatus}
+                value={
+                  filterStatuses.length === 1
+                    ? filterStatuses[0]
+                    : filterStatuses.length > 1
+                      ? "multiple"
+                      : ""
+                }
                 onChange={(e: ChangeEvent<HTMLSelectElement>) => {
-                  setFilterStatus(e.target.value as TaskRow["status"] | "");
+                  const next = e.target.value as TaskRow["status"] | "";
+                  setFilterStatuses(next ? [next] : []);
                   setTaskPage(1);
                 }}
               >
                 <option value="">All</option>
+                <option value="multiple" disabled>
+                  Multiple selected
+                </option>
                 <option value="todo">To do</option>
                 <option value="doing">Doing</option>
                 <option value="done">Done</option>
@@ -820,13 +1335,23 @@ export function TasksPanel({
               <div className="text-foreground/70">Priority</div>
               <select
                 className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-                value={filterPriority}
+                value={
+                  filterPriorities.length === 1
+                    ? filterPriorities[0]
+                    : filterPriorities.length > 1
+                      ? "multiple"
+                      : ""
+                }
                 onChange={(e: ChangeEvent<HTMLSelectElement>) => {
-                  setFilterPriority(e.target.value as TaskRow["priority"] | "");
+                  const next = e.target.value as TaskRow["priority"] | "";
+                  setFilterPriorities(next ? [next] : []);
                   setTaskPage(1);
                 }}
               >
                 <option value="">All</option>
+                <option value="multiple" disabled>
+                  Multiple selected
+                </option>
                 <option value="high">High</option>
                 <option value="medium">Medium</option>
                 <option value="low">Low</option>
@@ -868,6 +1393,64 @@ export function TasksPanel({
             </label>
           </div>
 
+          <div className="mt-3 grid gap-3 md:grid-cols-3">
+            <label className="space-y-1 text-sm">
+              <div className="text-foreground/70">Due start</div>
+              <input
+                type="date"
+                className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                value={filterDueStart}
+                onChange={(e: ChangeEvent<HTMLInputElement>) => {
+                  setFilterDueStart(e.target.value);
+                  setTaskPage(1);
+                }}
+                aria-invalid={!!dueRangeError}
+              />
+            </label>
+            <label className="space-y-1 text-sm">
+              <div className="text-foreground/70">Due end</div>
+              <input
+                type="date"
+                className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                value={filterDueEnd}
+                onChange={(e: ChangeEvent<HTMLInputElement>) => {
+                  setFilterDueEnd(e.target.value);
+                  setTaskPage(1);
+                }}
+                aria-invalid={!!dueRangeError}
+              />
+            </label>
+            <div className="flex items-end text-xs text-foreground/60">
+              Filter tasks due within a date range (optional).
+            </div>
+          </div>
+          {dueRangeError ? <div className="mt-1 text-xs text-red-600">{dueRangeError}</div> : null}
+
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-foreground/60">
+            <span className="text-foreground/50">Status</span>
+            {statusOptions.map((statusOption) => (
+              <Button
+                key={statusOption}
+                variant={filterStatuses.includes(statusOption) ? "default" : "ghost"}
+                size="sm"
+                onClick={() => toggleStatusFilter(statusOption)}
+              >
+                {formatTaskStatus(statusOption)}
+              </Button>
+            ))}
+            <span className="text-foreground/50">Priority</span>
+            {priorityOptions.map((priorityOption) => (
+              <Button
+                key={priorityOption}
+                variant={filterPriorities.includes(priorityOption) ? "default" : "ghost"}
+                size="sm"
+                onClick={() => togglePriorityFilter(priorityOption)}
+              >
+                {formatTaskPriority(priorityOption)}
+              </Button>
+            ))}
+          </div>
+
           <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-foreground/60">
             <div className="flex flex-wrap items-center gap-3">
               <span>
@@ -877,6 +1460,15 @@ export function TasksPanel({
               <span>{dueSoonCount > 0 ? `${dueSoonCount} due soon` : "No due soon tasks"}</span>
               <span>
                 To do {statusCounts.todo} • Doing {statusCounts.doing} • Done {statusCounts.done}
+              </span>
+              <span className="flex items-center gap-2">
+                <span>{donePercent}% done</span>
+                <span className="h-1 w-20 rounded bg-foreground/10">
+                  <span
+                    className="block h-1 rounded bg-primary"
+                    style={{ width: `${donePercent}%` }}
+                  />
+                </span>
               </span>
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -894,6 +1486,7 @@ export function TasksPanel({
                     setTaskPage(1);
                   }}
                 >
+                  <IconAlert className="h-3.5 w-3.5" />
                   Overdue
                 </Button>
                 <Button
@@ -908,6 +1501,7 @@ export function TasksPanel({
                     setTaskPage(1);
                   }}
                 >
+                  <IconClock className="h-3.5 w-3.5" />
                   Due soon
                 </Button>
                 <Button
@@ -921,10 +1515,12 @@ export function TasksPanel({
                   Assigned to me
                 </Button>
                 <Button
-                  variant={filterPriority === "high" ? "default" : "ghost"}
+                  variant={filterPriorities.includes("high") ? "default" : "ghost"}
                   size="sm"
                   onClick={() => {
-                    setFilterPriority((prev) => (prev === "high" ? "" : "high"));
+                    setFilterPriorities((prev) =>
+                      prev.includes("high") ? prev.filter((value) => value !== "high") : [...prev, "high"],
+                    );
                     setTaskPage(1);
                   }}
                 >
@@ -976,50 +1572,66 @@ export function TasksPanel({
                 Next
               </Button>
               <Button variant="ghost" size="sm" onClick={() => void reload()}>
+                <IconRefresh className="h-3.5 w-3.5" />
                 Refresh list
               </Button>
               <Button variant="ghost" size="sm" onClick={() => void handleCopyTaskList()}>
+                <IconCopy className="h-3.5 w-3.5" />
                 Copy list
               </Button>
               <Button variant="ghost" size="sm" onClick={handleDownloadTasksCsv}>
+                <IconDownload className="h-3.5 w-3.5" />
                 Export CSV
               </Button>
+              {expandedTaskId ? (
+                <Button variant="ghost" size="sm" onClick={() => setExpandedTaskId(null)}>
+                  <IconChevronUp className="h-3.5 w-3.5" />
+                  Collapse details
+                </Button>
+              ) : null}
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => {
-                  setFilterQuery("");
-                  setFilterStatus("");
-                  setFilterCommitteeId("");
-                  setFilterPriority("");
-                  setFilterAssignee("");
-                  setFilterOverdueOnly(false);
-                  setFilterDueSoonOnly(false);
-                  setSortKey("updated");
-                  setTaskPage(1);
-                }}
-                disabled={
-                  !filterQuery &&
-                  !filterStatus &&
-                  !filterCommitteeId &&
-                  !filterPriority &&
-                  !filterAssignee &&
-                  !filterOverdueOnly &&
-                  !filterDueSoonOnly &&
-                  sortKey === "updated"
-                }
+                onClick={resetFilters}
+                disabled={!taskFiltersActive}
               >
+                <IconFilter className="h-3.5 w-3.5" />
                 Clear filters
               </Button>
             </div>
           </div>
         </div>
 
+        {activeFilterChips.length > 0 ? (
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-foreground/60">
+            <span className="text-foreground/50">Active filters</span>
+            {activeFilterChips.map((chip) => (
+              <button
+                key={chip.key}
+                type="button"
+                onClick={chip.onClear}
+                className="inline-flex items-center gap-1 rounded bg-foreground/5 px-2 py-0.5 text-foreground/70 hover:bg-foreground/10"
+              >
+                <span>{chip.label}</span>
+                <IconX className="h-3 w-3" />
+              </button>
+            ))}
+          </div>
+        ) : null}
+
         <div className="rounded-md border">
           <div className="divide-y">
             {filteredTasks.length === 0 ? (
               <div className="px-3 py-2 text-sm text-foreground/70">
                 {tasks.length === 0 ? "No tasks yet." : "No tasks match the current filters."}
+                {tasks.length > 0 ? (
+                  <div className="mt-2">
+                    <Button size="sm" variant="ghost" onClick={resetFilters}>
+                      <IconFilter className="h-3.5 w-3.5" />
+                      Clear filters
+                    </Button>
+                  </div>
+                ) : null}
               </div>
             ) : (
               paginatedTasks.map((t) => {
@@ -1029,11 +1641,26 @@ export function TasksPanel({
                 const attachments = attachmentsByTaskId[t.id] ?? [];
                 const overdue = isTaskOverdue(t);
                 const dueSoon = !overdue && isTaskDueSoon(t);
+                const attachmentUrl = newAttachmentUrlByTaskId[t.id] ?? "";
+                const attachmentUrlValid = !attachmentUrl.trim() || isValidHttpUrl(attachmentUrl);
                 return (
-                  <div key={t.id} className="px-3 py-2">
+                  <div
+                    key={t.id}
+                    id={`task-${t.id}`}
+                    tabIndex={-1}
+                    className={`px-3 py-2 outline-none ${
+                      highlightedTaskId === t.id ? "rounded bg-foreground/5 ring-1 ring-primary/30" : ""
+                    }`}
+                  >
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div className="min-w-0 flex-1">
-                        <div className="truncate text-sm font-medium">{t.title}</div>
+                        <div
+                          className={`truncate text-sm font-medium ${
+                            t.status === "done" ? "text-foreground/60 line-through" : ""
+                          }`}
+                        >
+                          {t.title}
+                        </div>
                         <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-foreground/70">
                           <span>{committee ? committee.name : t.committee_id}</span>
                           <span className={`rounded px-1.5 py-0.5 text-[11px] ${statusBadgeClass(t.status)}`}>
@@ -1044,14 +1671,19 @@ export function TasksPanel({
                           </span>
                           {t.due_at ? <span>Due {formatDateInputValue(t.due_at)}</span> : null}
                           <span>{t.assigned_to ? taskAssigneeLabel(t) : "Unassigned"}</span>
+                          {t.assigned_to === viewerUserId ? (
+                            <span className="rounded bg-foreground/5 px-1.5 py-0.5 text-[11px]">Mine</span>
+                          ) : null}
                           <span>Updated {formatDateInputValue(t.updated_at)}</span>
                           {overdue ? (
-                            <span className="rounded bg-red-500/10 px-1.5 py-0.5 text-[11px] text-red-600">
+                            <span className="inline-flex items-center gap-1 rounded bg-red-500/10 px-1.5 py-0.5 text-[11px] text-red-600">
+                              <IconAlert className="h-3 w-3" />
                               Overdue
                             </span>
                           ) : null}
                           {dueSoon ? (
-                            <span className="rounded bg-yellow-100 px-1.5 py-0.5 text-[11px] text-yellow-700">
+                            <span className="inline-flex items-center gap-1 rounded bg-yellow-100 px-1.5 py-0.5 text-[11px] text-yellow-700">
+                              <IconClock className="h-3 w-3" />
                               Due soon
                             </span>
                           ) : null}
@@ -1061,12 +1693,25 @@ export function TasksPanel({
                       <div className="flex flex-wrap items-center gap-2">
                         <Button
                           variant="ghost"
+                          size="sm"
                           onClick={(e) => {
                             e.stopPropagation();
                             void toggleExpanded(t.id, t.committee_id);
                           }}
+                          aria-expanded={isExpanded}
+                          aria-controls={`task-details-${t.id}`}
                         >
-                          {isExpanded ? "Hide" : "Details"}
+                          {isExpanded ? (
+                            <>
+                              <IconChevronUp className="h-3.5 w-3.5" />
+                              Hide
+                            </>
+                          ) : (
+                            <>
+                              <IconChevronDown className="h-3.5 w-3.5" />
+                              Details
+                            </>
+                          )}
                         </Button>
 
                         <select
@@ -1075,22 +1720,44 @@ export function TasksPanel({
                           onChange={(e: ChangeEvent<HTMLSelectElement>) =>
                             void updateTask(t.id, { status: e.target.value })
                           }
+                          aria-label="Update status"
                         >
                           <option value="todo">To do</option>
                           <option value="doing">Doing</option>
                           <option value="done">Done</option>
                         </select>
 
-                        <Button variant="ghost" onClick={() => void deleteTask(t.id)}>
+                        {t.status !== "done" ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => void updateTask(t.id, { status: "done" })}
+                          >
+                            <IconCheck className="h-3.5 w-3.5" />
+                            Mark done
+                          </Button>
+                        ) : null}
+
+                        <Button variant="ghost" size="sm" onClick={() => void deleteTask(t.id)}>
+                          <IconTrash className="h-3.5 w-3.5" />
                           Delete
                         </Button>
                       </div>
                     </div>
 
                     {isExpanded ? (
-                      <div className="mt-3 grid gap-3 rounded-md border bg-transparent p-3 md:grid-cols-2">
+                      <div
+                        id={`task-details-${t.id}`}
+                        className="mt-3 grid gap-3 rounded-md border bg-transparent p-3 md:grid-cols-2"
+                      >
                         <div className="space-y-2 md:col-span-2">
-                          <div className="text-sm font-medium">Task details</div>
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="text-sm font-medium">Task details</div>
+                            <Button variant="ghost" size="sm" onClick={() => void handleCopyTask(t)}>
+                              <IconCopy className="h-3.5 w-3.5" />
+                              Copy summary
+                            </Button>
+                          </div>
                           <div className="grid gap-3 md:grid-cols-3">
                             <label className="space-y-1 text-sm">
                               <div className="text-foreground/70">Assignee</div>
@@ -1108,6 +1775,17 @@ export function TasksPanel({
                                   </option>
                                 ))}
                               </select>
+                              {t.assigned_to !== viewerUserId ? (
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => void updateTask(t.id, { assignedTo: viewerUserId })}
+                                >
+                                  <IconCheck className="h-3.5 w-3.5" />
+                                  Assign to me
+                                </Button>
+                              ) : null}
                             </label>
 
                             <label className="space-y-1 text-sm">
@@ -1168,6 +1846,7 @@ export function TasksPanel({
                                       {new Date(c.created_at).toLocaleString()}
                                     </div>
                                     <Button variant="ghost" onClick={() => void deleteComment(t.id, c.id)}>
+                                      <IconTrash className="h-3.5 w-3.5" />
                                       Remove
                                     </Button>
                                   </div>
@@ -1190,6 +1869,7 @@ export function TasksPanel({
                               onClick={() => void createComment(t.id)}
                               disabled={!(newCommentByTaskId[t.id] ?? "").trim()}
                             >
+                              <IconPlus className="h-3.5 w-3.5" />
                               Post
                             </Button>
                           </div>
@@ -1213,6 +1893,7 @@ export function TasksPanel({
                                     {a.label ?? a.url}
                                   </a>
                                   <Button variant="ghost" onClick={() => void deleteAttachment(t.id, a.id)}>
+                                    <IconTrash className="h-3.5 w-3.5" />
                                     Remove
                                   </Button>
                                 </div>
@@ -1222,13 +1903,19 @@ export function TasksPanel({
 
                           <div className="grid gap-2">
                             <input
+                              type="url"
+                              inputMode="url"
                               className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-                              value={newAttachmentUrlByTaskId[t.id] ?? ""}
+                              value={attachmentUrl}
                               onChange={(e: ChangeEvent<HTMLInputElement>) =>
                                 setNewAttachmentUrlByTaskId((prev) => ({ ...prev, [t.id]: e.target.value }))
                               }
                               placeholder="https://..."
+                              aria-invalid={!attachmentUrlValid}
                             />
+                            {!attachmentUrlValid ? (
+                              <div className="text-xs text-red-600">Enter a valid http(s) URL.</div>
+                            ) : null}
                             <div className="flex gap-2">
                               <input
                                 className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
@@ -1241,8 +1928,9 @@ export function TasksPanel({
                               <Button
                                 variant="ghost"
                                 onClick={() => void createAttachment(t.id)}
-                                disabled={!(newAttachmentUrlByTaskId[t.id] ?? "").trim()}
+                                disabled={!attachmentUrl.trim() || !attachmentUrlValid}
                               >
+                                <IconPlus className="h-3.5 w-3.5" />
                                 Add
                               </Button>
                             </div>

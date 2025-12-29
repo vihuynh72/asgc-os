@@ -6,9 +6,11 @@ import { getSupabaseServerComponentClient } from "@/lib/supabaseServerComponent"
 
 const primaryLinks = [
   { href: "/dashboard", label: "Dashboard" },
-  { href: "/office-hours", label: "Office Hours" },
   { href: "/tasks", label: "Tasks" },
   { href: "/meetings", label: "Meetings" },
+  { href: "/office-hours", label: "Office Hours" },
+];
+const secondaryLinks = [
   { href: "/clubs", label: "Clubs" },
   { href: "/icc", label: "ICC" },
   { href: "/finance", label: "Finance" },
@@ -38,7 +40,13 @@ export async function SiteNav() {
     isAdmin = false;
   }
 
-  const navLinks = user ? (isAdmin ? [...primaryLinks, adminLink] : primaryLinks) : publicLinks;
+  const navLinks = user ? primaryLinks : publicLinks;
+  const navSections = user
+    ? [
+        { label: "Operations", items: secondaryLinks },
+        ...(isAdmin ? [{ label: "Admin", items: [adminLink] }] : []),
+      ]
+    : [];
 
   return (
     <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
@@ -46,7 +54,7 @@ export async function SiteNav() {
         <Link href="/dashboard" className="font-semibold">
           ASGC OS
         </Link>
-        <SiteNavLinks primary={navLinks} />
+        <SiteNavLinks primary={navLinks} sections={navSections} />
 
         <div className="flex shrink-0 items-center gap-2">
           {user ? (

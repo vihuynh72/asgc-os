@@ -4,6 +4,17 @@ import { useCallback, useMemo, useState, type ChangeEvent } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import {
+  IconAlert,
+  IconCheck,
+  IconClock,
+  IconCopy,
+  IconDownload,
+  IconFilter,
+  IconRefresh,
+  IconSearch,
+  IconX,
+} from "@/components/ui/icons";
 import { copyTextWithFallback } from "@/lib/clipboard";
 
 type CommitteeRow = {
@@ -63,6 +74,19 @@ function statusClass(status: string): string {
   }
 }
 
+function statusIcon(status: string) {
+  switch (status) {
+    case "approved":
+      return <IconCheck className="h-3.5 w-3.5" />;
+    case "rejected":
+      return <IconAlert className="h-3.5 w-3.5" />;
+    case "draft":
+      return <IconClock className="h-3.5 w-3.5" />;
+    default:
+      return null;
+  }
+}
+
 function toCsvValue(value: string | number | null | undefined): string {
   if (value === null || value === undefined) return "";
   const raw = String(value);
@@ -118,6 +142,33 @@ export function SuggestedTasksPanel({
     }
     return counts;
   }, [filteredTasks]);
+
+  const approvedPercent = filteredTasks.length
+    ? Math.round((statusCounts.approved / filteredTasks.length) * 100)
+    : 0;
+
+  const suggestedFiltersActive =
+    filterQuery.trim().length > 0 ||
+    filterCommittee.length > 0 ||
+    filterStatus.length > 0 ||
+    filterPendingOnly;
+
+  const activeFilterChips = useMemo(() => {
+    const chips: Array<{ key: string; label: string; onClear: () => void }> = [];
+    const query = filterQuery.trim();
+    if (query) chips.push({ key: "query", label: `Search: "${query}"`, onClear: () => setFilterQuery("") });
+    if (filterCommittee) {
+      const label = committees.find((c) => c.id === filterCommittee)?.name ?? filterCommittee;
+      chips.push({ key: "committee", label: `Committee: ${label}`, onClear: () => setFilterCommittee("") });
+    }
+    if (filterStatus) {
+      chips.push({ key: "status", label: `Status: ${statusLabel(filterStatus)}`, onClear: () => setFilterStatus("") });
+    }
+    if (filterPendingOnly) {
+      chips.push({ key: "pending", label: "Pending review", onClear: () => setFilterPendingOnly(false) });
+    }
+    return chips;
+  }, [committees, filterCommittee, filterPendingOnly, filterQuery, filterStatus]);
 
   const reload = useCallback(async () => {
     const { suggestedTasks } = await fetchJson<{ suggestedTasks: SuggestedTask[] }>(
@@ -221,12 +272,15 @@ export function SuggestedTasksPanel({
         <div className="text-lg font-semibold">Suggested Tasks</div>
         <div className="flex-1" />
         <Button type="button" variant="ghost" size="sm" onClick={() => void handleCopySuggestedTasks()}>
+          <IconCopy className="h-3.5 w-3.5" />
           Copy list
         </Button>
         <Button type="button" variant="ghost" size="sm" onClick={handleDownloadSuggestedTasksCsv}>
+          <IconDownload className="h-3.5 w-3.5" />
           Export CSV
         </Button>
         <Button type="button" variant="outline" size="sm" onClick={() => void reload()}>
+          <IconRefresh className="h-3.5 w-3.5" />
           Refresh
         </Button>
       </div>
@@ -243,18 +297,28 @@ export function SuggestedTasksPanel({
         <span>Draft {statusCounts.draft}</span>
         <span>Approved {statusCounts.approved}</span>
         <span>Rejected {statusCounts.rejected}</span>
+        <span className="flex items-center gap-2">
+          <span>{approvedPercent}% approved</span>
+          <span className="h-1 w-16 rounded bg-foreground/10">
+            <span className="block h-1 rounded bg-primary" style={{ width: `${approvedPercent}%` }} />
+          </span>
+        </span>
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
         <label className="space-y-1 text-xs text-foreground/70">
           <span>Search</span>
           <div className="flex items-center gap-2">
-            <input
-              className="h-8 w-56 rounded border border-foreground/20 bg-background px-2 text-sm"
-              value={filterQuery}
-              onChange={(e: ChangeEvent<HTMLInputElement>) => setFilterQuery(e.target.value)}
-              placeholder="Title, committee, doc..."
-            />
+            <div className="relative w-56">
+              <IconSearch className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-foreground/40" />
+              <input
+                type="search"
+                className="h-8 w-full rounded border border-foreground/20 bg-background px-8 text-sm"
+                value={filterQuery}
+                onChange={(e: ChangeEvent<HTMLInputElement>) => setFilterQuery(e.target.value)}
+                placeholder="Title, committee, doc..."
+              />
+            </div>
             <Button
               type="button"
               variant="ghost"
@@ -262,6 +326,7 @@ export function SuggestedTasksPanel({
               onClick={() => setFilterQuery("")}
               disabled={!filterQuery.trim()}
             >
+              <IconX className="h-3.5 w-3.5" />
               Clear
             </Button>
           </div>
@@ -309,13 +374,88 @@ export function SuggestedTasksPanel({
             setFilterStatus("");
             setFilterPendingOnly(false);
           }}
+          disabled={!suggestedFiltersActive}
         >
+          <IconFilter className="h-3.5 w-3.5" />
           Clear Filters
         </Button>
       </div>
 
+      <div className="flex flex-wrap items-center gap-2 text-xs text-foreground/60">
+        <span className="text-foreground/50">Quick status</span>
+        <Button
+          type="button"
+          variant={filterStatus === "draft" ? "default" : "ghost"}
+          size="sm"
+          onClick={() => setFilterStatus((prev) => (prev === "draft" ? "" : "draft"))}
+        >
+          Draft
+        </Button>
+        <Button
+          type="button"
+          variant={filterStatus === "approved" ? "default" : "ghost"}
+          size="sm"
+          onClick={() => setFilterStatus((prev) => (prev === "approved" ? "" : "approved"))}
+        >
+          Approved
+        </Button>
+        <Button
+          type="button"
+          variant={filterStatus === "rejected" ? "default" : "ghost"}
+          size="sm"
+          onClick={() => setFilterStatus((prev) => (prev === "rejected" ? "" : "rejected"))}
+        >
+          Rejected
+        </Button>
+        <Button
+          type="button"
+          variant={filterPendingOnly ? "default" : "ghost"}
+          size="sm"
+          onClick={() => setFilterPendingOnly((prev) => !prev)}
+        >
+          Pending review
+        </Button>
+      </div>
+
+      {activeFilterChips.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-2 text-xs text-foreground/60">
+          <span className="text-foreground/50">Active filters</span>
+          {activeFilterChips.map((chip) => (
+            <button
+              key={chip.key}
+              type="button"
+              onClick={chip.onClear}
+              className="inline-flex items-center gap-1 rounded bg-foreground/5 px-2 py-0.5 text-foreground/70 hover:bg-foreground/10"
+            >
+              <span>{chip.label}</span>
+              <IconX className="h-3 w-3" />
+            </button>
+          ))}
+        </div>
+      ) : null}
+
       {filteredTasks.length === 0 ? (
-        <div className="text-sm text-foreground/70">No suggested tasks yet.</div>
+        <div className="text-sm text-foreground/70">
+          {tasks.length === 0 ? "No suggested tasks yet." : "No suggested tasks match the current filters."}
+          {tasks.length > 0 ? (
+            <div className="mt-2">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setFilterQuery("");
+                  setFilterCommittee("");
+                  setFilterStatus("");
+                  setFilterPendingOnly(false);
+                }}
+              >
+                <IconFilter className="h-3.5 w-3.5" />
+                Clear filters
+              </Button>
+            </div>
+          ) : null}
+        </div>
       ) : (
         <div className="space-y-3">
           {filteredTasks.map((task) => (
@@ -339,7 +479,8 @@ export function SuggestedTasksPanel({
                         {task.docs[0].title}
                       </span>
                     ) : null}
-                    <span className={`rounded px-1.5 py-0.5 ${statusClass(task.status)}`}>
+                    <span className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 ${statusClass(task.status)}`}>
+                      {statusIcon(task.status)}
                       {statusLabel(task.status)}
                     </span>
                   </div>
@@ -352,6 +493,7 @@ export function SuggestedTasksPanel({
                       size="sm"
                       onClick={() => handleReview(task.id, "approved")}
                     >
+                      <IconCheck className="h-3.5 w-3.5" />
                       Approve
                     </Button>
                     <Button
@@ -360,13 +502,17 @@ export function SuggestedTasksPanel({
                       variant="outline"
                       onClick={() => handleReview(task.id, "rejected")}
                     >
+                      <IconAlert className="h-3.5 w-3.5" />
                       Reject
                     </Button>
                   </div>
                 ) : null}
               </div>
               {task.published_task_id ? (
-                <div className="mt-2 text-xs text-foreground/60">Published to tasks.</div>
+                <div className="mt-2 flex items-center gap-1 text-xs text-foreground/60">
+                  <IconCheck className="h-3.5 w-3.5" />
+                  Published to tasks.
+                </div>
               ) : null}
             </div>
           ))}

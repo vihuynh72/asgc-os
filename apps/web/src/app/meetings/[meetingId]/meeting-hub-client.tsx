@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { IconAlert, IconCheck, IconClock, IconPlus } from "@/components/ui/icons";
 import type { DocRow } from "@/lib/doc-types";
 
 import { AgendaItemsPanel } from "./agenda-items-panel";
@@ -111,6 +112,74 @@ function statusBadge(status: string): { label: string; className: string } {
   }
 }
 
+type TimelineStatus = "on-time" | "late" | "pending" | "overdue" | "info";
+
+function timelineStatusMeta(status: TimelineStatus) {
+  switch (status) {
+    case "on-time":
+      return {
+        label: "On time",
+        pillClass: "bg-green-100 text-green-700",
+        icon: <IconCheck className="h-3.5 w-3.5 text-green-700" />,
+      };
+    case "late":
+      return {
+        label: "Late",
+        pillClass: "bg-red-100 text-red-700",
+        icon: <IconAlert className="h-3.5 w-3.5 text-red-700" />,
+      };
+    case "overdue":
+      return {
+        label: "Overdue",
+        pillClass: "bg-red-100 text-red-700",
+        icon: <IconAlert className="h-3.5 w-3.5 text-red-700" />,
+      };
+    case "pending":
+      return {
+        label: "Pending",
+        pillClass: "bg-yellow-100 text-yellow-700",
+        icon: <IconClock className="h-3.5 w-3.5 text-yellow-700" />,
+      };
+    default:
+      return {
+        label: "Info",
+        pillClass: "bg-gray-100 text-gray-700",
+        icon: <IconClock className="h-3.5 w-3.5 text-gray-700" />,
+      };
+  }
+}
+
+function TimelineRow({
+  title,
+  value,
+  status,
+  caption,
+}: {
+  title: string;
+  value: string;
+  status: TimelineStatus;
+  caption?: string | null;
+}) {
+  const meta = timelineStatusMeta(status);
+  return (
+    <div className="flex items-start gap-3">
+      <div className={`mt-0.5 flex h-7 w-7 items-center justify-center rounded-full ${meta.pillClass}`}>
+        {meta.icon}
+      </div>
+      <div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-foreground/70">{title}</span>
+          <span className={`rounded px-2 py-0.5 text-[10px] uppercase tracking-wide ${meta.pillClass}`}>
+            {meta.label}
+          </span>
+        </div>
+        <div className="text-sm">{value}</div>
+        {caption ? <div className="text-xs text-foreground/60">{caption}</div> : null}
+      </div>
+    </div>
+  );
+}
+
 export function MeetingHubClient({
   meeting,
   initialItems,
@@ -150,6 +219,25 @@ export function MeetingHubClient({
     noticePostedAt && postingDeadline
       ? new Date(noticePostedAt).getTime() <= new Date(postingDeadline).getTime()
       : null;
+  const nowTs = Date.now();
+  const postingDeadlineTs = postingDeadline ? new Date(postingDeadline).getTime() : null;
+  const deadlineStatus: TimelineStatus =
+    postingDeadlineTs === null ? "info" : nowTs > postingDeadlineTs ? "overdue" : "pending";
+  const noticeStatus: TimelineStatus = noticePostedAt
+    ? noticeOnTime
+      ? "on-time"
+      : "late"
+    : postingDeadlineTs && nowTs > postingDeadlineTs
+      ? "overdue"
+      : "pending";
+  const agendaStatus: TimelineStatus = agendaPostedAt
+    ? agendaOnTime
+      ? "on-time"
+      : "late"
+    : postingDeadlineTs && nowTs > postingDeadlineTs
+      ? "overdue"
+      : "pending";
+  const minutesStatus: TimelineStatus = meeting.minutes_posted_at ? "on-time" : "pending";
   const submissionOpen = meeting.status === "scheduled" && (initialDeadline ? initialDeadline.is_submission_open : true);
 
   const breadcrumbs = isAdmin
@@ -212,6 +300,7 @@ export function MeetingHubClient({
               size="sm"
               onClick={() => document.getElementById("agenda-items")?.scrollIntoView({ behavior: "smooth" })}
             >
+              <IconPlus className="h-3.5 w-3.5" />
               Submit an agenda item
             </Button>
           </div>
@@ -300,56 +389,43 @@ export function MeetingHubClient({
         <div className="space-y-4">
           <div className="rounded-lg border border-foreground/10 p-4">
             <div className="text-sm font-medium">Compliance timeline</div>
-            <div className="mt-2 grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
-              <div>
-                <div className="text-xs text-foreground/70">Agenda posting deadline</div>
-                <div className="text-sm">{formatDateTime(postingDeadline, "Not available", officeTz)}</div>
-                {initialDeadline?.is_special ? (
-                  <div className="text-xs text-foreground/60">Special meeting timeline applied</div>
-                ) : null}
-              </div>
-              <div>
-                <div className="text-xs text-foreground/70">Notice posted at</div>
-                <div className="text-sm">{formatDateTime(noticePostedAt, "Not posted", officeTz)}</div>
-                {noticeOnTime !== null ? (
-                  <div
-                    className={`text-xs ${noticeOnTime ? "text-green-600" : "text-red-600"}`}
-                    title={
-                      noticeOnTime
-                        ? "Notice posted before the agenda deadline."
-                        : "Notice posted after the agenda deadline."
-                    }
-                  >
-                    {noticeOnTime ? "On time" : "Late"}
-                  </div>
-                ) : null}
-              </div>
-              <div>
-                <div className="text-xs text-foreground/70">Agenda posted at</div>
-                <div className="text-sm">{formatDateTime(agendaPostedAt, "Not posted", officeTz)}</div>
-                {agendaOnTime !== null ? (
-                  <div
-                    className={`text-xs ${agendaOnTime ? "text-green-600" : "text-red-600"}`}
-                    title={
-                      agendaOnTime
-                        ? "Agenda posted before the deadline."
-                        : "Agenda posted after the deadline."
-                    }
-                  >
-                    {agendaOnTime ? "On time" : "Late"}
-                  </div>
-                ) : null}
-              </div>
-              <div>
-                <div className="text-xs text-foreground/70">Minutes posted at</div>
-                <div className="text-sm">{formatDateTime(meeting.minutes_posted_at, "Not posted", officeTz)}</div>
-                <div
-                  className={`text-xs ${meeting.minutes_posted_at ? "text-green-600" : "text-red-600"}`}
-                  title={meeting.minutes_posted_at ? "Minutes posted." : "Minutes not posted yet."}
-                >
-                  {meeting.minutes_posted_at ? "Posted" : "Missing"}
-                </div>
-              </div>
+            <div className="mt-3 space-y-3">
+              <TimelineRow
+                title="Agenda posting deadline"
+                value={formatDateTime(postingDeadline, "Not available", officeTz)}
+                status={deadlineStatus}
+                caption={initialDeadline?.is_special ? "Special meeting timeline applied" : null}
+              />
+              <TimelineRow
+                title="Notice posted at"
+                value={formatDateTime(noticePostedAt, "Not posted", officeTz)}
+                status={noticeStatus}
+                caption={
+                  noticeOnTime !== null
+                    ? noticeOnTime
+                      ? "Notice posted before the deadline."
+                      : "Notice posted after the deadline."
+                    : null
+                }
+              />
+              <TimelineRow
+                title="Agenda posted at"
+                value={formatDateTime(agendaPostedAt, "Not posted", officeTz)}
+                status={agendaStatus}
+                caption={
+                  agendaOnTime !== null
+                    ? agendaOnTime
+                      ? "Agenda posted before the deadline."
+                      : "Agenda posted after the deadline."
+                    : null
+                }
+              />
+              <TimelineRow
+                title="Minutes posted at"
+                value={formatDateTime(meeting.minutes_posted_at, "Not posted", officeTz)}
+                status={minutesStatus}
+                caption={meeting.minutes_posted_at ? "Minutes posted." : "Minutes not posted yet."}
+              />
             </div>
           </div>
 
