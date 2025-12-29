@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState, type ChangeEvent, type FormE
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { IconCopy, IconDownload, IconPlus } from "@/components/ui/icons";
 import { copyTextWithFallback } from "@/lib/clipboard";
 
 type AgendaItem = {
@@ -1006,6 +1007,13 @@ export function AgendaItemsPanel({
             States: Draft = saved by you. Submitted = pending admin review. Accepted = on agenda. Rejected/Withdrawn = not
             on agenda.
           </div>
+          <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
+            {(["draft", "submitted", "accepted", "rejected", "tabled", "withdrawn"] as const).map((state) => (
+              <span key={state} className={`rounded px-2 py-0.5 ${stateColor(state)}`}>
+                {formatState(state)}
+              </span>
+            ))}
+          </div>
         </div>
         </div>
 
@@ -1017,15 +1025,19 @@ export function AgendaItemsPanel({
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <Button variant="outline" size="sm" onClick={handleCopyAccepted} disabled={acceptedItems.length === 0}>
+              <IconCopy className="h-3.5 w-3.5" />
               Copy accepted agenda
             </Button>
             <Button variant="outline" size="sm" onClick={handleCopyFiltered} disabled={exportItems.length === 0}>
+              <IconCopy className="h-3.5 w-3.5" />
               Copy filtered list
             </Button>
             <Button variant="outline" size="sm" onClick={handleDownloadAcceptedCsv} disabled={acceptedItems.length === 0}>
+              <IconDownload className="h-3.5 w-3.5" />
               Download accepted CSV
             </Button>
             <Button variant="outline" size="sm" onClick={handleDownloadCsv} disabled={exportItems.length === 0}>
+              <IconDownload className="h-3.5 w-3.5" />
               Download CSV
             </Button>
           </div>
@@ -1149,7 +1161,14 @@ export function AgendaItemsPanel({
             <div className="text-sm font-medium">New agenda item</div>
             {submissionOpen ? (
               <Button type="button" size="sm" onClick={() => setShowNewForm(!showNewForm)}>
-                {showNewFormResolved ? "Hide form" : "Start new item"}
+                {showNewFormResolved ? (
+                  "Hide form"
+                ) : (
+                  <>
+                    <IconPlus className="h-3.5 w-3.5" />
+                    Start new item
+                  </>
+                )}
               </Button>
             ) : (
               <span className="text-xs text-foreground/60">
@@ -1444,6 +1463,7 @@ export function AgendaItemsPanel({
                     ) : null}
                     <div className="mt-3 flex flex-wrap gap-2">
                       <Button type="button" variant="outline" size="sm" onClick={() => handleCreateTask(item)}>
+                        <IconPlus className="h-3.5 w-3.5" />
                         {item.fiscal_impact ? "Create finance task" : "Create task"}
                       </Button>
                     </div>
@@ -1660,6 +1680,7 @@ export function AgendaItemsPanel({
                       </>
                     ) : null}
                     <Button type="button" variant="outline" size="sm" onClick={() => handleCreateTask(item)}>
+                      <IconPlus className="h-3.5 w-3.5" />
                       {item.fiscal_impact ? "Create finance task" : "Create task"}
                     </Button>
                   </div>

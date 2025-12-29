@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { IconChevronDown } from "@/components/ui/icons";
 
 type NavItem = { href: string; label: string };
 type NavSection = { label: string; items: NavItem[] };
@@ -58,7 +59,10 @@ export function SiteNavLinks({
                   : "text-foreground/70 hover:bg-muted/60 hover:text-foreground"
               }`}
             >
-              {activeSection?.label ?? "More"}
+              <span className="inline-flex items-center gap-1">
+                {activeSection?.label ?? "More"}
+                <IconChevronDown className="h-3.5 w-3.5" />
+              </span>
             </button>
           </PopoverTrigger>
           <PopoverContent align="end" className="w-56 p-3">

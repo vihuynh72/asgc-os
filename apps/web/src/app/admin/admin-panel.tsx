@@ -1838,6 +1838,8 @@ export function AdminPanel({
       toast.error("Read-only mode: updates are disabled.");
       return;
     }
+    const label = kind === "notice" ? "notice" : kind === "agenda" ? "agenda" : "minutes";
+    if (!window.confirm(`Mark ${label} as posted? This will make it publicly available.`)) return;
     const payload =
       kind === "notice"
         ? { notice_posted_at: new Date().toISOString() }
@@ -5938,7 +5940,7 @@ export function AdminPanel({
                           <Button
                             size="sm"
                             variant="outline"
-                            onClick={() => window.open(`/meetings/${meeting.id}`, "_blank", "noopener")}
+                            onClick={() => router.push(`/meetings/${meeting.id}`)}
                           >
                             Open Meeting hub
                           </Button>

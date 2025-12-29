@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { PageShell } from "@/components/page-shell";
 import { Button } from "@/components/ui/button";
+import { IconAlert, IconCalendar, IconCheck, IconChevronRight, IconLink } from "@/components/ui/icons";
 import { copyTextWithFallback } from "@/lib/clipboard";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 
@@ -103,6 +104,21 @@ function isStartingSoon(iso: string, windowMinutes = 120): boolean {
 
 function complianceBadgeClass(posted: boolean): string {
   return posted ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700";
+}
+
+function ComplianceBadge({ label, posted }: { label: string; posted: boolean }) {
+  const statusLabel = posted ? "posted" : "missing";
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded px-2 py-0.5 ${complianceBadgeClass(posted)}`}
+      title={`${label} ${statusLabel}`}
+      aria-label={`${label} ${statusLabel}`}
+    >
+      {posted ? <IconCheck className="h-3.5 w-3.5" /> : <IconAlert className="h-3.5 w-3.5" />}
+      <span>{label}</span>
+      <span className="text-[10px] uppercase tracking-wide">{statusLabel}</span>
+    </span>
+  );
 }
 
 function escapeIcsText(text: string): string {
@@ -504,6 +520,7 @@ export default function MeetingsPage() {
                 </Button>
               </div>
               <Button variant="outline" size="sm" onClick={handleSubscribeCalendar}>
+                <IconCalendar className="h-3.5 w-3.5" />
                 Subscribe to calendar feed
               </Button>
             </div>
@@ -844,6 +861,11 @@ export default function MeetingsPage() {
               const noticePosted = !!m.notice_posted_at;
               const agendaPosted = !!m.agenda_posted_at;
               const minutesPosted = !!m.minutes_posted_at;
+              const complianceSegments = [
+                { label: "Notice", posted: noticePosted },
+                { label: "Agenda", posted: agendaPosted },
+                { label: "Minutes", posted: minutesPosted },
+              ];
               return (
                 <Link
                   key={m.id}
@@ -882,30 +904,35 @@ export default function MeetingsPage() {
                   <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
                     {duration ? <span className="text-foreground/60">{duration}</span> : null}
                     {relative ? <span className="text-foreground/60">{relative}</span> : null}
-                    <span
-                      className={`rounded px-2 py-0.5 ${complianceBadgeClass(noticePosted)}`}
-                      title={noticePosted ? "Notice posted" : "Notice missing"}
-                    >
-                      Notice {noticePosted ? "posted" : "missing"}
-                    </span>
-                    <span
-                      className={`rounded px-2 py-0.5 ${complianceBadgeClass(agendaPosted)}`}
-                      title={agendaPosted ? "Agenda posted" : "Agenda missing"}
-                    >
-                      Agenda {agendaPosted ? "posted" : "missing"}
-                    </span>
-                    <span
-                      className={`rounded px-2 py-0.5 ${complianceBadgeClass(minutesPosted)}`}
-                      title={minutesPosted ? "Minutes posted" : "Minutes missing"}
-                    >
-                      Minutes {minutesPosted ? "posted" : "missing"}
-                    </span>
+                    <ComplianceBadge label="Notice" posted={noticePosted} />
+                    <ComplianceBadge label="Agenda" posted={agendaPosted} />
+                    <ComplianceBadge label="Minutes" posted={minutesPosted} />
+                  </div>
+                  <div className="mt-2">
+                    <div className="flex items-center justify-between text-[10px] uppercase tracking-wide text-foreground/50">
+                      <span>Compliance progress</span>
+                      <span>
+                        {complianceSegments.filter((segment) => segment.posted).length}/{complianceSegments.length} posted
+                      </span>
+                    </div>
+                    <div className="mt-1 grid grid-cols-3 gap-1">
+                      {complianceSegments.map((segment) => (
+                        <div
+                          key={segment.label}
+                          title={`${segment.label} ${segment.posted ? "posted" : "missing"}`}
+                          className={`h-1 rounded ${segment.posted ? "bg-green-500" : "bg-red-300"}`}
+                        />
+                      ))}
+                    </div>
                   </div>
                   {m.description ? (
                     <div className="mt-3 text-sm text-foreground/70">{m.description}</div>
                   ) : null}
                   <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
-                    <div className="text-xs font-medium text-primary">View details →</div>
+                    <div className="flex items-center gap-1 text-xs font-medium text-primary">
+                      <span>View details</span>
+                      <IconChevronRight className="h-3.5 w-3.5" />
+                    </div>
                     <div className="flex items-center gap-2">
                       <Button
                         size="sm"
@@ -916,6 +943,7 @@ export default function MeetingsPage() {
                           void handleCopyMeetingLink(m);
                         }}
                       >
+                        <IconLink className="h-3.5 w-3.5" />
                         Copy link
                       </Button>
                       <Button
@@ -927,6 +955,7 @@ export default function MeetingsPage() {
                           handleDownloadCalendar(m);
                         }}
                       >
+                        <IconCalendar className="h-3.5 w-3.5" />
                         Add to calendar
                       </Button>
                     </div>
