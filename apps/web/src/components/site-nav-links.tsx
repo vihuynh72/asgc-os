@@ -29,16 +29,18 @@ export function SiteNavLinks({
   const hasSections = navSections.length > 0;
 
   return (
-    <nav aria-label="Primary" className="flex min-w-0 flex-1 items-center gap-3">
-      <div className="flex min-w-0 flex-1 items-center gap-4 overflow-x-auto whitespace-nowrap text-sm">
+    <nav aria-label="Primary" className="flex min-w-0 flex-1 items-center gap-4">
+      <div className="flex min-w-0 flex-1 items-center gap-5 overflow-x-auto whitespace-nowrap text-sm">
         {primaryLinks.map((item) => {
           const active = isActive(pathname, item.href);
           return (
             <Link
               key={item.href}
               href={item.href}
-              className={`rounded-sm px-1 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 ${
-                active ? "font-semibold text-foreground" : "text-foreground/70 hover:text-foreground"
+              className={`rounded-md px-2 py-1 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 ${
+                active
+                  ? "bg-foreground/10 font-semibold text-foreground shadow-sm"
+                  : "text-foreground/70 hover:bg-foreground/5 hover:text-foreground"
               }`}
               aria-current={active ? "page" : undefined}
             >
@@ -55,7 +57,7 @@ export function SiteNavLinks({
               type="button"
               className={`rounded-md px-2 py-1 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 ${
                 activeSection
-                  ? "bg-muted/60 text-foreground"
+                  ? "bg-muted/70 text-foreground shadow-sm"
                   : "text-foreground/70 hover:bg-muted/60 hover:text-foreground"
               }`}
             >

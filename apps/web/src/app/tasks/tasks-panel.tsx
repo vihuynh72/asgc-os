@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -287,6 +287,14 @@ export function TasksPanel({
   const [createdTaskBanner, setCreatedTaskBanner] = useState<{ id: string; title: string } | null>(null);
   const [highlightedTaskId, setHighlightedTaskId] = useState<string | null>(null);
   const highlightTimeoutRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (highlightTimeoutRef.current) {
+        window.clearTimeout(highlightTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   const [commentsByTaskId, setCommentsByTaskId] = useState<Record<string, TaskCommentRow[]>>({});
@@ -1036,6 +1044,16 @@ export function TasksPanel({
     }
   }
 
+  async function handleCopyPreview() {
+    if (!copyPreview) return;
+    const ok = await copyTextWithFallback(copyPreview.text, { promptLabel: `Copy ${copyPreview.label}` });
+    if (ok) {
+      toast.success(`${copyPreview.label} copied`);
+    } else {
+      toast.info("Clipboard blocked. Use the prompt to copy.");
+    }
+  }
+
   function handleDownloadTasksCsv() {
     if (filteredTasks.length === 0) {
       toast.error("No tasks to export");
@@ -1726,6 +1744,13 @@ export function TasksPanel({
               <summary className="cursor-pointer text-xs font-medium text-foreground/70">
                 Preview: {copyPreview.label}
               </summary>
+              <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-foreground/60">
+                <span>Need to copy again?</span>
+                <Button variant="ghost" size="sm" onClick={handleCopyPreview}>
+                  <IconCopy className="h-3.5 w-3.5" />
+                  Copy to clipboard
+                </Button>
+              </div>
               <pre className="mt-2 max-h-48 whitespace-pre-wrap text-xs text-foreground/70">
                 {copyPreview.text}
               </pre>

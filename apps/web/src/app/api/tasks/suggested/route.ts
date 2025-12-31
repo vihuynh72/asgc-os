@@ -1,10 +1,10 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { NextResponse } from "next/server";
 
 import { getSupabaseRouteHandlerClient } from "@/lib/supabaseServer";
 
 export const runtime = "nodejs";
 
-export async function GET(request: NextRequest) {
+export async function GET() {
   const supabase = await getSupabaseRouteHandlerClient();
 
   const {

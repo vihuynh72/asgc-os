@@ -155,7 +155,7 @@ export function AuditLogPanel() {
     } finally {
       setLoading(false);
     }
-  }, [offset, filterAction, filterActor, filterTargetType, filterTargetId, filterStartDate, filterEndDate]);
+  }, [offset, limit, filterStartDate, filterEndDate, buildFilterParams]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
