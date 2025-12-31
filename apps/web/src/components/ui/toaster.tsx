@@ -7,6 +7,7 @@ export function Toaster() {
     <SonnerToaster
       position="bottom-right"
       toastOptions={{
+        duration: 6000,
         classNames: {
           toast: "bg-background text-foreground border shadow-lg",
           title: "text-foreground font-medium",

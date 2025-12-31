@@ -63,6 +63,8 @@ export default async function TasksPage({
   const prefillDue = typeof sp.prefillDue === "string" ? sp.prefillDue : "";
   const prefillAssigneeId = typeof sp.prefillAssignee === "string" ? sp.prefillAssignee : "";
   const prefillSource = typeof sp.source === "string" ? sp.source : "";
+  const prefillMeetingId = typeof sp.meetingId === "string" ? sp.meetingId : "";
+  const prefillAgendaItemId = typeof sp.agendaItemId === "string" ? sp.agendaItemId : "";
   const prefill: TaskPrefill | null =
     prefillTitle ||
     prefillDescription ||
@@ -70,7 +72,9 @@ export default async function TasksPage({
     prefillPriority ||
     prefillDue ||
     prefillAssigneeId ||
-    prefillSource
+    prefillSource ||
+    prefillMeetingId ||
+    prefillAgendaItemId
       ? {
           title: prefillTitle,
           description: prefillDescription,
@@ -79,6 +83,8 @@ export default async function TasksPage({
           due: prefillDue,
           assigneeId: prefillAssigneeId,
           source: prefillSource,
+          meetingId: prefillMeetingId,
+          agendaItemId: prefillAgendaItemId,
         }
       : null;
 

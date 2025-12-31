@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, type ChangeEvent, type FormEvent, type KeyboardEvent } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -174,6 +174,24 @@ function isProbablyUrl(value: string): boolean {
   return /^https?:\/\//i.test(value);
 }
 
+function handleTextareaEnter(
+  e: KeyboardEvent<HTMLTextAreaElement>,
+  value: string,
+  setValue: (next: string) => void,
+) {
+  if (e.key !== "Enter") return;
+  e.preventDefault();
+  const target = e.currentTarget;
+  const start = target.selectionStart ?? value.length;
+  const end = target.selectionEnd ?? value.length;
+  const nextValue = `${value.slice(0, start)}\n${value.slice(end)}`;
+  setValue(nextValue);
+  requestAnimationFrame(() => {
+    target.selectionStart = start + 1;
+    target.selectionEnd = start + 1;
+  });
+}
+
 function isValidIso(value: string | null | undefined): value is string {
   if (!value) return false;
   const d = new Date(value);
@@ -212,6 +230,19 @@ function formatMeetingDate(iso: string | null | undefined, timeZone?: string | n
     minute: "2-digit",
     timeZoneName: "short",
   }).format(d);
+}
+
+function addDays(date: Date, days: number): Date {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function formatDateInputValue(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function formatAgendaError(message: string): string {
@@ -297,6 +328,8 @@ export function AgendaItemsPanel({
   const [agendaSort, setAgendaSort] = useState<"agenda" | "recent" | "title">(() =>
     isAdmin ? "agenda" : "recent",
   );
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState<boolean>(false);
+  const [copyPreview, setCopyPreview] = useState<{ label: string; text: string } | null>(null);
 
   // New item form
   const [showNewForm, setShowNewForm] = useState<boolean>(false);
@@ -377,6 +410,7 @@ export function AgendaItemsPanel({
     if (meetingTitle) parts.push(`Meeting: ${meetingTitle}`);
     if (meetingDateLabel) parts.push(`Meeting date: ${meetingDateLabel}`);
     parts.push(`Agenda item: ${item.title}`);
+    parts.push(`Agenda item link: ${meetingHubPath}#agenda-item-${item.id}`);
     if (item.fiscal_impact) parts.push(`Fiscal impact: ${item.fiscal_impact}`);
     if (item.recommended_motion) parts.push(`Motion: ${item.recommended_motion}`);
     if (item.background) parts.push(`Background: ${item.background}`);
@@ -397,7 +431,11 @@ export function AgendaItemsPanel({
     if (meetingCommitteeId) params.set("committeeId", meetingCommitteeId);
     if (item.fiscal_impact) params.set("prefillPriority", "high");
     if (meetingStartsAt && isValidIso(meetingStartsAt)) {
-      params.set("prefillDue", meetingStartsAt.slice(0, 10));
+      const meetingDate = new Date(meetingStartsAt);
+      if (!Number.isNaN(meetingDate.getTime())) {
+        const dueDate = meetingDate.getTime() >= Date.now() ? meetingDate : addDays(new Date(), 7);
+        params.set("prefillDue", formatDateInputValue(dueDate));
+      }
     }
     params.set("source", "agenda-item");
     params.set("meetingId", meetingId);
@@ -606,6 +644,12 @@ export function AgendaItemsPanel({
       return;
     }
     const stateLabel = newState === "accepted" ? "accept" : newState === "rejected" ? "reject" : "table";
+    const reviewToast =
+      newState === "accepted"
+        ? "accepted and added to agenda"
+        : newState === "rejected"
+          ? "rejected"
+          : "tabled";
     if (!confirm(`Are you sure you want to ${stateLabel} this item?`)) return;
 
     if (actionBusy) return;
@@ -622,7 +666,7 @@ export function AgendaItemsPanel({
       );
 
       setStatus("");
-      toast.success(`Agenda item ${stateLabel}ed`);
+      toast.success(`Agenda item ${reviewToast}`);
       await reload();
     } catch (err) {
       const msg = formatAgendaError(err instanceof Error ? err.message : "Failed to review");
@@ -656,6 +700,12 @@ export function AgendaItemsPanel({
     }
     if (selectedAdminIds.length === 0) return;
     const stateLabel = newState === "accepted" ? "accept" : newState === "rejected" ? "reject" : "table";
+    const reviewToast =
+      newState === "accepted"
+        ? "accepted and added to agenda"
+        : newState === "rejected"
+          ? "rejected"
+          : "tabled";
     if (!confirm(`Review ${selectedAdminIds.length} item(s) and ${stateLabel} them?`)) return;
 
     if (actionBusy) return;
@@ -673,7 +723,7 @@ export function AgendaItemsPanel({
         );
       }
       setStatus("");
-      toast.success(`Agenda items ${stateLabel}ed`);
+      toast.success(`Agenda items ${reviewToast}`);
       await reload();
     } catch (err) {
       const msg = formatAgendaError(err instanceof Error ? err.message : "Failed to review items");
@@ -870,11 +920,13 @@ export function AgendaItemsPanel({
   }, [exportItems]);
 
   async function handleCopyAccepted() {
-    const ok = await copyTextWithFallback(buildAgendaText(acceptedItems), {
+    const copyText = buildAgendaText(acceptedItems);
+    const ok = await copyTextWithFallback(copyText, {
       promptLabel: "Copy accepted agenda",
     });
     if (ok) {
       setStatus("Accepted agenda copied.");
+      setCopyPreview({ label: "Accepted agenda", text: copyText });
       toast.success("Accepted agenda copied");
     } else {
       const msg = "Clipboard blocked. Use the prompt to copy.";
@@ -889,11 +941,13 @@ export function AgendaItemsPanel({
       toast.error("No agenda items to copy");
       return;
     }
-    const ok = await copyTextWithFallback(buildAgendaText(exportItems), {
+    const copyText = buildAgendaText(exportItems);
+    const ok = await copyTextWithFallback(copyText, {
       promptLabel: "Copy filtered agenda items",
     });
     if (ok) {
       setStatus("Agenda items copied.");
+      setCopyPreview({ label: "Filtered agenda items", text: copyText });
       toast.success("Agenda items copied");
     } else {
       const msg = "Clipboard blocked. Use the prompt to copy.";
@@ -962,7 +1016,7 @@ export function AgendaItemsPanel({
         <div className="rounded-lg border border-foreground/10 p-4">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <div className="text-sm font-medium">Submission status</div>
+              <div className="text-base font-semibold">Submission status</div>
               <div className="text-xs text-foreground/60">
                 Deadlines are based on the meeting start time.
               </div>
@@ -1018,7 +1072,7 @@ export function AgendaItemsPanel({
         </div>
 
         <div className="rounded-lg border border-foreground/10 p-4">
-          <div className="text-sm font-medium">Quick actions</div>
+          <div className="text-base font-semibold">Quick actions</div>
           <div className="mt-2 text-xs text-foreground/60">
             Total {agendaSummary.total} • Submitted {agendaSummary.submitted} • Accepted {agendaSummary.accepted} • Late{" "}
             {agendaSummary.late}
@@ -1041,6 +1095,16 @@ export function AgendaItemsPanel({
               Download CSV
             </Button>
           </div>
+          {copyPreview ? (
+            <details className="mt-3 rounded-md border border-foreground/10 bg-foreground/5 px-3 py-2">
+              <summary className="cursor-pointer text-xs font-medium text-foreground/70">
+                Preview: {copyPreview.label}
+              </summary>
+              <pre className="mt-2 max-h-48 whitespace-pre-wrap text-xs text-foreground/70">
+                {copyPreview.text}
+              </pre>
+            </details>
+          ) : null}
           {!submissionOpen ? (
             <div className="mt-3 text-xs text-foreground/60">
               Submissions closed{submissionDeadlineLabel ? ` on ${submissionDeadlineLabel}` : "."}
@@ -1049,9 +1113,9 @@ export function AgendaItemsPanel({
         </div>
       </div>
 
-      <details className="rounded-lg border border-foreground/10 p-4">
+      <details id="agenda-filters" className="rounded-lg border border-foreground/10 p-4 scroll-mt-24">
         <summary className="cursor-pointer text-sm font-medium">Filters & export</summary>
-        <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+        <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
           <label className="space-y-1 text-xs text-foreground/70 sm:col-span-2">
             <span>Search</span>
             <input
@@ -1078,71 +1142,85 @@ export function AgendaItemsPanel({
               <option value="withdrawn">Withdrawn</option>
             </select>
           </label>
-          <label className="space-y-1 text-xs text-foreground/70">
-            <span>Category</span>
-            <select
-              className="h-9 w-full rounded border border-foreground/20 bg-background px-2 text-sm"
-              value={agendaCategoryFilter}
-              onChange={(e) => setAgendaCategoryFilter(e.target.value)}
-            >
-              <option value="all">All</option>
-              <option value="action">Action</option>
-              <option value="discussion">Discussion</option>
-              <option value="information">Information</option>
-              <option value="consent">Consent</option>
-              <option value="other">Other</option>
-            </select>
-          </label>
-          <label className="space-y-1 text-xs text-foreground/70">
-            <span>Sort</span>
-            <select
-              className="h-9 w-full rounded border border-foreground/20 bg-background px-2 text-sm"
-              value={agendaSort}
-              onChange={(e) => setAgendaSort(e.target.value as "agenda" | "recent" | "title")}
-            >
-              {isAdmin ? <option value="agenda">Agenda order</option> : null}
-              <option value="recent">Most recent</option>
-              <option value="title">Title</option>
-            </select>
-          </label>
+          {showAdvancedFilters ? (
+            <>
+              <label className="space-y-1 text-xs text-foreground/70">
+                <span>Category</span>
+                <select
+                  className="h-9 w-full rounded border border-foreground/20 bg-background px-2 text-sm"
+                  value={agendaCategoryFilter}
+                  onChange={(e) => setAgendaCategoryFilter(e.target.value)}
+                >
+                  <option value="all">All</option>
+                  <option value="action">Action</option>
+                  <option value="discussion">Discussion</option>
+                  <option value="information">Information</option>
+                  <option value="consent">Consent</option>
+                  <option value="other">Other</option>
+                </select>
+              </label>
+              <label className="space-y-1 text-xs text-foreground/70">
+                <span>Sort</span>
+                <select
+                  className="h-9 w-full rounded border border-foreground/20 bg-background px-2 text-sm"
+                  value={agendaSort}
+                  onChange={(e) => setAgendaSort(e.target.value as "agenda" | "recent" | "title")}
+                >
+                  {isAdmin ? <option value="agenda">Agenda order</option> : null}
+                  <option value="recent">Most recent</option>
+                  <option value="title">Title</option>
+                </select>
+              </label>
+            </>
+          ) : null}
         </div>
-        <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-foreground/70">
-          <label className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={agendaLateOnly}
-              onChange={(e) => setAgendaLateOnly(e.target.checked)}
-            />
-            Late only
-          </label>
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-foreground/70">
+          <Button variant="ghost" size="sm" onClick={() => setShowAdvancedFilters((prev) => !prev)}>
+            {showAdvancedFilters ? "Hide advanced filters" : "Advanced filters"}
+          </Button>
+          {showAdvancedFilters ? (
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={agendaLateOnly}
+                onChange={(e) => setAgendaLateOnly(e.target.checked)}
+              />
+              Late only
+            </label>
+          ) : null}
+        </div>
+        <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-foreground/70">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-foreground/50">Quick filters</span>
             <Button
-              variant="ghost"
+              variant={agendaStateFilter === "submitted" ? "default" : "ghost"}
               size="sm"
+              aria-pressed={agendaStateFilter === "submitted"}
               onClick={() => {
                 setAgendaStateFilter("submitted");
                 setAgendaLateOnly(false);
               }}
             >
-              Submitted
+              Submitted ({agendaSummary.submitted})
             </Button>
             <Button
-              variant="ghost"
+              variant={agendaStateFilter === "accepted" ? "default" : "ghost"}
               size="sm"
+              aria-pressed={agendaStateFilter === "accepted"}
               onClick={() => {
                 setAgendaStateFilter("accepted");
                 setAgendaLateOnly(false);
               }}
             >
-              Accepted
+              Accepted ({agendaSummary.accepted})
             </Button>
             <Button
               variant={agendaLateOnly ? "default" : "ghost"}
               size="sm"
+              aria-pressed={agendaLateOnly}
               onClick={() => setAgendaLateOnly((prev) => !prev)}
             >
-              Late
+              Late ({agendaSummary.late})
             </Button>
           </div>
           <Button variant="ghost" size="sm" onClick={resetAgendaFilters} disabled={!agendaFiltersActive}>
@@ -1153,12 +1231,17 @@ export function AgendaItemsPanel({
           Filtered {filteredSummary.total} • Draft {filteredSummary.draft} • Submitted {filteredSummary.submitted} •
           Accepted {filteredSummary.accepted} • Late {filteredSummary.late}
         </div>
+        <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-foreground/70">
+          <span className="rounded bg-foreground/5 px-2 py-0.5">Draft {filteredSummary.draft}</span>
+          <span className="rounded bg-foreground/5 px-2 py-0.5">Submitted {filteredSummary.submitted}</span>
+          <span className="rounded bg-foreground/5 px-2 py-0.5">Accepted {filteredSummary.accepted}</span>
+        </div>
       </details>
 
       {meetingActive ? (
         <div className="rounded-lg border border-foreground/10 p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="text-sm font-medium">New agenda item</div>
+            <div className="text-base font-semibold">New agenda item</div>
             {submissionOpen ? (
               <Button type="button" size="sm" onClick={() => setShowNewForm(!showNewForm)}>
                 {showNewFormResolved ? (
@@ -1250,6 +1333,10 @@ export function AgendaItemsPanel({
                     <textarea
                       value={newAttachments}
                       onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setNewAttachments(e.target.value)}
+                      onKeyDown={(e) => handleTextareaEnter(e, newAttachments, setNewAttachments)}
+                      inputMode="url"
+                      autoCapitalize="none"
+                      autoCorrect="off"
                       placeholder="One URL per line"
                       rows={2}
                       className="w-full rounded border border-foreground/20 bg-background px-2 py-2 text-sm"
@@ -1260,7 +1347,13 @@ export function AgendaItemsPanel({
 
               <div className="sticky bottom-0 -mx-4 border-t border-foreground/10 bg-background/95 px-4 py-2 backdrop-blur">
                 <div className="flex flex-wrap justify-end gap-2">
-                  <Button type="submit" size="sm" variant="outline" disabled={!canCreateNewItem}>
+                  <Button
+                    type="submit"
+                    size="sm"
+                    variant="outline"
+                    disabled={!canCreateNewItem}
+                    title="Save a draft that is only visible to you until submitted."
+                  >
                     Save Draft
                   </Button>
                   <Button
@@ -1268,6 +1361,7 @@ export function AgendaItemsPanel({
                     size="sm"
                     onClick={() => void createItem(true)}
                     disabled={!canCreateNewItem}
+                    title="Submit for admin review to be added to the agenda."
                   >
                     Submit for review
                   </Button>
@@ -1294,7 +1388,11 @@ export function AgendaItemsPanel({
         ) : (
           <div className="grid gap-3 sm:grid-cols-2">
             {filteredMyItems.map((item) => (
-              <div key={item.id} className="rounded-lg border border-foreground/10 p-4">
+              <div
+                key={item.id}
+                id={!isAdmin ? `agenda-item-${item.id}` : undefined}
+                className="rounded-lg border border-foreground/10 p-4"
+              >
                 {editingId === item.id ? (
                   <form onSubmit={(e) => handleUpdate(e, item.id)} className="space-y-3">
                     <input
@@ -1338,6 +1436,10 @@ export function AgendaItemsPanel({
                     <textarea
                       value={editAttachments}
                       onChange={(e) => setEditAttachments(e.target.value)}
+                      onKeyDown={(e) => handleTextareaEnter(e, editAttachments, setEditAttachments)}
+                      inputMode="url"
+                      autoCapitalize="none"
+                      autoCorrect="off"
                       placeholder="Supporting documents (one URL per line)"
                       rows={2}
                       className="w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
@@ -1445,7 +1547,7 @@ export function AgendaItemsPanel({
                             size="sm"
                             onClick={() => handleSubmit(item.id)}
                             disabled={!submissionOpen || !!actionBusy}
-                            title={submissionOpen ? "Submit for review" : "Submission deadline has passed"}
+                            title={submissionOpen ? "Submit for admin review to be added to the agenda." : "Submission deadline has passed"}
                           >
                             Submit
                           </Button>
@@ -1462,7 +1564,13 @@ export function AgendaItemsPanel({
                       </div>
                     ) : null}
                     <div className="mt-3 flex flex-wrap gap-2">
-                      <Button type="button" variant="outline" size="sm" onClick={() => handleCreateTask(item)}>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleCreateTask(item)}
+                        title="Create a task with a link back to this agenda item."
+                      >
                         <IconPlus className="h-3.5 w-3.5" />
                         {item.fiscal_impact ? "Create finance task" : "Create task"}
                       </Button>
@@ -1543,7 +1651,7 @@ export function AgendaItemsPanel({
                 const canMoveUp = agendaIndex > 0;
                 const canMoveDown = agendaIndex >= 0 && agendaIndex < orderedAgendaItems.length - 1;
                 return (
-                <div key={item.id} className="rounded-lg border border-foreground/10 p-4">
+                  <div key={item.id} id={`agenda-item-${item.id}`} className="rounded-lg border border-foreground/10 p-4">
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div className="flex items-start gap-2">
                       <input
@@ -1654,6 +1762,7 @@ export function AgendaItemsPanel({
                       size="sm"
                       onClick={() => void handleLateOverride(item.id, !item.is_late)}
                       disabled={!!actionBusy}
+                      title={item.is_late ? "Clear the late flag for compliance tracking." : "Mark as late for compliance tracking."}
                     >
                       {item.is_late ? "Clear late" : "Mark late"}
                     </Button>
@@ -1665,6 +1774,7 @@ export function AgendaItemsPanel({
                           size="sm"
                           onClick={() => void handleMoveAgendaItem(item.id, -1)}
                           disabled={!canMoveUp || !!actionBusy}
+                          title="Move up in the final agenda order."
                         >
                           Move up
                         </Button>
@@ -1674,18 +1784,26 @@ export function AgendaItemsPanel({
                           size="sm"
                           onClick={() => void handleMoveAgendaItem(item.id, 1)}
                           disabled={!canMoveDown || !!actionBusy}
+                          title="Move down in the final agenda order."
                         >
                           Move down
                         </Button>
                       </>
                     ) : null}
-                    <Button type="button" variant="outline" size="sm" onClick={() => handleCreateTask(item)}>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleCreateTask(item)}
+                      title="Create a task with a link back to this agenda item."
+                    >
                       <IconPlus className="h-3.5 w-3.5" />
                       {item.fiscal_impact ? "Create finance task" : "Create task"}
                     </Button>
                   </div>
-                </div>
-              );})}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>

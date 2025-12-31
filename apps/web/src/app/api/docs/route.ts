@@ -84,6 +84,14 @@ export async function POST(request: NextRequest) {
 
   const docType = body.doc_type;
   const isCommitteeNote = docType === "committee_notes";
+  const isMeetingDoc = docType === "minutes" || docType === "agenda";
+
+  if (isMeetingDoc) {
+    const { data: isAdmin, error: adminErr } = await supabase.rpc("is_admin", { _uid: user.id });
+    if (adminErr || !isAdmin) {
+      return NextResponse.json({ error: "forbidden" }, { status: 403 });
+    }
+  }
 
   if (!isCommitteeNote && (!body.storage_path || typeof body.storage_path !== "string")) {
     return NextResponse.json({ error: "storage_path_required" }, { status: 400 });

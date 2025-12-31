@@ -99,6 +99,19 @@ function formatTime(iso: string, timeZone?: string | null): string {
   }).format(d);
 }
 
+function addDays(date: Date, days: number): Date {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function formatDateInputValue(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 function statusBadge(status: string): { label: string; className: string } {
   switch (status) {
     case "scheduled":
@@ -147,6 +160,16 @@ function timelineStatusMeta(status: TimelineStatus) {
         icon: <IconClock className="h-3.5 w-3.5 text-gray-700" />,
       };
   }
+}
+
+function formatCountdown(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const ts = new Date(iso).getTime();
+  if (Number.isNaN(ts)) return null;
+  const diffMs = ts - Date.now();
+  const hours = Math.abs(diffMs) / 3600000;
+  const label = `${hours.toFixed(1)} hours`;
+  return diffMs >= 0 ? `${label} left` : `${label} past deadline`;
 }
 
 function TimelineRow({
@@ -239,6 +262,7 @@ export function MeetingHubClient({
       : "pending";
   const minutesStatus: TimelineStatus = meeting.minutes_posted_at ? "on-time" : "pending";
   const submissionOpen = meeting.status === "scheduled" && (initialDeadline ? initialDeadline.is_submission_open : true);
+  const postingCountdown = formatCountdown(postingDeadline);
 
   const breadcrumbs = isAdmin
     ? [
@@ -264,6 +288,11 @@ export function MeetingHubClient({
       .join("\n");
     if (details) params.set("prefillDescription", details);
     if (meeting.committee_id) params.set("committeeId", meeting.committee_id);
+    const meetingDate = new Date(meeting.starts_at);
+    if (!Number.isNaN(meetingDate.getTime())) {
+      const dueDate = meetingDate.getTime() >= Date.now() ? meetingDate : addDays(new Date(), 7);
+      params.set("prefillDue", formatDateInputValue(dueDate));
+    }
     params.set("source", "meeting");
     params.set("meetingId", meeting.id);
     return `/tasks?${params.toString()}`;
@@ -271,6 +300,14 @@ export function MeetingHubClient({
 
   const quickLinkClass =
     "inline-flex items-center rounded-md border border-foreground/10 bg-foreground/5 px-2 py-1 text-xs text-foreground/70 transition hover:bg-foreground/10";
+
+  const sectionLinks = [
+    { href: "#overview", label: "Meeting overview" },
+    { href: "#compliance-timeline", label: "Compliance timeline" },
+    { href: "#agenda-items", label: "Agenda items" },
+    { href: "#agenda-filters", label: "Filters & export" },
+    { href: "#meeting-docs", label: "Meeting documents" },
+  ];
 
   return (
     <div className="space-y-6">
@@ -309,11 +346,11 @@ export function MeetingHubClient({
 
       <div className="grid gap-6 lg:grid-cols-[1.6fr_1fr]">
         <div className="space-y-4">
-          <div className="rounded-lg border border-foreground/10 p-4">
+          <section id="overview" className="rounded-lg border border-foreground/10 p-4 scroll-mt-24">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <div className="flex flex-wrap items-center gap-2">
-                  <div className="text-lg font-semibold">{meeting.title}</div>
+                  <div className="text-xl font-semibold">{meeting.title}</div>
                   <span className={`rounded px-2 py-0.5 text-xs ${meetingStatusBadge.className}`}>
                     {meetingStatusBadge.label}
                   </span>
@@ -383,18 +420,33 @@ export function MeetingHubClient({
                 officeTz={officeTz}
               />
             </div>
-          </div>
+          </section>
         </div>
 
         <div className="space-y-4">
-          <div className="rounded-lg border border-foreground/10 p-4">
-            <div className="text-sm font-medium">Compliance timeline</div>
+          <div className="rounded-lg border border-foreground/10 p-4 lg:sticky lg:top-20">
+            <div className="text-sm font-medium">Jump to</div>
+            <div className="mt-2 grid gap-2 text-xs text-foreground/70">
+              {sectionLinks.map((link) => (
+                <a key={link.href} href={link.href} className="rounded px-2 py-1 hover:bg-foreground/5">
+                  {link.label}
+                </a>
+              ))}
+            </div>
+          </div>
+
+          <div id="compliance-timeline" className="rounded-lg border border-foreground/10 p-4 scroll-mt-24">
+            <div className="text-base font-semibold">Compliance timeline</div>
             <div className="mt-3 space-y-3">
               <TimelineRow
                 title="Agenda posting deadline"
                 value={formatDateTime(postingDeadline, "Not available", officeTz)}
                 status={deadlineStatus}
-                caption={initialDeadline?.is_special ? "Special meeting timeline applied" : null}
+                caption={
+                  [initialDeadline?.is_special ? "Special meeting timeline applied" : null, postingCountdown]
+                    .filter(Boolean)
+                    .join(" • ") || null
+                }
               />
               <TimelineRow
                 title="Notice posted at"
@@ -429,8 +481,8 @@ export function MeetingHubClient({
             </div>
           </div>
 
-          <div className="rounded-lg border border-foreground/10 p-4">
-            <div className="text-sm font-medium">Publish checklist</div>
+          <div id="publish-checklist" className="rounded-lg border border-foreground/10 p-4 scroll-mt-24">
+            <div className="text-base font-semibold">Publish checklist</div>
             <div className="mt-2 grid gap-2 text-sm">
               <div className="flex items-center justify-between">
                 <span>Accepted agenda items</span>
@@ -456,8 +508,8 @@ export function MeetingHubClient({
             </div>
           </div>
 
-          <div className="rounded-lg border border-foreground/10 p-4">
-            <div className="text-sm font-medium">See also</div>
+          <div id="see-also" className="rounded-lg border border-foreground/10 p-4 scroll-mt-24">
+            <div className="text-base font-semibold">See also</div>
             <div className="mt-2 flex flex-wrap gap-2">
               <Link href={taskPrefillUrl} className={quickLinkClass}>
                 Create task
@@ -477,8 +529,8 @@ export function MeetingHubClient({
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
-        <div id="agenda-items">
-          <h2 className="mb-4 text-lg font-medium">Agenda Items</h2>
+        <div id="agenda-items" className="scroll-mt-24">
+          <h2 className="mb-4 text-xl font-semibold">Agenda Items</h2>
           <AgendaItemsPanel
             meetingId={meeting.id}
             initialItems={initialItems}
@@ -494,8 +546,8 @@ export function MeetingHubClient({
             onItemsChange={setItems}
           />
         </div>
-        <div>
-          <h2 className="mb-4 text-lg font-medium">Meeting Documents</h2>
+        <div id="meeting-docs" className="scroll-mt-24">
+          <h2 className="mb-4 text-xl font-semibold">Meeting Documents</h2>
           <MeetingDocsPanel
             meetingId={meeting.id}
             committeeId={meeting.committee_id}
@@ -503,6 +555,7 @@ export function MeetingHubClient({
             initialDocs={initialDocs}
             acceptedAgendaCount={acceptedAgendaCount}
             meetingStatus={meeting.status}
+            meetingTitle={meeting.title}
             onDocsChange={setDocs}
           />
         </div>
