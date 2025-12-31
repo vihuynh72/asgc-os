@@ -51,7 +51,7 @@ export async function SiteNav() {
   return (
     <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
       <div className="mx-auto flex h-14 w-full max-w-5xl items-center justify-between gap-4 px-4">
-        <Link href="/dashboard" className="font-semibold">
+        <Link href="/dashboard" className="font-semibold tracking-tight hover:text-foreground/90" aria-label="Go to dashboard">
           ASGC OS
         </Link>
         <SiteNavLinks primary={navLinks} sections={navSections} />

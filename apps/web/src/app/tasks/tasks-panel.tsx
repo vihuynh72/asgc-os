@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useRef, useState, type ChangeEvent, type FormEvent } from "react";
+import Link from "next/link";
+import { useMemo, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -165,6 +166,21 @@ function isValidHttpUrl(value: string): boolean {
     return false;
   }
 }
+
+function formatTaskErrorMessage(message: string): string {
+  const lower = message.trim().toLowerCase();
+  if (lower.includes("unauthorized")) return "Please sign in to continue.";
+  if (lower.includes("forbidden") || lower.includes("permission")) {
+    return "You do not have permission to complete this action.";
+  }
+  if (lower.includes("task_not_found") || lower.includes("not found")) {
+    return "Task not found.";
+  }
+  if (lower.includes("title_required")) return "Title is required.";
+  if (lower.includes("committee_required")) return "Committee is required.";
+  if (lower.includes("invalid_assignee")) return "That assignee is not available for this committee.";
+  return message;
+}
 function isTaskOverdue(task: TaskRow): boolean {
   if (!task.due_at || task.status === "done") return false;
   const due = new Date(task.due_at);
@@ -244,6 +260,8 @@ export function TasksPanel({
   const [sortKey, setSortKey] = useState<"updated" | "due" | "title" | "priority">("updated");
   const [taskPage, setTaskPage] = useState<number>(1);
   const [taskPageSize, setTaskPageSize] = useState<number>(10);
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState<boolean>(false);
+  const [copyPreview, setCopyPreview] = useState<{ label: string; text: string } | null>(null);
 
   const defaultCommitteeId = initialCommittees[0]?.id ?? "";
   const initialCommitteeId =
@@ -258,7 +276,10 @@ export function TasksPanel({
   const [newTitle, setNewTitle] = useState<string>(prefill?.title ?? "");
   const [newDescription, setNewDescription] = useState<string>(prefill?.description ?? "");
   const [newPriority, setNewPriority] = useState<TaskRow["priority"]>(initialPriority);
-  const [newDue, setNewDue] = useState<string>(prefill?.due ?? "");
+  const [newDue, setNewDue] = useState<string>(() => {
+    const prefillDue = prefill?.due?.trim();
+    return prefillDue ? prefillDue : formatDateOnly(addDays(new Date(), 7));
+  });
   const [newAssigneeId, setNewAssigneeId] = useState<string>(prefill?.assigneeId ?? viewerUserId);
   const [templateId, setTemplateId] = useState<string>("");
   const [templateNote, setTemplateNote] = useState<string>("");
@@ -296,17 +317,24 @@ export function TasksPanel({
       prefill?.priority ||
       prefill?.due ||
       prefill?.assigneeId ||
-      prefill?.source,
+      prefill?.source ||
+      prefill?.meetingId ||
+      prefill?.agendaItemId,
   );
   const prefillSourceLabel =
-    prefill?.source === "agenda-item"
+    prefill?.source === "agenda-item" || prefill?.agendaItemId
       ? "agenda item"
-      : prefill?.source === "meeting"
+      : prefill?.source === "meeting" || prefill?.meetingId
         ? "meeting"
         : "link";
   const prefillCommitteeMissing = Boolean(
     prefill?.committeeId && !committees.some((c) => c.id === prefill.committeeId),
   );
+  const prefillMeetingUrl = prefill?.meetingId ? `/meetings/${prefill.meetingId}` : "";
+  const prefillAgendaItemUrl =
+    prefillMeetingUrl && prefill?.agendaItemId ? `${prefillMeetingUrl}#agenda-item-${prefill.agendaItemId}` : "";
+  const prefillLinkClass =
+    "inline-flex items-center rounded-md border border-foreground/10 bg-background px-2 py-1 text-xs text-foreground/70 hover:bg-foreground/5";
 
   const filteredTasks = useMemo(() => {
     const query = filterQuery.trim().toLowerCase();
@@ -407,6 +435,15 @@ export function TasksPanel({
 
   const overdueCount = useMemo(() => filteredTasks.filter(isTaskOverdue).length, [filteredTasks]);
   const dueSoonCount = useMemo(() => filteredTasks.filter((t) => isTaskDueSoon(t)).length, [filteredTasks]);
+  const assignedToMeCount = useMemo(
+    () => filteredTasks.filter((t) => t.assigned_to === viewerUserId).length,
+    [filteredTasks, viewerUserId],
+  );
+  const unassignedCount = useMemo(() => filteredTasks.filter((t) => !t.assigned_to).length, [filteredTasks]);
+  const highPriorityCount = useMemo(
+    () => filteredTasks.filter((t) => t.priority === "high").length,
+    [filteredTasks],
+  );
   const statusCounts = useMemo(() => {
     const counts = { todo: 0, doing: 0, done: 0 };
     for (const task of filteredTasks) {
@@ -427,6 +464,12 @@ export function TasksPanel({
     filterDueStart && filterDueEnd && filterDueStart.trim() && filterDueEnd.trim() && filterDueStart > filterDueEnd
       ? "Start date is after end date."
       : "";
+  const advancedFiltersActive =
+    filterDueStart.trim().length > 0 ||
+    filterDueEnd.trim().length > 0 ||
+    filterStatuses.length > 1 ||
+    filterPriorities.length > 1;
+  const showAdvanced = showAdvancedFilters || advancedFiltersActive;
 
   const taskFiltersActive =
     filterQuery.trim().length > 0 ||
@@ -606,16 +649,30 @@ export function TasksPanel({
     if (assigneesByCommitteeId[committeeId]) return;
 
     const qs = new URLSearchParams({ committeeId });
-    const { assignees } = await fetchJson<{ assignees: AssigneeRow[] }>(`/api/tasks/assignees?${qs.toString()}`);
-    setAssigneesByCommitteeId((prev) => ({ ...prev, [committeeId]: assignees ?? [] }));
+    try {
+      const { assignees } = await fetchJson<{ assignees: AssigneeRow[] }>(`/api/tasks/assignees?${qs.toString()}`);
+      setAssigneesByCommitteeId((prev) => ({ ...prev, [committeeId]: assignees ?? [] }));
+    } catch (err) {
+      const msg = formatTaskErrorMessage(err instanceof Error ? err.message : "Failed to load assignees");
+      setStatus(msg);
+      toast.error(msg);
+    }
   }
 
   async function reload() {
     const qs = projectIdFilter ? `?projectId=${encodeURIComponent(projectIdFilter)}` : "";
-    const { tasks: t, committees: c } = await fetchJson<{ tasks: TaskRow[]; committees: CommitteeRow[] }>(`/api/tasks${qs}`);
-    setTasks(t);
-    setCommittees(c);
-    if (!newCommitteeId && c[0]?.id) setNewCommitteeId(c[0].id);
+    try {
+      const { tasks: t, committees: c } = await fetchJson<{ tasks: TaskRow[]; committees: CommitteeRow[] }>(
+        `/api/tasks${qs}`,
+      );
+      setTasks(t);
+      setCommittees(c);
+      if (!newCommitteeId && c[0]?.id) setNewCommitteeId(c[0].id);
+    } catch (err) {
+      const msg = formatTaskErrorMessage(err instanceof Error ? err.message : "Failed to refresh tasks");
+      setStatus(msg);
+      toast.error(msg);
+    }
   }
 
   async function loadTaskExtras(taskId: string) {
@@ -671,6 +728,8 @@ export function TasksPanel({
     setFilterDueEnd("");
     setSortKey("updated");
     setTaskPage(1);
+    setShowAdvancedFilters(false);
+    setCopyPreview(null);
   }
 
   async function toggleExpanded(taskId: string, committeeId: string) {
@@ -695,7 +754,7 @@ export function TasksPanel({
         await loadTaskExtras(taskId);
         setStatus("");
       } catch (err) {
-        setStatus(err instanceof Error ? err.message : "Failed to load");
+        setStatus(formatTaskErrorMessage(err instanceof Error ? err.message : "Failed to load"));
       }
     }
   }
@@ -720,14 +779,14 @@ export function TasksPanel({
       setStatus("");
       toast.success("Comment posted");
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to post comment";
+      const msg = formatTaskErrorMessage(err instanceof Error ? err.message : "Failed to post comment");
       setStatus(msg);
       toast.error(msg);
     }
   }
 
   async function deleteComment(taskId: string, commentId: string) {
-    if (!window.confirm("Delete this comment?")) return;
+    if (!window.confirm("Delete this comment? This cannot be undone.")) return;
     setStatus("Removing comment...");
     try {
       await fetchJson<{ ok: true }>(
@@ -741,7 +800,7 @@ export function TasksPanel({
       setStatus("");
       toast.success("Comment deleted");
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to remove comment";
+      const msg = formatTaskErrorMessage(err instanceof Error ? err.message : "Failed to remove comment");
       setStatus(msg);
       toast.error(msg);
     }
@@ -775,14 +834,14 @@ export function TasksPanel({
       setStatus("");
       toast.success("Attachment added");
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to add link";
+      const msg = formatTaskErrorMessage(err instanceof Error ? err.message : "Failed to add link");
       setStatus(msg);
       toast.error(msg);
     }
   }
 
   async function deleteAttachment(taskId: string, attachmentId: string) {
-    if (!window.confirm("Remove this attachment?")) return;
+    if (!window.confirm("Remove this attachment? This cannot be undone.")) return;
     setStatus("Removing link...");
     try {
       await fetchJson<{ ok: true }>(
@@ -796,7 +855,7 @@ export function TasksPanel({
       setStatus("");
       toast.success("Attachment removed");
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to remove link";
+      const msg = formatTaskErrorMessage(err instanceof Error ? err.message : "Failed to remove link");
       setStatus(msg);
       toast.error(msg);
     }
@@ -850,7 +909,7 @@ export function TasksPanel({
 
       setNewTitle("");
       setNewDescription("");
-      setNewDue("");
+      setNewDue(formatDateOnly(addDays(new Date(), 7)));
       setTemplateId("");
       setTemplateNote("");
       setCreateErrors({});
@@ -860,7 +919,7 @@ export function TasksPanel({
       toast.success("Task created");
       await reload();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to create task";
+      const msg = formatTaskErrorMessage(err instanceof Error ? err.message : "Failed to create task");
       setStatus(msg);
       toast.error(msg);
     }
@@ -890,7 +949,7 @@ export function TasksPanel({
                   : "Task updated";
       toast.success(label);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to save";
+      const msg = formatTaskErrorMessage(err instanceof Error ? err.message : "Failed to save");
       setStatus(msg);
       toast.error(msg);
     }
@@ -899,7 +958,7 @@ export function TasksPanel({
   async function deleteTask(taskId: string) {
     const task = tasks.find((t) => t.id === taskId);
     const label = task?.title ? `"${task.title}"` : "this task";
-    if (!window.confirm(`Delete ${label}? This cannot be undone.`)) return;
+    if (!window.confirm(`Delete ${label}? Comments and links will be removed and this cannot be undone.`)) return;
     setStatus("Deleting...");
     try {
       await fetchJson<{ ok: true }>(`/api/tasks/${encodeURIComponent(taskId)}`, { method: "DELETE" });
@@ -907,7 +966,7 @@ export function TasksPanel({
       setStatus("");
       toast.success("Task deleted");
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to delete";
+      const msg = formatTaskErrorMessage(err instanceof Error ? err.message : "Failed to delete");
       setStatus(msg);
       toast.error(msg);
     }
@@ -956,8 +1015,10 @@ export function TasksPanel({
       toast.error("No tasks to copy");
       return;
     }
-    const ok = await copyTextWithFallback(buildTaskCopyText(filteredTasks), { promptLabel: "Copy task list" });
+    const copyText = buildTaskCopyText(filteredTasks);
+    const ok = await copyTextWithFallback(copyText, { promptLabel: "Copy task list" });
     if (ok) {
+      setCopyPreview({ label: "Task list", text: copyText });
       toast.success("Task list copied");
     } else {
       toast.info("Clipboard blocked. Use the prompt to copy.");
@@ -965,8 +1026,10 @@ export function TasksPanel({
   }
 
   async function handleCopyTask(task: TaskRow) {
-    const ok = await copyTextWithFallback(buildTaskSummary(task), { promptLabel: "Copy task summary" });
+    const copyText = buildTaskSummary(task);
+    const ok = await copyTextWithFallback(copyText, { promptLabel: "Copy task summary" });
     if (ok) {
+      setCopyPreview({ label: `Task summary: ${task.title}`, text: copyText });
       toast.success("Task summary copied");
     } else {
       toast.info("Clipboard blocked. Use the prompt to copy.");
@@ -995,7 +1058,7 @@ export function TasksPanel({
     setNewTitle("");
     setNewDescription("");
     setNewPriority("medium");
-    setNewDue("");
+    setNewDue(formatDateOnly(addDays(new Date(), 7)));
     setNewAssigneeId(viewerUserId);
     if (committees[0]?.id) setNewCommitteeId(committees[0].id);
     setTemplateId("");
@@ -1058,6 +1121,18 @@ export function TasksPanel({
             <div className="mt-1 text-xs text-foreground/70">
               Review the fields below before creating the task.
             </div>
+            {prefillMeetingUrl ? (
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <Link href={prefillMeetingUrl} className={prefillLinkClass}>
+                  View meeting
+                </Link>
+                {prefillAgendaItemUrl ? (
+                  <Link href={prefillAgendaItemUrl} className={prefillLinkClass}>
+                    View agenda item
+                  </Link>
+                ) : null}
+              </div>
+            ) : null}
             {prefillCommitteeMissing ? (
               <div className="mt-1 text-xs text-red-600">
                 Committee access missing for this prefill. Choose a committee you belong to.
@@ -1215,6 +1290,14 @@ export function TasksPanel({
                   type="button"
                   variant="ghost"
                   size="sm"
+                  onClick={() => setNewDue(formatDateOnly(addDays(new Date(), 1)))}
+                >
+                  Tomorrow
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
                   onClick={() => setNewDue(formatDateOnly(addDays(new Date(), 7)))}
                 >
                   +7 days
@@ -1226,6 +1309,14 @@ export function TasksPanel({
                   onClick={() => setNewDue(formatDateOnly(addDays(new Date(), 14)))}
                 >
                   +14 days
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setNewDue(formatDateOnly(addDays(new Date(), 30)))}
+                >
+                  +30 days
                 </Button>
                 <Button type="button" variant="ghost" size="sm" onClick={() => setNewDue("")} disabled={!newDue}>
                   Clear
@@ -1276,7 +1367,10 @@ export function TasksPanel({
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => setFilterQuery("")}
+                  onClick={() => {
+                    setFilterQuery("");
+                    setTaskPage(1);
+                  }}
                   disabled={!filterQuery.trim()}
                 >
                   <IconX className="h-3.5 w-3.5" />
@@ -1393,63 +1487,78 @@ export function TasksPanel({
             </label>
           </div>
 
-          <div className="mt-3 grid gap-3 md:grid-cols-3">
-            <label className="space-y-1 text-sm">
-              <div className="text-foreground/70">Due start</div>
-              <input
-                type="date"
-                className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-                value={filterDueStart}
-                onChange={(e: ChangeEvent<HTMLInputElement>) => {
-                  setFilterDueStart(e.target.value);
-                  setTaskPage(1);
-                }}
-                aria-invalid={!!dueRangeError}
-              />
-            </label>
-            <label className="space-y-1 text-sm">
-              <div className="text-foreground/70">Due end</div>
-              <input
-                type="date"
-                className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-                value={filterDueEnd}
-                onChange={(e: ChangeEvent<HTMLInputElement>) => {
-                  setFilterDueEnd(e.target.value);
-                  setTaskPage(1);
-                }}
-                aria-invalid={!!dueRangeError}
-              />
-            </label>
-            <div className="flex items-end text-xs text-foreground/60">
-              Filter tasks due within a date range (optional).
-            </div>
-          </div>
-          {dueRangeError ? <div className="mt-1 text-xs text-red-600">{dueRangeError}</div> : null}
-
           <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-foreground/60">
-            <span className="text-foreground/50">Status</span>
-            {statusOptions.map((statusOption) => (
-              <Button
-                key={statusOption}
-                variant={filterStatuses.includes(statusOption) ? "default" : "ghost"}
-                size="sm"
-                onClick={() => toggleStatusFilter(statusOption)}
-              >
-                {formatTaskStatus(statusOption)}
-              </Button>
-            ))}
-            <span className="text-foreground/50">Priority</span>
-            {priorityOptions.map((priorityOption) => (
-              <Button
-                key={priorityOption}
-                variant={filterPriorities.includes(priorityOption) ? "default" : "ghost"}
-                size="sm"
-                onClick={() => togglePriorityFilter(priorityOption)}
-              >
-                {formatTaskPriority(priorityOption)}
-              </Button>
-            ))}
+            <Button variant="ghost" size="sm" onClick={() => setShowAdvancedFilters((prev) => !prev)}>
+              {showAdvanced ? "Hide advanced filters" : "Advanced filters"}
+            </Button>
+            {advancedFiltersActive && !showAdvancedFilters ? (
+              <span className="text-foreground/50">Advanced filters are active.</span>
+            ) : null}
           </div>
+
+          {showAdvanced ? (
+            <>
+              <div className="mt-3 grid gap-3 md:grid-cols-3">
+                <label className="space-y-1 text-sm">
+                  <div className="text-foreground/70">Due start</div>
+                  <input
+                    type="date"
+                    className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                    value={filterDueStart}
+                    onChange={(e: ChangeEvent<HTMLInputElement>) => {
+                      setFilterDueStart(e.target.value);
+                      setTaskPage(1);
+                    }}
+                    aria-invalid={!!dueRangeError}
+                  />
+                </label>
+                <label className="space-y-1 text-sm">
+                  <div className="text-foreground/70">Due end</div>
+                  <input
+                    type="date"
+                    className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                    value={filterDueEnd}
+                    onChange={(e: ChangeEvent<HTMLInputElement>) => {
+                      setFilterDueEnd(e.target.value);
+                      setTaskPage(1);
+                    }}
+                    aria-invalid={!!dueRangeError}
+                  />
+                </label>
+                <div className="flex items-end text-xs text-foreground/60">
+                  Filter tasks due within a date range (optional).
+                </div>
+              </div>
+              {dueRangeError ? <div className="mt-1 text-xs text-red-600">{dueRangeError}</div> : null}
+
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-foreground/60">
+                <span className="text-foreground/50">Status</span>
+                {statusOptions.map((statusOption) => (
+                  <Button
+                    key={statusOption}
+                    variant={filterStatuses.includes(statusOption) ? "default" : "ghost"}
+                    size="sm"
+                    aria-pressed={filterStatuses.includes(statusOption)}
+                    onClick={() => toggleStatusFilter(statusOption)}
+                  >
+                    {formatTaskStatus(statusOption)}
+                  </Button>
+                ))}
+                <span className="text-foreground/50">Priority</span>
+                {priorityOptions.map((priorityOption) => (
+                  <Button
+                    key={priorityOption}
+                    variant={filterPriorities.includes(priorityOption) ? "default" : "ghost"}
+                    size="sm"
+                    aria-pressed={filterPriorities.includes(priorityOption)}
+                    onClick={() => togglePriorityFilter(priorityOption)}
+                  >
+                    {formatTaskPriority(priorityOption)}
+                  </Button>
+                ))}
+              </div>
+            </>
+          ) : null}
 
           <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-foreground/60">
             <div className="flex flex-wrap items-center gap-3">
@@ -1463,7 +1572,14 @@ export function TasksPanel({
               </span>
               <span className="flex items-center gap-2">
                 <span>{donePercent}% done</span>
-                <span className="h-1 w-20 rounded bg-foreground/10">
+                <span
+                  className="h-1 w-20 rounded bg-foreground/10"
+                  role="progressbar"
+                  aria-label="Task completion"
+                  aria-valuenow={donePercent}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                >
                   <span
                     className="block h-1 rounded bg-primary"
                     style={{ width: `${donePercent}%` }}
@@ -1477,6 +1593,7 @@ export function TasksPanel({
                 <Button
                   variant={filterOverdueOnly ? "default" : "ghost"}
                   size="sm"
+                  aria-pressed={filterOverdueOnly}
                   onClick={() => {
                     setFilterOverdueOnly((prev) => {
                       const next = !prev;
@@ -1487,11 +1604,12 @@ export function TasksPanel({
                   }}
                 >
                   <IconAlert className="h-3.5 w-3.5" />
-                  Overdue
+                  Overdue ({overdueCount})
                 </Button>
                 <Button
                   variant={filterDueSoonOnly ? "default" : "ghost"}
                   size="sm"
+                  aria-pressed={filterDueSoonOnly}
                   onClick={() => {
                     setFilterDueSoonOnly((prev) => {
                       const next = !prev;
@@ -1502,21 +1620,23 @@ export function TasksPanel({
                   }}
                 >
                   <IconClock className="h-3.5 w-3.5" />
-                  Due soon
+                  Due soon ({dueSoonCount})
                 </Button>
                 <Button
                   variant={filterAssignee === "me" ? "default" : "ghost"}
                   size="sm"
+                  aria-pressed={filterAssignee === "me"}
                   onClick={() => {
                     setFilterAssignee((prev) => (prev === "me" ? "" : "me"));
                     setTaskPage(1);
                   }}
                 >
-                  Assigned to me
+                  Assigned to me ({assignedToMeCount})
                 </Button>
                 <Button
                   variant={filterPriorities.includes("high") ? "default" : "ghost"}
                   size="sm"
+                  aria-pressed={filterPriorities.includes("high")}
                   onClick={() => {
                     setFilterPriorities((prev) =>
                       prev.includes("high") ? prev.filter((value) => value !== "high") : [...prev, "high"],
@@ -1524,17 +1644,18 @@ export function TasksPanel({
                     setTaskPage(1);
                   }}
                 >
-                  High priority
+                  High priority ({highPriorityCount})
                 </Button>
                 <Button
                   variant={filterAssignee === "unassigned" ? "default" : "ghost"}
                   size="sm"
+                  aria-pressed={filterAssignee === "unassigned"}
                   onClick={() => {
                     setFilterAssignee((prev) => (prev === "unassigned" ? "" : "unassigned"));
                     setTaskPage(1);
                   }}
                 >
-                  Unassigned
+                  Unassigned ({unassignedCount})
                 </Button>
               </div>
               <label className="flex items-center gap-2">
@@ -1600,6 +1721,16 @@ export function TasksPanel({
               </Button>
             </div>
           </div>
+          {copyPreview ? (
+            <details className="mt-3 rounded-md border border-foreground/10 bg-foreground/5 px-3 py-2">
+              <summary className="cursor-pointer text-xs font-medium text-foreground/70">
+                Preview: {copyPreview.label}
+              </summary>
+              <pre className="mt-2 max-h-48 whitespace-pre-wrap text-xs text-foreground/70">
+                {copyPreview.text}
+              </pre>
+            </details>
+          ) : null}
         </div>
 
         {activeFilterChips.length > 0 ? (
@@ -1616,6 +1747,9 @@ export function TasksPanel({
                 <IconX className="h-3 w-3" />
               </button>
             ))}
+            <Button variant="ghost" size="sm" onClick={resetFilters}>
+              Clear all
+            </Button>
           </div>
         ) : null}
 
@@ -1631,7 +1765,18 @@ export function TasksPanel({
                       Clear filters
                     </Button>
                   </div>
-                ) : null}
+                ) : (
+                  <div className="mt-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => document.getElementById("task-create-form")?.scrollIntoView({ behavior: "smooth" })}
+                    >
+                      <IconPlus className="h-3.5 w-3.5" />
+                      Create your first task
+                    </Button>
+                  </div>
+                )}
               </div>
             ) : (
               paginatedTasks.map((t) => {
@@ -1676,13 +1821,19 @@ export function TasksPanel({
                           ) : null}
                           <span>Updated {formatDateInputValue(t.updated_at)}</span>
                           {overdue ? (
-                            <span className="inline-flex items-center gap-1 rounded bg-red-500/10 px-1.5 py-0.5 text-[11px] text-red-600">
+                            <span
+                              className="inline-flex items-center gap-1 rounded bg-red-500/10 px-1.5 py-0.5 text-[11px] text-red-600"
+                              title={`Overdue since ${formatDateInputValue(t.due_at)}`}
+                            >
                               <IconAlert className="h-3 w-3" />
                               Overdue
                             </span>
                           ) : null}
                           {dueSoon ? (
-                            <span className="inline-flex items-center gap-1 rounded bg-yellow-100 px-1.5 py-0.5 text-[11px] text-yellow-700">
+                            <span
+                              className="inline-flex items-center gap-1 rounded bg-yellow-100 px-1.5 py-0.5 text-[11px] text-yellow-700"
+                              title={`Due soon: ${formatDateInputValue(t.due_at)}`}
+                            >
                               <IconClock className="h-3 w-3" />
                               Due soon
                             </span>
@@ -1700,6 +1851,7 @@ export function TasksPanel({
                           }}
                           aria-expanded={isExpanded}
                           aria-controls={`task-details-${t.id}`}
+                          title={isExpanded ? "Hide task details" : "Show task details"}
                         >
                           {isExpanded ? (
                             <>
@@ -1732,13 +1884,19 @@ export function TasksPanel({
                             variant="outline"
                             size="sm"
                             onClick={() => void updateTask(t.id, { status: "done" })}
+                            title="Mark this task as done."
                           >
                             <IconCheck className="h-3.5 w-3.5" />
                             Mark done
                           </Button>
                         ) : null}
 
-                        <Button variant="ghost" size="sm" onClick={() => void deleteTask(t.id)}>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => void deleteTask(t.id)}
+                          title="Delete this task and remove comments and links."
+                        >
                           <IconTrash className="h-3.5 w-3.5" />
                           Delete
                         </Button>
@@ -1753,7 +1911,12 @@ export function TasksPanel({
                         <div className="space-y-2 md:col-span-2">
                           <div className="flex items-center justify-between gap-2">
                             <div className="text-sm font-medium">Task details</div>
-                            <Button variant="ghost" size="sm" onClick={() => void handleCopyTask(t)}>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => void handleCopyTask(t)}
+                              title="Copy the task summary to your clipboard."
+                            >
                               <IconCopy className="h-3.5 w-3.5" />
                               Copy summary
                             </Button>
@@ -1862,6 +2025,14 @@ export function TasksPanel({
                               onChange={(e: ChangeEvent<HTMLInputElement>) =>
                                 setNewCommentByTaskId((prev) => ({ ...prev, [t.id]: e.target.value }))
                               }
+                              onKeyDown={(e: KeyboardEvent<HTMLInputElement>) => {
+                                if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  if ((newCommentByTaskId[t.id] ?? "").trim()) {
+                                    void createComment(t.id);
+                                  }
+                                }
+                              }}
                               placeholder="Add a comment"
                             />
                             <Button
@@ -1905,11 +2076,21 @@ export function TasksPanel({
                             <input
                               type="url"
                               inputMode="url"
+                              autoCapitalize="none"
+                              autoCorrect="off"
                               className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
                               value={attachmentUrl}
                               onChange={(e: ChangeEvent<HTMLInputElement>) =>
                                 setNewAttachmentUrlByTaskId((prev) => ({ ...prev, [t.id]: e.target.value }))
                               }
+                              onKeyDown={(e: KeyboardEvent<HTMLInputElement>) => {
+                                if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  if (attachmentUrlValid && attachmentUrl.trim()) {
+                                    void createAttachment(t.id);
+                                  }
+                                }
+                              }}
                               placeholder="https://..."
                               aria-invalid={!attachmentUrlValid}
                             />

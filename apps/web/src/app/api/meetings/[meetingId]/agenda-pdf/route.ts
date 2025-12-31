@@ -44,6 +44,17 @@ function formatMeetingTypeLabel(type: string): string {
   }
 }
 
+function formatAgendaDate(iso: string, timeZone?: string | null): string | null {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return null;
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: timeZone ?? "UTC",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
+
 function normalizeAttachments(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   const flat: string[] = [];
@@ -263,9 +274,13 @@ export async function POST(request: NextRequest, { params }: Params) {
     : null;
 
   const visibility = (meeting as Meeting).committee_id ? "committee_only" : "internal";
+  const agendaDate = formatAgendaDate((meeting as Meeting).starts_at, officeTz);
+  const agendaTitle = agendaDate
+    ? `${(meeting as Meeting).title} Agenda ${agendaDate}`
+    : `${(meeting as Meeting).title} Agenda`;
 
   const { data: doc, error: docErr } = await supabase.rpc("create_doc", {
-    _title: `${(meeting as Meeting).title} Agenda`,
+    _title: agendaTitle,
     _doc_type: "agenda",
     _storage_path: storagePath,
     _storage_bucket: bucket,

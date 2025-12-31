@@ -51,6 +51,28 @@ function formatVisibility(value: string): string {
   }
 }
 
+function formatDocErrorMessage(message: string, docLabel?: string): string {
+  const lower = message.trim().toLowerCase();
+  if (lower.includes("row-level security")) {
+    return docLabel
+      ? `You do not have permission to upload ${docLabel}.`
+      : "You do not have permission to complete this action.";
+  }
+  if (lower.includes("unauthorized")) {
+    return "Please sign in to continue.";
+  }
+  if (lower.includes("forbidden")) {
+    return "You do not have permission to complete this action.";
+  }
+  if (lower.includes("meeting_id_required")) {
+    return "Meeting selection is required for agenda or minutes uploads.";
+  }
+  if (lower.includes("storage_path_required")) {
+    return "File metadata is missing. Please reselect the file and try again.";
+  }
+  return message;
+}
+
 const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 const ALLOWED_EXTENSIONS = [".pdf", ".doc", ".docx", ".txt", ".csv"];
 const ALLOWED_MIME_TYPES = new Set([
@@ -137,6 +159,7 @@ export function MeetingDocsPanel({
   isAdmin,
   initialDocs,
   acceptedAgendaCount,
+  meetingTitle,
   meetingStatus,
   onDocsChange,
 }: {
@@ -145,6 +168,7 @@ export function MeetingDocsPanel({
   isAdmin: boolean;
   initialDocs: DocRow[];
   acceptedAgendaCount: number;
+  meetingTitle?: string | null;
   meetingStatus: string;
   onDocsChange?: (docs: DocRow[]) => void;
 }) {
@@ -158,16 +182,18 @@ export function MeetingDocsPanel({
   const agendaUploading = agendaUploadProgress !== null;
 
   const [uploadFile, setUploadFile] = useState<File | null>(null);
-  const [minutesTitle, setMinutesTitle] = useState<string>("");
+  const defaultMinutesTitle = meetingTitle ? `${meetingTitle} Minutes` : "";
+  const defaultAgendaTitle = meetingTitle ? `${meetingTitle} Agenda` : "";
+  const [minutesTitle, setMinutesTitle] = useState<string>(defaultMinutesTitle);
   const [minutesDescription, setMinutesDescription] = useState<string>("");
   const [versionSourceId, setVersionSourceId] = useState<string>("");
-  const [minutesMarkPosted, setMinutesMarkPosted] = useState<boolean>(true);
+  const [minutesMarkPosted, setMinutesMarkPosted] = useState<boolean>(false);
 
   const [agendaFile, setAgendaFile] = useState<File | null>(null);
-  const [agendaTitle, setAgendaTitle] = useState<string>("");
+  const [agendaTitle, setAgendaTitle] = useState<string>(defaultAgendaTitle);
   const [agendaDescription, setAgendaDescription] = useState<string>("");
   const [agendaVersionSourceId, setAgendaVersionSourceId] = useState<string>("");
-  const [agendaMarkPosted, setAgendaMarkPosted] = useState<boolean>(true);
+  const [agendaMarkPosted, setAgendaMarkPosted] = useState<boolean>(false);
   const meetingIsCancelled = meetingStatus === "cancelled";
   const canEdit = isAdmin && !meetingIsCancelled;
   const canUploadMinutes = canEdit && !!uploadFile && minutesTitle.trim().length > 0 && !minutesUploading;
@@ -198,7 +224,9 @@ export function MeetingDocsPanel({
 
   function confirmMarkPosted(type: "agenda" | "minutes") {
     const label = type === "agenda" ? "agenda" : "minutes";
-    return confirm(`Mark ${label} as posted? This will make the document publicly available.`);
+    return confirm(
+      `Mark ${label} as posted now? This records the compliance timestamp and does not change document visibility.`,
+    );
   }
 
   const reload = useCallback(async () => {
@@ -225,7 +253,8 @@ export function MeetingDocsPanel({
       });
       toast.success(`${type === "agenda" ? "Agenda" : "Minutes"} marked posted`);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to mark posted";
+      const raw = err instanceof Error ? err.message : "Failed to mark posted";
+      const msg = formatDocErrorMessage(raw);
       setStatus(msg);
       toast.error(msg);
     }
@@ -309,14 +338,15 @@ export function MeetingDocsPanel({
 
       setStatus("");
       setUploadFile(null);
-      setMinutesTitle("");
+      setMinutesTitle(defaultMinutesTitle);
       setMinutesDescription("");
       setVersionSourceId("");
-      setMinutesMarkPosted(true);
+      setMinutesMarkPosted(false);
       await reload();
       toast.success("Minutes uploaded");
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Minutes upload failed";
+      const raw = err instanceof Error ? err.message : "Minutes upload failed";
+      const msg = formatDocErrorMessage(raw, "minutes");
       setStatus(msg);
       toast.error(msg);
     } finally {
@@ -402,14 +432,15 @@ export function MeetingDocsPanel({
 
       setStatus("");
       setAgendaFile(null);
-      setAgendaTitle("");
+      setAgendaTitle(defaultAgendaTitle);
       setAgendaDescription("");
       setAgendaVersionSourceId("");
-      setAgendaMarkPosted(true);
+      setAgendaMarkPosted(false);
       await reload();
       toast.success("Agenda uploaded");
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Agenda upload failed";
+      const raw = err instanceof Error ? err.message : "Agenda upload failed";
+      const msg = formatDocErrorMessage(raw, "agenda");
       setStatus(msg);
       toast.error(msg);
     } finally {
@@ -418,6 +449,7 @@ export function MeetingDocsPanel({
   }
 
   async function handleDownload(doc: DocRow) {
+    const previewWindow = window.open("", "_blank", "noopener,noreferrer");
     setStatus("Getting download link...");
     try {
       const { signedUrl } = await fetchJson<{ signedUrl: string | null }>(
@@ -425,13 +457,19 @@ export function MeetingDocsPanel({
       );
 
       if (!signedUrl) {
+        if (previewWindow) previewWindow.close();
         throw new Error("Could not generate download link");
       }
 
-      window.open(signedUrl, "_blank");
+      if (previewWindow) {
+        previewWindow.location.href = signedUrl;
+      } else {
+        window.open(signedUrl, "_blank", "noopener,noreferrer");
+      }
       setStatus("");
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to download";
+      const raw = err instanceof Error ? err.message : "Failed to download";
+      const msg = formatDocErrorMessage(raw);
       setStatus(msg);
       toast.error(msg);
     }
@@ -443,6 +481,13 @@ export function MeetingDocsPanel({
       return;
     }
     const nextVisibility = doc.visibility === "public" ? fallbackVisibility : "public";
+    const docLabel = doc.doc_type === "agenda" ? "agenda" : doc.doc_type === "minutes" ? "minutes" : "document";
+    if (
+      nextVisibility === "public" &&
+      !confirm(`Publish this ${docLabel}? It will become publicly visible immediately.`)
+    ) {
+      return;
+    }
     setStatus(`Setting visibility to ${nextVisibility}...`);
     try {
       await fetchJson(`/api/docs/${encodeURIComponent(doc.id)}`, {
@@ -454,7 +499,8 @@ export function MeetingDocsPanel({
       await reload();
       toast.success("Visibility updated");
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to update visibility";
+      const raw = err instanceof Error ? err.message : "Failed to update visibility";
+      const msg = formatDocErrorMessage(raw);
       setStatus(msg);
       toast.error(msg);
     }
@@ -482,7 +528,8 @@ export function MeetingDocsPanel({
       await reload();
       toast.success("Agenda PDF generated");
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Agenda generation failed";
+      const raw = err instanceof Error ? err.message : "Agenda generation failed";
+      const msg = formatDocErrorMessage(raw);
       setStatus(msg);
       toast.error(msg);
     }
@@ -505,7 +552,7 @@ export function MeetingDocsPanel({
       <div className="rounded-lg border border-foreground/10 p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
-            <div className="text-sm font-medium">Minutes</div>
+            <div className="text-base font-semibold">Minutes</div>
             <div className="text-xs text-foreground/70">Upload minutes tied to this meeting.</div>
           </div>
         </div>
@@ -604,7 +651,7 @@ export function MeetingDocsPanel({
                 </div>
                 <label
                   className="flex items-center gap-2 text-xs text-foreground/70 sm:col-span-2"
-                  title="Posting minutes indicates they are publicly available."
+                  title="Records the compliance timestamp and does not change visibility."
                 >
                   <input
                     type="checkbox"
@@ -614,7 +661,7 @@ export function MeetingDocsPanel({
                   <span>Mark minutes posted now</span>
                 </label>
                 <div className="text-xs text-foreground/60 sm:col-span-2">
-                  Posting minutes indicates they are publicly available for compliance.
+                  Posting minutes records the compliance timestamp. Use Publish to change visibility.
                 </div>
               </div>
               <div className="flex justify-end">
@@ -687,14 +734,25 @@ export function MeetingDocsPanel({
                         variant="ghost"
                         size="sm"
                         onClick={() => void handleToggleVisibility(latest)}
+                        title={
+                          latest.visibility === "public"
+                            ? `Change visibility to ${formatVisibility(fallbackVisibility)}.`
+                            : "Publish to make this document publicly visible."
+                        }
                       >
                         {latest.visibility === "public"
                           ? `Make ${formatVisibility(fallbackVisibility)}`
-                          : "Publish"}
+                          : "Publish minutes"}
                       </Button>
                     ) : null}
                     {canEdit ? (
-                      <Button type="button" variant="ghost" size="sm" onClick={() => void markMeetingPosted("minutes")}>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => void markMeetingPosted("minutes")}
+                        title="Record compliance posting time (does not change visibility)."
+                      >
                         <IconCheck className="h-3.5 w-3.5" />
                         Mark posted now
                       </Button>
@@ -714,7 +772,7 @@ export function MeetingDocsPanel({
       <div className="rounded-lg border border-foreground/10 p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
-            <div className="text-sm font-medium">Agenda documents</div>
+            <div className="text-base font-semibold">Agenda documents</div>
             <div className="text-xs text-foreground/70">Upload or generate agendas for public posting.</div>
             <div className="text-xs text-foreground/60">Accepted items: {acceptedAgendaCount}</div>
           </div>
@@ -737,9 +795,15 @@ export function MeetingDocsPanel({
                 Generate Agenda PDF
               </Button>
               {latestAgendaDoc ? (
-                <Button type="button" variant="ghost" size="sm" onClick={() => handleDownload(latestAgendaDoc)}>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => handleDownload(latestAgendaDoc)}
+                  title="Open the latest agenda in a new tab."
+                >
                   <IconDownload className="h-3.5 w-3.5" />
-                  Preview latest
+                  Preview latest agenda
                 </Button>
               ) : null}
             </div>
@@ -854,7 +918,7 @@ export function MeetingDocsPanel({
                 </div>
                 <label
                   className="flex items-center gap-2 text-xs text-foreground/70 sm:col-span-2"
-                  title="Posting the agenda indicates it is publicly available."
+                  title="Records the compliance timestamp and does not change visibility."
                 >
                   <input
                     type="checkbox"
@@ -864,7 +928,7 @@ export function MeetingDocsPanel({
                   <span>Mark agenda posted now</span>
                 </label>
                 <div className="text-xs text-foreground/60 sm:col-span-2">
-                  Posting the agenda indicates it is publicly available for compliance.
+                  Posting the agenda records the compliance timestamp. Use Publish to change visibility.
                 </div>
               </div>
               <div className="flex justify-end">
@@ -937,14 +1001,25 @@ export function MeetingDocsPanel({
                         variant="ghost"
                         size="sm"
                         onClick={() => void handleToggleVisibility(latest)}
+                        title={
+                          latest.visibility === "public"
+                            ? `Change visibility to ${formatVisibility(fallbackVisibility)}.`
+                            : "Publish to make this document publicly visible."
+                        }
                       >
                         {latest.visibility === "public"
                           ? `Make ${formatVisibility(fallbackVisibility)}`
-                          : "Publish"}
+                          : "Publish agenda"}
                       </Button>
                     ) : null}
                     {canEdit ? (
-                      <Button type="button" variant="ghost" size="sm" onClick={() => void markMeetingPosted("agenda")}>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => void markMeetingPosted("agenda")}
+                        title="Record compliance posting time (does not change visibility)."
+                      >
                         <IconCheck className="h-3.5 w-3.5" />
                         Mark posted now
                       </Button>

@@ -8,4 +8,6 @@ export type TaskPrefill = {
   due?: string;
   assigneeId?: string;
   source?: string;
+  meetingId?: string;
+  agendaItemId?: string;
 };
