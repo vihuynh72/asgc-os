@@ -1,10 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import { IconAlert, IconCheck, IconClock, IconPlus } from "@/components/ui/icons";
+import { IconAlert, IconCheck, IconChevronUp, IconClock, IconPlus } from "@/components/ui/icons";
 import type { DocRow } from "@/lib/doc-types";
 
 import { AgendaItemsPanel } from "./agenda-items-panel";
@@ -222,6 +222,7 @@ export function MeetingHubClient({
 }) {
   const [items, setItems] = useState<AgendaItem[]>(initialItems);
   const [docs, setDocs] = useState<DocRow[]>(initialDocs);
+  const [showBackToTop, setShowBackToTop] = useState<boolean>(false);
 
   const acceptedAgendaCount = useMemo(
     () => items.filter((item) => item.state === "accepted" || item.state === "tabled").length,
@@ -234,6 +235,7 @@ export function MeetingHubClient({
   const postingDeadline = initialDeadline?.posting_deadline ?? null;
   const agendaPostedAt = meeting.agenda_posted_at;
   const noticePostedAt = meeting.notice_posted_at;
+  const submissionDeadline = initialDeadline?.submission_deadline ?? null;
   const agendaOnTime =
     agendaPostedAt && postingDeadline
       ? new Date(agendaPostedAt).getTime() <= new Date(postingDeadline).getTime()
@@ -242,7 +244,7 @@ export function MeetingHubClient({
     noticePostedAt && postingDeadline
       ? new Date(noticePostedAt).getTime() <= new Date(postingDeadline).getTime()
       : null;
-  const nowTs = Date.now();
+  const nowTs = new Date().getTime();
   const postingDeadlineTs = postingDeadline ? new Date(postingDeadline).getTime() : null;
   const deadlineStatus: TimelineStatus =
     postingDeadlineTs === null ? "info" : nowTs > postingDeadlineTs ? "overdue" : "pending";
@@ -263,6 +265,26 @@ export function MeetingHubClient({
   const minutesStatus: TimelineStatus = meeting.minutes_posted_at ? "on-time" : "pending";
   const submissionOpen = meeting.status === "scheduled" && (initialDeadline ? initialDeadline.is_submission_open : true);
   const postingCountdown = formatCountdown(postingDeadline);
+  const submissionCountdown = formatCountdown(submissionDeadline);
+  const submissionStatus: TimelineStatus = initialDeadline
+    ? initialDeadline.is_past_deadline
+      ? "overdue"
+      : initialDeadline.is_submission_open
+        ? "pending"
+        : "info"
+    : "info";
+
+  const publishTotal = 3;
+  const publishComplete =
+    (acceptedAgendaCount > 0 ? 1 : 0) + (agendaDocCount > 0 ? 1 : 0) + (minutesDocCount > 0 ? 1 : 0);
+  const publishPercent = Math.round((publishComplete / publishTotal) * 100);
+  const minutesNeedsAttention = meeting.status === "completed" && minutesStatus !== "on-time";
+  const complianceNeedsAttention =
+    deadlineStatus === "overdue" ||
+    noticeStatus === "late" ||
+    agendaStatus === "late" ||
+    agendaStatus === "overdue" ||
+    minutesNeedsAttention;
 
   const breadcrumbs = isAdmin
     ? [
@@ -290,7 +312,8 @@ export function MeetingHubClient({
     if (meeting.committee_id) params.set("committeeId", meeting.committee_id);
     const meetingDate = new Date(meeting.starts_at);
     if (!Number.isNaN(meetingDate.getTime())) {
-      const dueDate = meetingDate.getTime() >= Date.now() ? meetingDate : addDays(new Date(), 7);
+      const nowForPrefill = new Date();
+      const dueDate = meetingDate.getTime() >= nowForPrefill.getTime() ? meetingDate : addDays(nowForPrefill, 7);
       params.set("prefillDue", formatDateInputValue(dueDate));
     }
     params.set("source", "meeting");
@@ -301,13 +324,24 @@ export function MeetingHubClient({
   const quickLinkClass =
     "inline-flex items-center rounded-md border border-foreground/10 bg-foreground/5 px-2 py-1 text-xs text-foreground/70 transition hover:bg-foreground/10";
 
+  const submissionMeta = timelineStatusMeta(submissionStatus);
+  const postingMeta = timelineStatusMeta(deadlineStatus);
+
   const sectionLinks = [
     { href: "#overview", label: "Meeting overview" },
     { href: "#compliance-timeline", label: "Compliance timeline" },
+    { href: "#publish-checklist", label: "Publish checklist" },
     { href: "#agenda-items", label: "Agenda items" },
     { href: "#agenda-filters", label: "Filters & export" },
     { href: "#meeting-docs", label: "Meeting documents" },
   ];
+
+  useEffect(() => {
+    const onScroll = () => setShowBackToTop(window.scrollY > 640);
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
 
   return (
     <div className="space-y-6">
@@ -343,6 +377,54 @@ export function MeetingHubClient({
           </div>
         </div>
       ) : null}
+
+      <section className="rounded-lg border border-foreground/10 bg-foreground/5 p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="text-base font-semibold">Compliance snapshot</div>
+            <div className="text-xs text-foreground/60">
+              Key deadlines and posting status for this meeting.
+            </div>
+          </div>
+          {complianceNeedsAttention ? (
+            <span className="rounded px-2 py-0.5 text-xs font-medium text-red-700 bg-red-100">
+              Needs attention
+            </span>
+          ) : (
+            <span className="rounded px-2 py-0.5 text-xs font-medium text-green-700 bg-green-100">
+              On track
+            </span>
+          )}
+        </div>
+        <div className="mt-3 grid gap-3 md:grid-cols-2">
+          <div className="rounded-md border border-foreground/10 bg-background px-3 py-2">
+            <div className="flex items-center gap-2 text-xs text-foreground/70">
+              <span className={`flex h-6 w-6 items-center justify-center rounded-full ${submissionMeta.pillClass}`}>
+                {submissionMeta.icon}
+              </span>
+              <span className="uppercase tracking-wide">{submissionMeta.label}</span>
+            </div>
+            <div className="mt-1 text-sm font-medium">Submission deadline</div>
+            <div className="text-sm">{formatDateTime(submissionDeadline, "Not available", officeTz)}</div>
+            {submissionCountdown ? (
+              <div className="mt-1 text-xs text-foreground/60">{submissionCountdown}</div>
+            ) : null}
+          </div>
+          <div className="rounded-md border border-foreground/10 bg-background px-3 py-2">
+            <div className="flex items-center gap-2 text-xs text-foreground/70">
+              <span className={`flex h-6 w-6 items-center justify-center rounded-full ${postingMeta.pillClass}`}>
+                {postingMeta.icon}
+              </span>
+              <span className="uppercase tracking-wide">{postingMeta.label}</span>
+            </div>
+            <div className="mt-1 text-sm font-medium">Agenda posting deadline</div>
+            <div className="text-sm">{formatDateTime(postingDeadline, "Not available", officeTz)}</div>
+            {postingCountdown ? (
+              <div className="mt-1 text-xs text-foreground/60">{postingCountdown}</div>
+            ) : null}
+          </div>
+        </div>
+      </section>
 
       <div className="grid gap-6 lg:grid-cols-[1.6fr_1fr]">
         <div className="space-y-4">
@@ -483,28 +565,36 @@ export function MeetingHubClient({
 
           <div id="publish-checklist" className="rounded-lg border border-foreground/10 p-4 scroll-mt-24">
             <div className="text-base font-semibold">Publish checklist</div>
-            <div className="mt-2 grid gap-2 text-sm">
+            <div className="mt-2 text-xs text-foreground/60">
+              {publishComplete} of {publishTotal} steps complete.
+            </div>
+            <div className="mt-2 h-2 w-full rounded bg-foreground/10" role="progressbar" aria-valuenow={publishPercent} aria-valuemin={0} aria-valuemax={100}>
+              <div className="h-2 rounded bg-primary" style={{ width: `${publishPercent}%` }} />
+            </div>
+            <div className="mt-3 grid gap-2 text-sm">
               <div className="flex items-center justify-between">
                 <span>Accepted agenda items</span>
                 <span className={`text-xs ${acceptedAgendaCount > 0 ? "text-green-600" : "text-foreground/60"}`}>
-                  {acceptedAgendaCount} {acceptedAgendaCount === 1 ? "item" : "items"}
+                  {acceptedAgendaCount > 0
+                    ? `${acceptedAgendaCount} ready`
+                    : "No accepted items yet"}
                 </span>
               </div>
               <div className="flex items-center justify-between">
                 <span>Agenda document</span>
                 <span className={`text-xs ${agendaDocCount > 0 ? "text-green-600" : "text-foreground/60"}`}>
-                  {agendaDocCount > 0 ? "Uploaded" : "Missing"}
+                  {agendaDocCount > 0 ? "Uploaded" : "Missing upload"}
                 </span>
               </div>
               <div className="flex items-center justify-between">
                 <span>Minutes document</span>
                 <span className={`text-xs ${minutesDocCount > 0 ? "text-green-600" : "text-foreground/60"}`}>
-                  {minutesDocCount > 0 ? "Uploaded" : "Missing"}
+                  {minutesDocCount > 0 ? "Uploaded" : "Missing upload"}
                 </span>
               </div>
             </div>
             <div className="mt-2 text-xs text-foreground/60">
-              Use Agenda Items and Meeting Documents below to complete each step.
+              Complete these steps in Agenda Items and Meeting Documents below.
             </div>
           </div>
 
@@ -556,10 +646,24 @@ export function MeetingHubClient({
             acceptedAgendaCount={acceptedAgendaCount}
             meetingStatus={meeting.status}
             meetingTitle={meeting.title}
+            agendaPostedAt={meeting.agenda_posted_at}
+            minutesPostedAt={meeting.minutes_posted_at}
             onDocsChange={setDocs}
           />
         </div>
       </div>
+
+      {showBackToTop ? (
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+          className="fixed bottom-6 right-6 z-30 shadow-md"
+        >
+          <IconChevronUp className="h-3.5 w-3.5" />
+          Back to top
+        </Button>
+      ) : null}
     </div>
   );
 }

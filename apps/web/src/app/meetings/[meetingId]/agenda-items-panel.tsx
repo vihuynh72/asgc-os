@@ -1,10 +1,31 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type ChangeEvent, type FormEvent, type KeyboardEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type FormEvent,
+  type KeyboardEvent,
+} from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import { IconCopy, IconDownload, IconPlus } from "@/components/ui/icons";
+import {
+  IconAlert,
+  IconCheck,
+  IconChevronDown,
+  IconChevronUp,
+  IconClock,
+  IconCopy,
+  IconDownload,
+  IconFileText,
+  IconPlus,
+  IconX,
+} from "@/components/ui/icons";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { copyTextWithFallback } from "@/lib/clipboard";
 
 type AgendaItem = {
@@ -98,6 +119,25 @@ function stateColor(state: string): string {
       return "bg-gray-200 text-gray-600";
     default:
       return "bg-gray-100 text-gray-700";
+  }
+}
+
+function stateIcon(state: string) {
+  switch (state) {
+    case "draft":
+      return <IconFileText className="h-3 w-3" />;
+    case "submitted":
+      return <IconClock className="h-3 w-3" />;
+    case "accepted":
+      return <IconCheck className="h-3 w-3" />;
+    case "rejected":
+      return <IconX className="h-3 w-3" />;
+    case "tabled":
+      return <IconAlert className="h-3 w-3" />;
+    case "withdrawn":
+      return <IconX className="h-3 w-3" />;
+    default:
+      return <IconFileText className="h-3 w-3" />;
   }
 }
 
@@ -329,7 +369,11 @@ export function AgendaItemsPanel({
     isAdmin ? "agenda" : "recent",
   );
   const [showAdvancedFilters, setShowAdvancedFilters] = useState<boolean>(false);
+  const [filtersOpen, setFiltersOpen] = useState<boolean>(false);
   const [copyPreview, setCopyPreview] = useState<{ label: string; text: string } | null>(null);
+  const [pendingScrollId, setPendingScrollId] = useState<string | null>(null);
+  const [highlightedItemId, setHighlightedItemId] = useState<string | null>(null);
+  const highlightTimeoutRef = useRef<number | null>(null);
 
   // New item form
   const [showNewForm, setShowNewForm] = useState<boolean>(false);
@@ -356,6 +400,43 @@ export function AgendaItemsPanel({
     onItemsChange?.(items);
     setSelectedAdminItems({});
   }, [items, onItemsChange]);
+
+  useEffect(() => {
+    return () => {
+      if (highlightTimeoutRef.current) {
+        window.clearTimeout(highlightTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!pendingScrollId) return;
+    let attempts = 0;
+    const targetIds = [`agenda-item-my-${pendingScrollId}`, `agenda-item-${pendingScrollId}`];
+
+    const scrollAttempt = () => {
+      const target = targetIds.map((id) => document.getElementById(id)).find(Boolean);
+      if (target) {
+        target.scrollIntoView({ behavior: "smooth", block: "center" });
+        if (target instanceof HTMLElement) target.focus({ preventScroll: true });
+        setHighlightedItemId(pendingScrollId);
+        if (highlightTimeoutRef.current) {
+          window.clearTimeout(highlightTimeoutRef.current);
+        }
+        highlightTimeoutRef.current = window.setTimeout(() => setHighlightedItemId(null), 2000);
+        setPendingScrollId(null);
+        return;
+      }
+      if (attempts < 6) {
+        attempts += 1;
+        window.requestAnimationFrame(scrollAttempt);
+      } else {
+        setPendingScrollId(null);
+      }
+    };
+
+    window.requestAnimationFrame(scrollAttempt);
+  }, [pendingScrollId]);
 
   const reload = useCallback(async () => {
     const { items: i, deadline: d } = await fetchJson<{
@@ -389,6 +470,10 @@ export function AgendaItemsPanel({
     : null;
   const lateSubmissionsAllowed =
     meetingActive && !!effectiveDeadline?.is_past_deadline && !!effectiveDeadline?.is_submission_open;
+  const lateWarning =
+    typeof hoursUntilDeadline === "number" && hoursUntilDeadline < 0
+      ? `Submitting now will mark items late (${Math.abs(hoursUntilDeadline).toFixed(1)} hours past the deadline).`
+      : "";
   const canCreateNewItem = submissionOpen && newTitle.trim().length > 0 && !createBusy && !actionBusy;
 
   const showNewFormResolved = showNewForm && submissionOpen;
@@ -404,6 +489,10 @@ export function AgendaItemsPanel({
     : "";
   const meetingDateLabel = formatMeetingDate(meetingStartsAt, officeTz);
   const meetingHubPath = `/meetings/${meetingId}`;
+
+  function stageScrollToItem(itemId: string) {
+    setPendingScrollId(itemId);
+  }
 
   function buildTaskDescription(item: AgendaItem) {
     const parts: string[] = [];
@@ -443,6 +532,14 @@ export function AgendaItemsPanel({
     return `/tasks?${params.toString()}`;
   }
 
+  function applyItemUpdate(updated: AgendaItem) {
+    setItems((prev) => {
+      const exists = prev.some((item) => item.id === updated.id);
+      if (!exists) return [updated, ...prev];
+      return prev.map((item) => (item.id === updated.id ? updated : item));
+    });
+  }
+
   function handleCreateTask(item: AgendaItem) {
     window.location.href = buildTaskPrefillUrl(item);
   }
@@ -467,19 +564,22 @@ export function AgendaItemsPanel({
     setCreateBusy(true);
     setStatus(submitImmediately ? "Submitting..." : "Creating...");
     try {
-      await fetchJson(`/api/meetings/${encodeURIComponent(meetingId)}/agenda-items`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: newTitle.trim(),
-          category: newCategory,
-          background: newBackground.trim() || null,
-          recommended_motion: newMotion.trim() || null,
-          fiscal_impact: newFiscal.trim() || null,
-          attachments_json: parseAttachmentsInput(newAttachments),
-          submit_immediately: submitImmediately,
-        }),
-      });
+      const { item } = await fetchJson<{ item: AgendaItem }>(
+        `/api/meetings/${encodeURIComponent(meetingId)}/agenda-items`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title: newTitle.trim(),
+            category: newCategory,
+            background: newBackground.trim() || null,
+            recommended_motion: newMotion.trim() || null,
+            fiscal_impact: newFiscal.trim() || null,
+            attachments_json: parseAttachmentsInput(newAttachments),
+            submit_immediately: submitImmediately,
+          }),
+        },
+      );
 
       setStatus(submitImmediately ? "Submitted for review." : "Draft saved.");
       toast.success(submitImmediately ? "Agenda item submitted" : "Agenda item drafted");
@@ -490,6 +590,10 @@ export function AgendaItemsPanel({
       setNewFiscal("");
       setNewAttachments("");
       setShowNewForm(false);
+      if (item?.id) {
+        applyItemUpdate(item);
+        stageScrollToItem(item.id);
+      }
       await reload();
     } catch (err) {
       const msg = formatAgendaError(err instanceof Error ? err.message : "Failed to create");
@@ -517,6 +621,11 @@ export function AgendaItemsPanel({
 
   function cancelEdit() {
     setEditingId(null);
+    setEditTitle("");
+    setEditCategory("");
+    setEditBackground("");
+    setEditMotion("");
+    setEditFiscal("");
     setEditAttachments("");
   }
 
@@ -546,7 +655,7 @@ export function AgendaItemsPanel({
     setActionBusy(`update:${itemId}`);
     setStatus("Updating...");
     try {
-      await fetchJson(
+      const { item } = await fetchJson<{ item: AgendaItem }>(
         `/api/meetings/${encodeURIComponent(meetingId)}/agenda-items/${encodeURIComponent(itemId)}`,
         {
           method: "PATCH",
@@ -565,6 +674,10 @@ export function AgendaItemsPanel({
       setStatus("Draft updated.");
       toast.success("Agenda item updated");
       setEditingId(null);
+      if (item?.id) {
+        applyItemUpdate(item);
+        stageScrollToItem(item.id);
+      }
       await reload();
     } catch (err) {
       const msg = formatAgendaError(err instanceof Error ? err.message : "Failed to update");
@@ -585,21 +698,26 @@ export function AgendaItemsPanel({
       return;
     }
 
-    if (!confirm("Submit this item for review? You can still make edits before it is accepted.")) {
-      return;
-    }
+    const confirmMessage = lateWarning
+      ? `Submit this item for review? You can still make edits before it is accepted.\n\n${lateWarning}`
+      : "Submit this item for review? You can still make edits before it is accepted.";
+    if (!confirm(confirmMessage)) return;
 
     if (actionBusy) return;
     setActionBusy(`submit:${itemId}`);
     setStatus("Submitting...");
     try {
-      await fetchJson(
+      const { item } = await fetchJson<{ item: AgendaItem }>(
         `/api/meetings/${encodeURIComponent(meetingId)}/agenda-items/${encodeURIComponent(itemId)}/submit`,
         { method: "POST" },
       );
 
       setStatus("");
       toast.success("Agenda item submitted");
+      if (item?.id) {
+        applyItemUpdate(item);
+        stageScrollToItem(item.id);
+      }
       await reload();
     } catch (err) {
       const msg = formatAgendaError(err instanceof Error ? err.message : "Failed to submit");
@@ -615,19 +733,28 @@ export function AgendaItemsPanel({
       setStatus(meetingStatusNotice || "Submissions are disabled for this meeting.");
       return;
     }
-    if (!confirm("Withdraw this item?")) return;
+    if (
+      !confirm(
+        "Withdraw this item? It will be marked withdrawn and removed from review. You will need to submit a new item to be considered again.",
+      )
+    )
+      return;
 
     if (actionBusy) return;
     setActionBusy(`withdraw:${itemId}`);
     setStatus("Withdrawing...");
     try {
-      await fetchJson(
+      const { item } = await fetchJson<{ item: AgendaItem }>(
         `/api/meetings/${encodeURIComponent(meetingId)}/agenda-items/${encodeURIComponent(itemId)}`,
         { method: "DELETE" },
       );
 
       setStatus("");
       toast.success("Agenda item withdrawn");
+      if (item?.id) {
+        applyItemUpdate(item);
+        stageScrollToItem(item.id);
+      }
       await reload();
     } catch (err) {
       const msg = formatAgendaError(err instanceof Error ? err.message : "Failed to withdraw");
@@ -656,7 +783,7 @@ export function AgendaItemsPanel({
     setActionBusy(`review:${itemId}`);
     setStatus("Reviewing...");
     try {
-      await fetchJson(
+      const { item } = await fetchJson<{ item: AgendaItem }>(
         `/api/meetings/${encodeURIComponent(meetingId)}/agenda-items/${encodeURIComponent(itemId)}/review`,
         {
           method: "POST",
@@ -667,6 +794,10 @@ export function AgendaItemsPanel({
 
       setStatus("");
       toast.success(`Agenda item ${reviewToast}`);
+      if (item?.id) {
+        applyItemUpdate(item);
+        stageScrollToItem(item.id);
+      }
       await reload();
     } catch (err) {
       const msg = formatAgendaError(err instanceof Error ? err.message : "Failed to review");
@@ -740,11 +871,13 @@ export function AgendaItemsPanel({
       setStatus(meetingStatusNotice || "Updates are disabled for this meeting.");
       return;
     }
+    const confirmLabel = nextValue ? "Mark this item late for compliance tracking?" : "Clear the late flag?";
+    if (!confirm(confirmLabel)) return;
     if (actionBusy) return;
     setActionBusy(`late:${itemId}`);
     setStatus(nextValue ? "Marking item late..." : "Clearing late flag...");
     try {
-      await fetchJson(
+      const { item } = await fetchJson<{ item: AgendaItem }>(
         `/api/meetings/${encodeURIComponent(meetingId)}/agenda-items/${encodeURIComponent(itemId)}`,
         {
           method: "PATCH",
@@ -754,6 +887,10 @@ export function AgendaItemsPanel({
       );
       setStatus("");
       toast.success(nextValue ? "Agenda item marked late" : "Late flag cleared");
+      if (item?.id) {
+        applyItemUpdate(item);
+        stageScrollToItem(item.id);
+      }
       await reload();
     } catch (err) {
       const msg = formatAgendaError(err instanceof Error ? err.message : "Failed to update late flag");
@@ -823,6 +960,12 @@ export function AgendaItemsPanel({
     agendaLateOnly ||
     agendaSort !== agendaSortDefault;
 
+  useEffect(() => {
+    if (agendaFiltersActive) {
+      setFiltersOpen(true);
+    }
+  }, [agendaFiltersActive]);
+
   const agendaSummary = useMemo(() => {
     const total = items.length;
     const submitted = items.filter((i) => i.state === "submitted").length;
@@ -830,6 +973,15 @@ export function AgendaItemsPanel({
     const late = items.filter((i) => i.is_late).length;
     return { total, submitted, accepted, late };
   }, [items]);
+
+  const statusLegend = [
+    { state: "draft", label: "Draft", description: "Saved by you, not yet submitted." },
+    { state: "submitted", label: "Submitted", description: "Pending admin review." },
+    { state: "accepted", label: "Accepted", description: "Approved and added to the agenda." },
+    { state: "rejected", label: "Rejected", description: "Not added to the agenda." },
+    { state: "tabled", label: "Tabled", description: "Deferred for later discussion." },
+    { state: "withdrawn", label: "Withdrawn", description: "Removed by submitter." },
+  ];
 
   function resetAgendaFilters() {
     setAgendaSearch("");
@@ -847,7 +999,8 @@ export function AgendaItemsPanel({
         if (agendaCategoryFilter !== "all" && item.category !== agendaCategoryFilter) return false;
         if (agendaLateOnly && !item.is_late) return false;
         if (!query) return true;
-        const haystack = `${item.title} ${item.background ?? ""} ${item.recommended_motion ?? ""}`.toLowerCase();
+        const haystack =
+          `${item.title} ${item.background ?? ""} ${item.recommended_motion ?? ""} ${item.fiscal_impact ?? ""}`.toLowerCase();
         return haystack.includes(query);
       });
 
@@ -956,6 +1109,21 @@ export function AgendaItemsPanel({
     }
   }
 
+  async function handleCopyPreview() {
+    if (!copyPreview) return;
+    const ok = await copyTextWithFallback(copyPreview.text, {
+      promptLabel: `Copy ${copyPreview.label}`,
+    });
+    if (ok) {
+      setStatus(`${copyPreview.label} copied.`);
+      toast.success(`${copyPreview.label} copied`);
+    } else {
+      const msg = "Clipboard blocked. Use the prompt to copy.";
+      setStatus(msg);
+      toast.info(msg);
+    }
+  }
+
   function handleDownloadCsv() {
     if (exportItems.length === 0) {
       setStatus("No agenda items to export.");
@@ -1033,42 +1201,55 @@ export function AgendaItemsPanel({
               {lateSubmissionsAllowed ? "Late submissions" : submissionOpen ? "Open" : "Closed"}
             </span>
           </div>
-          <div className="mt-3 space-y-2 text-sm">
-            <div>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <div className="rounded-md border border-foreground/10 bg-background px-3 py-2">
               <div className="text-xs text-foreground/70">Submission deadline</div>
-              <div className="text-sm">
+              <div className="text-sm font-medium">
                 {formatDeadline(effectiveDeadline?.submission_deadline, officeTz)}
                 {effectiveDeadline?.is_special ? " (Special Meeting)" : ""}
               </div>
+              {typeof hoursUntilDeadline === "number" ? (
+                <div className="mt-1 text-xs text-foreground/60">
+                  {hoursUntilDeadline >= 0
+                    ? `${hoursUntilDeadline.toFixed(1)} hours left to submit`
+                    : `${Math.abs(hoursUntilDeadline).toFixed(1)} hours past the deadline`}
+                </div>
+              ) : null}
             </div>
-            <div>
+            <div className="rounded-md border border-foreground/10 bg-background px-3 py-2">
               <div className="text-xs text-foreground/70">Agenda posting deadline</div>
-              <div className="text-sm">{formatDeadline(effectiveDeadline?.posting_deadline, officeTz)}</div>
+              <div className="text-sm font-medium">{formatDeadline(effectiveDeadline?.posting_deadline, officeTz)}</div>
+              <div className="mt-1 text-xs text-foreground/60">Posting time for compliance.</div>
             </div>
-            {typeof hoursUntilDeadline === "number" ? (
-              <div className="text-xs text-foreground/70">
-                {hoursUntilDeadline >= 0
-                  ? `${hoursUntilDeadline.toFixed(1)} hours left to submit`
-                  : `${Math.abs(hoursUntilDeadline).toFixed(1)} hours past the deadline`}
-              </div>
-            ) : null}
+          </div>
           {lateSubmissionsAllowed ? (
-            <div className="text-xs text-foreground/70">
+            <div className="mt-2 text-xs text-foreground/70">
               Late submissions are allowed. Items will be marked late.
             </div>
           ) : null}
-          <div className="text-xs text-foreground/60">
-            States: Draft = saved by you. Submitted = pending admin review. Accepted = on agenda. Rejected/Withdrawn = not
-            on agenda.
-          </div>
-          <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
-            {(["draft", "submitted", "accepted", "rejected", "tabled", "withdrawn"] as const).map((state) => (
-              <span key={state} className={`rounded px-2 py-0.5 ${stateColor(state)}`}>
-                {formatState(state)}
-              </span>
+          <div className="mt-3 text-xs font-medium text-foreground/70">Status legend</div>
+          <div className="mt-2 grid gap-2 sm:grid-cols-2">
+            {statusLegend.map((item) => (
+              <div key={item.state} className="flex items-start gap-2 rounded-md border border-foreground/10 px-2 py-1">
+                <span className={`mt-0.5 flex h-6 w-6 items-center justify-center rounded ${stateColor(item.state)}`}>
+                  {stateIcon(item.state)}
+                </span>
+                <div>
+                  <div className="text-xs font-medium">{item.label}</div>
+                  <div className="text-[11px] text-foreground/60">{item.description}</div>
+                </div>
+              </div>
             ))}
+            <div className="flex items-start gap-2 rounded-md border border-foreground/10 px-2 py-1">
+              <span className="mt-0.5 flex h-6 w-6 items-center justify-center rounded bg-orange-100 text-orange-700">
+                <IconAlert className="h-3 w-3" />
+              </span>
+              <div>
+                <div className="text-xs font-medium">Late</div>
+                <div className="text-[11px] text-foreground/60">Submitted after the deadline.</div>
+              </div>
+            </div>
           </div>
-        </div>
         </div>
 
         <div className="rounded-lg border border-foreground/10 p-4">
@@ -1100,6 +1281,13 @@ export function AgendaItemsPanel({
               <summary className="cursor-pointer text-xs font-medium text-foreground/70">
                 Preview: {copyPreview.label}
               </summary>
+              <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                <span className="text-[11px] text-foreground/60">Need to copy again?</span>
+                <Button variant="ghost" size="sm" onClick={handleCopyPreview}>
+                  <IconCopy className="h-3.5 w-3.5" />
+                  Copy to clipboard
+                </Button>
+              </div>
               <pre className="mt-2 max-h-48 whitespace-pre-wrap text-xs text-foreground/70">
                 {copyPreview.text}
               </pre>
@@ -1113,130 +1301,158 @@ export function AgendaItemsPanel({
         </div>
       </div>
 
-      <details id="agenda-filters" className="rounded-lg border border-foreground/10 p-4 scroll-mt-24">
-        <summary className="cursor-pointer text-sm font-medium">Filters & export</summary>
-        <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-          <label className="space-y-1 text-xs text-foreground/70 sm:col-span-2">
-            <span>Search</span>
-            <input
-              type="search"
-              className="h-9 w-full rounded border border-foreground/20 bg-background px-2 text-sm"
-              value={agendaSearch}
-              onChange={(e: ChangeEvent<HTMLInputElement>) => setAgendaSearch(e.target.value)}
-              placeholder="Title, background, motion..."
-            />
-          </label>
-          <label className="space-y-1 text-xs text-foreground/70">
-            <span>State</span>
-            <select
-              className="h-9 w-full rounded border border-foreground/20 bg-background px-2 text-sm"
-              value={agendaStateFilter}
-              onChange={(e) => setAgendaStateFilter(e.target.value)}
-            >
-              <option value="all">All</option>
-              <option value="draft">Draft</option>
-              <option value="submitted">Submitted</option>
-              <option value="accepted">Accepted</option>
-              <option value="rejected">Rejected</option>
-              <option value="tabled">Tabled</option>
-              <option value="withdrawn">Withdrawn</option>
-            </select>
-          </label>
-          {showAdvancedFilters ? (
-            <>
-              <label className="space-y-1 text-xs text-foreground/70">
-                <span>Category</span>
-                <select
-                  className="h-9 w-full rounded border border-foreground/20 bg-background px-2 text-sm"
-                  value={agendaCategoryFilter}
-                  onChange={(e) => setAgendaCategoryFilter(e.target.value)}
-                >
-                  <option value="all">All</option>
-                  <option value="action">Action</option>
-                  <option value="discussion">Discussion</option>
-                  <option value="information">Information</option>
-                  <option value="consent">Consent</option>
-                  <option value="other">Other</option>
-                </select>
-              </label>
-              <label className="space-y-1 text-xs text-foreground/70">
-                <span>Sort</span>
-                <select
-                  className="h-9 w-full rounded border border-foreground/20 bg-background px-2 text-sm"
-                  value={agendaSort}
-                  onChange={(e) => setAgendaSort(e.target.value as "agenda" | "recent" | "title")}
-                >
-                  {isAdmin ? <option value="agenda">Agenda order</option> : null}
-                  <option value="recent">Most recent</option>
-                  <option value="title">Title</option>
-                </select>
-              </label>
-            </>
-          ) : null}
-        </div>
-        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-foreground/70">
-          <Button variant="ghost" size="sm" onClick={() => setShowAdvancedFilters((prev) => !prev)}>
-            {showAdvancedFilters ? "Hide advanced filters" : "Advanced filters"}
-          </Button>
-          {showAdvancedFilters ? (
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={agendaLateOnly}
-                onChange={(e) => setAgendaLateOnly(e.target.checked)}
-              />
-              Late only
-            </label>
-          ) : null}
-        </div>
-        <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-foreground/70">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-foreground/50">Quick filters</span>
-            <Button
-              variant={agendaStateFilter === "submitted" ? "default" : "ghost"}
-              size="sm"
-              aria-pressed={agendaStateFilter === "submitted"}
-              onClick={() => {
-                setAgendaStateFilter("submitted");
-                setAgendaLateOnly(false);
-              }}
-            >
-              Submitted ({agendaSummary.submitted})
-            </Button>
-            <Button
-              variant={agendaStateFilter === "accepted" ? "default" : "ghost"}
-              size="sm"
-              aria-pressed={agendaStateFilter === "accepted"}
-              onClick={() => {
-                setAgendaStateFilter("accepted");
-                setAgendaLateOnly(false);
-              }}
-            >
-              Accepted ({agendaSummary.accepted})
-            </Button>
-            <Button
-              variant={agendaLateOnly ? "default" : "ghost"}
-              size="sm"
-              aria-pressed={agendaLateOnly}
-              onClick={() => setAgendaLateOnly((prev) => !prev)}
-            >
-              Late ({agendaSummary.late})
+      <section id="agenda-filters" className="rounded-lg border border-foreground/10 p-4 scroll-mt-24">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <div className="text-sm font-medium">Filters & export</div>
+            <div className="text-xs text-foreground/60">
+              Filter by status, category, and keywords before exporting.
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            {agendaFiltersActive ? <span className="text-xs text-foreground/60">Filters active</span> : null}
+            <Button variant="ghost" size="sm" onClick={() => setFiltersOpen((prev) => !prev)}>
+              {filtersOpen ? (
+                <>
+                  <IconChevronUp className="h-3.5 w-3.5" />
+                  Hide filters
+                </>
+              ) : (
+                <>
+                  <IconChevronDown className="h-3.5 w-3.5" />
+                  Show filters
+                </>
+              )}
             </Button>
           </div>
-          <Button variant="ghost" size="sm" onClick={resetAgendaFilters} disabled={!agendaFiltersActive}>
-            Reset filters
-          </Button>
         </div>
-        <div className="mt-2 text-xs text-foreground/60">
-          Filtered {filteredSummary.total} • Draft {filteredSummary.draft} • Submitted {filteredSummary.submitted} •
-          Accepted {filteredSummary.accepted} • Late {filteredSummary.late}
-        </div>
-        <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-foreground/70">
-          <span className="rounded bg-foreground/5 px-2 py-0.5">Draft {filteredSummary.draft}</span>
-          <span className="rounded bg-foreground/5 px-2 py-0.5">Submitted {filteredSummary.submitted}</span>
-          <span className="rounded bg-foreground/5 px-2 py-0.5">Accepted {filteredSummary.accepted}</span>
-        </div>
-      </details>
+
+        {filtersOpen ? (
+          <>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+              <label className="space-y-1 text-xs text-foreground/70 sm:col-span-2">
+                <span>Search</span>
+                <input
+                  type="search"
+                  className="h-9 w-full rounded border border-foreground/20 bg-background px-2 text-sm"
+                  value={agendaSearch}
+                  onChange={(e: ChangeEvent<HTMLInputElement>) => setAgendaSearch(e.target.value)}
+                  placeholder="Title, background, motion, or fiscal impact..."
+                />
+              </label>
+              <label className="space-y-1 text-xs text-foreground/70">
+                <span>State</span>
+                <select
+                  className="h-9 w-full rounded border border-foreground/20 bg-background px-2 text-sm"
+                  value={agendaStateFilter}
+                  onChange={(e) => setAgendaStateFilter(e.target.value)}
+                >
+                  <option value="all">All</option>
+                  <option value="draft">Draft</option>
+                  <option value="submitted">Submitted</option>
+                  <option value="accepted">Accepted</option>
+                  <option value="rejected">Rejected</option>
+                  <option value="tabled">Tabled</option>
+                  <option value="withdrawn">Withdrawn</option>
+                </select>
+              </label>
+              {showAdvancedFilters ? (
+                <>
+                  <label className="space-y-1 text-xs text-foreground/70">
+                    <span>Category</span>
+                    <select
+                      className="h-9 w-full rounded border border-foreground/20 bg-background px-2 text-sm"
+                      value={agendaCategoryFilter}
+                      onChange={(e) => setAgendaCategoryFilter(e.target.value)}
+                    >
+                      <option value="all">All</option>
+                      <option value="action">Action</option>
+                      <option value="discussion">Discussion</option>
+                      <option value="information">Information</option>
+                      <option value="consent">Consent</option>
+                      <option value="other">Other</option>
+                    </select>
+                  </label>
+                  <label className="space-y-1 text-xs text-foreground/70">
+                    <span>Sort</span>
+                    <select
+                      className="h-9 w-full rounded border border-foreground/20 bg-background px-2 text-sm"
+                      value={agendaSort}
+                      onChange={(e) => setAgendaSort(e.target.value as "agenda" | "recent" | "title")}
+                    >
+                      {isAdmin ? <option value="agenda">Agenda order</option> : null}
+                      <option value="recent">Most recent</option>
+                      <option value="title">Title</option>
+                    </select>
+                  </label>
+                </>
+              ) : null}
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-foreground/70">
+              <Button variant="ghost" size="sm" onClick={() => setShowAdvancedFilters((prev) => !prev)}>
+                {showAdvancedFilters ? "Hide advanced filters" : "Advanced filters"}
+              </Button>
+              {showAdvancedFilters ? (
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={agendaLateOnly}
+                    onChange={(e) => setAgendaLateOnly(e.target.checked)}
+                  />
+                  Late only
+                </label>
+              ) : null}
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-foreground/70">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-foreground/50">Quick filters</span>
+                <Button
+                  variant={agendaStateFilter === "submitted" ? "default" : "ghost"}
+                  size="sm"
+                  aria-pressed={agendaStateFilter === "submitted"}
+                  onClick={() => {
+                    setAgendaStateFilter("submitted");
+                    setAgendaLateOnly(false);
+                  }}
+                >
+                  Submitted ({agendaSummary.submitted})
+                </Button>
+                <Button
+                  variant={agendaStateFilter === "accepted" ? "default" : "ghost"}
+                  size="sm"
+                  aria-pressed={agendaStateFilter === "accepted"}
+                  onClick={() => {
+                    setAgendaStateFilter("accepted");
+                    setAgendaLateOnly(false);
+                  }}
+                >
+                  Accepted ({agendaSummary.accepted})
+                </Button>
+                <Button
+                  variant={agendaLateOnly ? "default" : "ghost"}
+                  size="sm"
+                  aria-pressed={agendaLateOnly}
+                  onClick={() => setAgendaLateOnly((prev) => !prev)}
+                >
+                  Late ({agendaSummary.late})
+                </Button>
+              </div>
+              <Button variant="ghost" size="sm" onClick={resetAgendaFilters} disabled={!agendaFiltersActive}>
+                Reset filters
+              </Button>
+            </div>
+            <div className="mt-2 text-xs text-foreground/60">
+              Filtered {filteredSummary.total} • Draft {filteredSummary.draft} • Submitted {filteredSummary.submitted} •
+              Accepted {filteredSummary.accepted} • Late {filteredSummary.late}
+            </div>
+            <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-foreground/70">
+              <span className="rounded bg-foreground/5 px-2 py-0.5">Draft {filteredSummary.draft}</span>
+              <span className="rounded bg-foreground/5 px-2 py-0.5">Submitted {filteredSummary.submitted}</span>
+              <span className="rounded bg-foreground/5 px-2 py-0.5">Accepted {filteredSummary.accepted}</span>
+            </div>
+          </>
+        ) : null}
+      </section>
 
       {meetingActive ? (
         <div className="rounded-lg border border-foreground/10 p-4">
@@ -1269,9 +1485,12 @@ export function AgendaItemsPanel({
                     type="text"
                     value={newTitle}
                     onChange={(e: ChangeEvent<HTMLInputElement>) => setNewTitle(e.target.value)}
-                    placeholder="Agenda item title"
+                    placeholder="e.g., Approve funding for Spring Welcome event"
                     className="w-full rounded border border-foreground/20 bg-background px-2 py-2 text-sm"
                   />
+                  <div className="mt-1 text-[11px] text-foreground/60">
+                    Keep it short and action-oriented so reviewers can scan quickly.
+                  </div>
                 </div>
 
                 <div>
@@ -1290,17 +1509,15 @@ export function AgendaItemsPanel({
                 </div>
               </div>
 
-              <details className="rounded-md border border-foreground/10 bg-foreground/5 px-3 py-2" open>
-                <summary className="cursor-pointer text-xs font-medium text-foreground/70">
-                  Add details (optional)
-                </summary>
+              <div className="rounded-md border border-foreground/10 bg-foreground/5 px-3 py-2">
+                <div className="text-xs font-medium text-foreground/70">Details (optional)</div>
                 <div className="mt-3 grid gap-3 sm:grid-cols-2">
                   <div className="sm:col-span-2">
                     <label className="mb-1 block text-xs text-foreground/70">Background</label>
                     <textarea
                       value={newBackground}
                       onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setNewBackground(e.target.value)}
-                      placeholder="Context and background information..."
+                      placeholder="Provide context, prior decisions, or history relevant to this item."
                       rows={3}
                       className="w-full rounded border border-foreground/20 bg-background px-2 py-2 text-sm"
                     />
@@ -1311,7 +1528,7 @@ export function AgendaItemsPanel({
                     <textarea
                       value={newMotion}
                       onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setNewMotion(e.target.value)}
-                      placeholder="Motion language if this is an action item..."
+                      placeholder="e.g., Move to allocate $500 from the ASGC budget for Spring Welcome."
                       rows={2}
                       className="w-full rounded border border-foreground/20 bg-background px-2 py-2 text-sm"
                     />
@@ -1323,7 +1540,7 @@ export function AgendaItemsPanel({
                       type="text"
                       value={newFiscal}
                       onChange={(e: ChangeEvent<HTMLInputElement>) => setNewFiscal(e.target.value)}
-                      placeholder="e.g., $500 from ASGC Budget"
+                      placeholder="e.g., $500 from ASGC budget (Account 1234)"
                       className="w-full rounded border border-foreground/20 bg-background px-2 py-2 text-sm"
                     />
                   </div>
@@ -1337,15 +1554,21 @@ export function AgendaItemsPanel({
                       inputMode="url"
                       autoCapitalize="none"
                       autoCorrect="off"
-                      placeholder="One URL per line"
+                      placeholder="https://example.com/quote.pdf (one URL per line)"
                       rows={2}
                       className="w-full rounded border border-foreground/20 bg-background px-2 py-2 text-sm"
                     />
                   </div>
                 </div>
-              </details>
+                <div className="mt-2 text-[11px] text-foreground/60">
+                  Add links to budgets, quotes, or supporting docs. One URL per line.
+                </div>
+              </div>
 
               <div className="sticky bottom-0 -mx-4 border-t border-foreground/10 bg-background/95 px-4 py-2 backdrop-blur">
+                {lateWarning ? (
+                  <div className="mb-2 text-xs text-amber-700">{lateWarning}</div>
+                ) : null}
                 <div className="flex flex-wrap justify-end gap-2">
                   <Button
                     type="submit"
@@ -1381,6 +1604,9 @@ export function AgendaItemsPanel({
         <h3 className="mb-3 text-sm font-medium">
           My Submissions ({filteredMyItems.length} of {myItems.length})
         </h3>
+        <div className="mb-2 text-xs text-foreground/60">
+          Drafts stay private until you submit them for review.
+        </div>
         {filteredMyItems.length === 0 ? (
           <div className="text-sm text-foreground/70">
             {agendaFiltersActive ? "No submissions match the current filters." : "You have not submitted any items for this meeting."}
@@ -1390,8 +1616,11 @@ export function AgendaItemsPanel({
             {filteredMyItems.map((item) => (
               <div
                 key={item.id}
-                id={!isAdmin ? `agenda-item-${item.id}` : undefined}
-                className="rounded-lg border border-foreground/10 p-4"
+                id={isAdmin ? `agenda-item-my-${item.id}` : `agenda-item-${item.id}`}
+                tabIndex={-1}
+                className={`rounded-lg border border-foreground/10 p-4 ${
+                  highlightedItemId === item.id ? "ring-1 ring-primary/40 bg-foreground/5" : ""
+                }`}
               >
                 {editingId === item.id ? (
                   <form onSubmit={(e) => handleUpdate(e, item.id)} className="space-y-3">
@@ -1415,14 +1644,14 @@ export function AgendaItemsPanel({
                     <textarea
                       value={editBackground}
                       onChange={(e) => setEditBackground(e.target.value)}
-                      placeholder="Background"
+                      placeholder="Provide context, prior decisions, or history relevant to this item."
                       rows={2}
                       className="w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
                     />
                     <textarea
                       value={editMotion}
                       onChange={(e) => setEditMotion(e.target.value)}
-                      placeholder="Recommended Motion"
+                      placeholder="e.g., Move to allocate $500 from the ASGC budget for Spring Welcome."
                       rows={2}
                       className="w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
                     />
@@ -1430,7 +1659,7 @@ export function AgendaItemsPanel({
                       type="text"
                       value={editFiscal}
                       onChange={(e) => setEditFiscal(e.target.value)}
-                      placeholder="Fiscal Impact"
+                      placeholder="e.g., $500 from ASGC budget (Account 1234)"
                       className="w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
                     />
                     <textarea
@@ -1440,7 +1669,7 @@ export function AgendaItemsPanel({
                       inputMode="url"
                       autoCapitalize="none"
                       autoCorrect="off"
-                      placeholder="Supporting documents (one URL per line)"
+                      placeholder="https://example.com/quote.pdf (one URL per line)"
                       rows={2}
                       className="w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
                     />
@@ -1472,14 +1701,19 @@ export function AgendaItemsPanel({
                           <span className="rounded bg-foreground/5 px-1.5 py-0.5">
                             {formatCategory(item.category)}
                           </span>
-                          <span className={`rounded px-1.5 py-0.5 ${stateColor(item.state)}`}>
+                          <span
+                            className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 ${stateColor(item.state)}`}
+                            title={formatState(item.state)}
+                          >
+                            {stateIcon(item.state)}
                             {formatState(item.state)}
                           </span>
                           {item.is_late ? (
                             <span
-                              className="rounded bg-orange-100 px-1.5 py-0.5 text-orange-700"
+                              className="inline-flex items-center gap-1 rounded bg-orange-100 px-1.5 py-0.5 text-orange-700"
                               title="Submitted after the deadline"
                             >
+                              <IconAlert className="h-3 w-3" />
                               Late
                             </span>
                           ) : null}
@@ -1526,6 +1760,9 @@ export function AgendaItemsPanel({
                     {/* Actions for own items */}
                     {item.state === "draft" || item.state === "submitted" ? (
                       <div className="mt-3 flex flex-wrap gap-2">
+                        {item.state === "draft" && lateWarning ? (
+                          <div className="w-full text-xs text-amber-700">{lateWarning}</div>
+                        ) : null}
                         <Button
                           type="button"
                           size="sm"
@@ -1547,9 +1784,13 @@ export function AgendaItemsPanel({
                             size="sm"
                             onClick={() => handleSubmit(item.id)}
                             disabled={!submissionOpen || !!actionBusy}
-                            title={submissionOpen ? "Submit for admin review to be added to the agenda." : "Submission deadline has passed"}
+                            title={
+                              submissionOpen
+                                ? "Submit for admin review to be added to the agenda."
+                                : "Submission deadline has passed"
+                            }
                           >
-                            Submit
+                            Submit for review
                           </Button>
                         ) : null}
                         <Button
@@ -1558,22 +1799,28 @@ export function AgendaItemsPanel({
                           size="sm"
                           onClick={() => handleWithdraw(item.id)}
                           disabled={!!actionBusy}
+                          title="Withdrawn items are removed from review and cannot be edited."
                         >
                           Withdraw
                         </Button>
                       </div>
                     ) : null}
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleCreateTask(item)}
-                        title="Create a task with a link back to this agenda item."
-                      >
-                        <IconPlus className="h-3.5 w-3.5" />
-                        {item.fiscal_impact ? "Create finance task" : "Create task"}
-                      </Button>
+                    <div className="mt-3 space-y-1">
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleCreateTask(item)}
+                          title="Create a task with a link back to this agenda item."
+                        >
+                          <IconPlus className="h-3.5 w-3.5" />
+                          {item.fiscal_impact ? "Create finance task" : "Create task"}
+                        </Button>
+                      </div>
+                      <div className="text-xs text-foreground/60">
+                        Opens Tasks with this agenda item pre-filled.
+                      </div>
                     </div>
                   </>
                 )}
@@ -1650,20 +1897,26 @@ export function AgendaItemsPanel({
                 const isAgendaItem = item.state === "accepted" || item.state === "tabled";
                 const canMoveUp = agendaIndex > 0;
                 const canMoveDown = agendaIndex >= 0 && agendaIndex < orderedAgendaItems.length - 1;
+                const isSelectable = item.state === "submitted";
                 return (
-                  <div key={item.id} id={`agenda-item-${item.id}`} className="rounded-lg border border-foreground/10 p-4">
+                  <div
+                    key={item.id}
+                    id={`agenda-item-${item.id}`}
+                    tabIndex={-1}
+                    className={`rounded-lg border border-foreground/10 p-4 ${
+                      highlightedItemId === item.id ? "ring-1 ring-primary/40 bg-foreground/5" : ""
+                    }`}
+                  >
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div className="flex items-start gap-2">
                       <input
                         type="checkbox"
-                        className="mt-1"
+                        className={`mt-1 ${isSelectable ? "" : "opacity-50"}`}
                         checked={!!selectedAdminItems[item.id]}
                         onChange={() => toggleAdminSelection(item.id)}
-                        disabled={item.state !== "submitted" || !!actionBusy}
+                        disabled={!isSelectable || !!actionBusy}
                         title={
-                          item.state === "submitted"
-                            ? "Select for bulk review"
-                            : "Only submitted items can be selected"
+                          isSelectable ? "Select for bulk review" : "Only submitted items can be selected"
                         }
                       />
                       <div>
@@ -1672,18 +1925,28 @@ export function AgendaItemsPanel({
                           <span className="rounded bg-foreground/5 px-1.5 py-0.5">
                             {formatCategory(item.category)}
                           </span>
-                          <span className={`rounded px-1.5 py-0.5 ${stateColor(item.state)}`}>
+                          <span
+                            className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 ${stateColor(item.state)}`}
+                            title={formatState(item.state)}
+                          >
+                            {stateIcon(item.state)}
                             {formatState(item.state)}
                           </span>
                           {item.is_late ? (
                             <span
-                              className="rounded bg-orange-100 px-1.5 py-0.5 text-orange-700"
+                              className="inline-flex items-center gap-1 rounded bg-orange-100 px-1.5 py-0.5 text-orange-700"
                               title="Submitted after the deadline"
                             >
+                              <IconAlert className="h-3 w-3" />
                               Late
                             </span>
                           ) : null}
                         </div>
+                        {!isSelectable ? (
+                          <div className="mt-1 text-[11px] text-foreground/50">
+                            Not selectable until submitted.
+                          </div>
+                        ) : null}
                       </div>
                     </div>
                   </div>
@@ -1724,72 +1987,86 @@ export function AgendaItemsPanel({
                     </div>
                   ) : null}
 
-                  {/* Admin review buttons */}
+                  {/* Admin actions */}
                   <div className="mt-3 flex flex-wrap gap-2">
-                    {item.state === "submitted" ? (
-                      <>
-                        <Button
-                          type="button"
-                          size="sm"
-                          onClick={() => handleReview(item.id, "accepted")}
-                          disabled={!!actionBusy}
-                        >
-                          Accept
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button type="button" variant="outline" size="sm" disabled={!!actionBusy}>
+                          Review actions
+                          <IconChevronDown className="h-3.5 w-3.5" />
                         </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleReview(item.id, "rejected")}
-                          disabled={!!actionBusy}
-                        >
-                          Reject
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleReview(item.id, "tabled")}
-                          disabled={!!actionBusy}
-                        >
-                          Table
-                        </Button>
-                      </>
-                    ) : null}
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => void handleLateOverride(item.id, !item.is_late)}
-                      disabled={!!actionBusy}
-                      title={item.is_late ? "Clear the late flag for compliance tracking." : "Mark as late for compliance tracking."}
-                    >
-                      {item.is_late ? "Clear late" : "Mark late"}
-                    </Button>
-                    {agendaSort === "agenda" && isAgendaItem ? (
-                      <>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => void handleMoveAgendaItem(item.id, -1)}
-                          disabled={!canMoveUp || !!actionBusy}
-                          title="Move up in the final agenda order."
-                        >
-                          Move up
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => void handleMoveAgendaItem(item.id, 1)}
-                          disabled={!canMoveDown || !!actionBusy}
-                          title="Move down in the final agenda order."
-                        >
-                          Move down
-                        </Button>
-                      </>
-                    ) : null}
+                      </PopoverTrigger>
+                      <PopoverContent align="end" className="w-60 p-2">
+                        <div className="space-y-2 text-xs text-foreground/70">
+                          <div className="text-[0.65rem] font-semibold uppercase tracking-wide text-foreground/50">
+                            Review
+                          </div>
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={() => handleReview(item.id, "accepted")}
+                            disabled={!isSelectable || !!actionBusy}
+                          >
+                            Accept
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleReview(item.id, "rejected")}
+                            disabled={!isSelectable || !!actionBusy}
+                          >
+                            Reject
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleReview(item.id, "tabled")}
+                            disabled={!isSelectable || !!actionBusy}
+                          >
+                            Table
+                          </Button>
+                          <div className="pt-2 text-[0.65rem] font-semibold uppercase tracking-wide text-foreground/50">
+                            Late status
+                          </div>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => void handleLateOverride(item.id, !item.is_late)}
+                            disabled={!!actionBusy}
+                          >
+                            {item.is_late ? "Clear late flag" : "Mark as late"}
+                          </Button>
+                          {agendaSort === "agenda" && isAgendaItem ? (
+                            <>
+                              <div className="pt-2 text-[0.65rem] font-semibold uppercase tracking-wide text-foreground/50">
+                                Agenda order
+                              </div>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={() => void handleMoveAgendaItem(item.id, -1)}
+                                disabled={!canMoveUp || !!actionBusy}
+                              >
+                                Move up
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={() => void handleMoveAgendaItem(item.id, 1)}
+                                disabled={!canMoveDown || !!actionBusy}
+                              >
+                                Move down
+                              </Button>
+                            </>
+                          ) : null}
+                        </div>
+                      </PopoverContent>
+                    </Popover>
                     <Button
                       type="button"
                       variant="outline"
@@ -1800,6 +2077,9 @@ export function AgendaItemsPanel({
                       <IconPlus className="h-3.5 w-3.5" />
                       {item.fiscal_impact ? "Create finance task" : "Create task"}
                     </Button>
+                  </div>
+                  <div className="mt-1 text-xs text-foreground/60">
+                    Opens Tasks with this agenda item pre-filled.
                   </div>
                   </div>
                 );

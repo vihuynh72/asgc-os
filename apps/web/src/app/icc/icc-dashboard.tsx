@@ -286,7 +286,6 @@ export function IccDashboard({
   useEffect(() => {
     if (!selectedMeetingId) return;
     // Fetching data on selection change is a valid use of useEffect
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadAttendance(selectedMeetingId);
   }, [selectedMeetingId]);
 

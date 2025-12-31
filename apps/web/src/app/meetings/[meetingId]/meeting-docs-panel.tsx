@@ -51,11 +51,18 @@ function formatVisibility(value: string): string {
   }
 }
 
+function formatPostedAt(iso: string | null | undefined): string {
+  if (!iso) return "Not posted yet";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "Not posted yet";
+  return d.toLocaleString();
+}
+
 function formatDocErrorMessage(message: string, docLabel?: string): string {
   const lower = message.trim().toLowerCase();
   if (lower.includes("row-level security")) {
     return docLabel
-      ? `You do not have permission to upload ${docLabel}.`
+      ? `You do not have permission to upload ${docLabel}. Check that you have admin access for this committee.`
       : "You do not have permission to complete this action.";
   }
   if (lower.includes("unauthorized")) {
@@ -160,6 +167,8 @@ export function MeetingDocsPanel({
   initialDocs,
   acceptedAgendaCount,
   meetingTitle,
+  agendaPostedAt,
+  minutesPostedAt,
   meetingStatus,
   onDocsChange,
 }: {
@@ -169,6 +178,8 @@ export function MeetingDocsPanel({
   initialDocs: DocRow[];
   acceptedAgendaCount: number;
   meetingTitle?: string | null;
+  agendaPostedAt?: string | null;
+  minutesPostedAt?: string | null;
   meetingStatus: string;
   onDocsChange?: (docs: DocRow[]) => void;
 }) {
@@ -194,6 +205,12 @@ export function MeetingDocsPanel({
   const [agendaDescription, setAgendaDescription] = useState<string>("");
   const [agendaVersionSourceId, setAgendaVersionSourceId] = useState<string>("");
   const [agendaMarkPosted, setAgendaMarkPosted] = useState<boolean>(false);
+  const [agendaPreviewUrl, setAgendaPreviewUrl] = useState<string | null>(null);
+  const [agendaPreviewDocId, setAgendaPreviewDocId] = useState<string | null>(null);
+  const [agendaPreviewError, setAgendaPreviewError] = useState<string>("");
+  const [agendaPreviewLoading, setAgendaPreviewLoading] = useState<boolean>(false);
+  const [agendaPostedAtState, setAgendaPostedAtState] = useState<string | null>(agendaPostedAt ?? null);
+  const [minutesPostedAtState, setMinutesPostedAtState] = useState<string | null>(minutesPostedAt ?? null);
   const meetingIsCancelled = meetingStatus === "cancelled";
   const canEdit = isAdmin && !meetingIsCancelled;
   const canUploadMinutes = canEdit && !!uploadFile && minutesTitle.trim().length > 0 && !minutesUploading;
@@ -212,6 +229,22 @@ export function MeetingDocsPanel({
   useEffect(() => {
     onDocsChange?.(docs);
   }, [docs, onDocsChange]);
+
+  useEffect(() => {
+    setAgendaPostedAtState(agendaPostedAt ?? null);
+  }, [agendaPostedAt]);
+
+  useEffect(() => {
+    setMinutesPostedAtState(minutesPostedAt ?? null);
+  }, [minutesPostedAt]);
+
+  useEffect(() => {
+    if (agendaPreviewDocId && !docs.some((doc) => doc.id === agendaPreviewDocId)) {
+      setAgendaPreviewDocId(null);
+      setAgendaPreviewUrl(null);
+      setAgendaPreviewError("");
+    }
+  }, [agendaPreviewDocId, docs]);
 
   const fallbackVisibility = committeeId ? "committee_only" : "internal";
 
@@ -251,6 +284,12 @@ export function MeetingDocsPanel({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
+      if (type === "agenda" && "agenda_posted_at" in payload) {
+        setAgendaPostedAtState(payload.agenda_posted_at ?? null);
+      }
+      if (type === "minutes" && "minutes_posted_at" in payload) {
+        setMinutesPostedAtState(payload.minutes_posted_at ?? null);
+      }
       toast.success(`${type === "agenda" ? "Agenda" : "Minutes"} marked posted`);
     } catch (err) {
       const raw = err instanceof Error ? err.message : "Failed to mark posted";
@@ -475,6 +514,43 @@ export function MeetingDocsPanel({
     }
   }
 
+  async function handlePreviewAgenda(doc: DocRow) {
+    if (agendaPreviewDocId === doc.id && agendaPreviewUrl) {
+      setAgendaPreviewUrl(null);
+      setAgendaPreviewDocId(null);
+      setAgendaPreviewError("");
+      return;
+    }
+
+    if (doc.mime_type && !doc.mime_type.includes("pdf")) {
+      await handleDownload(doc);
+      return;
+    }
+
+    setAgendaPreviewLoading(true);
+    setAgendaPreviewError("");
+    setStatus("Loading agenda preview...");
+    try {
+      const { signedUrl } = await fetchJson<{ signedUrl: string | null }>(
+        `/api/docs/${encodeURIComponent(doc.id)}`,
+      );
+      if (!signedUrl) {
+        throw new Error("Could not generate preview link");
+      }
+      setAgendaPreviewUrl(signedUrl);
+      setAgendaPreviewDocId(doc.id);
+      setStatus("");
+    } catch (err) {
+      const raw = err instanceof Error ? err.message : "Failed to load preview";
+      const msg = formatDocErrorMessage(raw, "agenda");
+      setAgendaPreviewError(msg);
+      setStatus(msg);
+      toast.error(msg);
+    } finally {
+      setAgendaPreviewLoading(false);
+    }
+  }
+
   async function handleToggleVisibility(doc: DocRow) {
     if (!canEdit) {
       setStatus("Meeting is cancelled. Updates are disabled.");
@@ -554,6 +630,7 @@ export function MeetingDocsPanel({
           <div>
             <div className="text-base font-semibold">Minutes</div>
             <div className="text-xs text-foreground/70">Upload minutes tied to this meeting.</div>
+            <div className="text-xs text-foreground/60">Posted at: {formatPostedAt(minutesPostedAtState)}</div>
           </div>
         </div>
 
@@ -600,6 +677,7 @@ export function MeetingDocsPanel({
                   <textarea
                     value={minutesDescription}
                     onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setMinutesDescription(e.target.value)}
+                    placeholder="e.g., Approved minutes with minor edits"
                     rows={2}
                     className="w-full rounded border border-foreground/20 bg-background px-2 py-2 text-sm"
                   />
@@ -706,6 +784,9 @@ export function MeetingDocsPanel({
                         {formatVisibility(latest.visibility)}
                         {versionCount > 1 ? ` - ${versionCount} versions` : ""}
                       </div>
+                      {latest.description ? (
+                        <div className="text-xs text-foreground/60">{latest.description}</div>
+                      ) : null}
                     </div>
                     {versionCount > 1 ? (
                       <div className="space-y-1 text-xs text-foreground/70">
@@ -718,6 +799,9 @@ export function MeetingDocsPanel({
                             <span>
                               {new Date(doc.created_at).toLocaleString()} • {formatBytes(doc.size_bytes)} • {doc.mime_type ?? "Unknown type"}
                             </span>
+                            {doc.description ? (
+                              <span className="w-full text-[11px] text-foreground/60">{doc.description}</span>
+                            ) : null}
                             <Button type="button" variant="ghost" size="sm" onClick={() => handleDownload(doc)}>
                               <IconDownload className="h-3.5 w-3.5" />
                               Download
@@ -775,6 +859,7 @@ export function MeetingDocsPanel({
             <div className="text-base font-semibold">Agenda documents</div>
             <div className="text-xs text-foreground/70">Upload or generate agendas for public posting.</div>
             <div className="text-xs text-foreground/60">Accepted items: {acceptedAgendaCount}</div>
+            <div className="text-xs text-foreground/60">Posted at: {formatPostedAt(agendaPostedAtState)}</div>
           </div>
           {isAdmin ? (
             <div className="flex flex-wrap items-center gap-2">
@@ -799,11 +884,14 @@ export function MeetingDocsPanel({
                   type="button"
                   variant="ghost"
                   size="sm"
-                  onClick={() => handleDownload(latestAgendaDoc)}
-                  title="Open the latest agenda in a new tab."
+                  onClick={() => void handlePreviewAgenda(latestAgendaDoc)}
+                  title="Preview the latest agenda."
+                  disabled={agendaPreviewLoading}
                 >
                   <IconDownload className="h-3.5 w-3.5" />
-                  Preview latest agenda
+                  {agendaPreviewDocId === latestAgendaDoc.id && agendaPreviewUrl
+                    ? "Hide agenda preview"
+                    : "Preview latest agenda"}
                 </Button>
               ) : null}
             </div>
@@ -812,7 +900,7 @@ export function MeetingDocsPanel({
         {!isAdmin ? (
           <div className="mt-2 text-xs text-foreground/60">
             {acceptedAgendaCount > 0
-              ? "Agenda PDF generation is restricted to admins."
+              ? "Agenda PDF generation is restricted to admins. Contact your committee chair or an admin for help."
               : "No accepted agenda items yet. The agenda PDF will be available once items are accepted by an admin."}
           </div>
         ) : null}
@@ -821,6 +909,36 @@ export function MeetingDocsPanel({
             {meetingIsCancelled
               ? "Agenda generation is disabled for cancelled meetings."
               : "Add at least one accepted agenda item to generate the PDF."}
+          </div>
+        ) : null}
+        {agendaPreviewLoading ? (
+          <div className="mt-2 text-xs text-foreground/60">Loading agenda preview...</div>
+        ) : null}
+        {agendaPreviewError ? (
+          <div className="mt-2 text-xs text-red-600">{agendaPreviewError}</div>
+        ) : null}
+        {agendaPreviewUrl && latestAgendaDoc && agendaPreviewDocId === latestAgendaDoc.id ? (
+          <div className="mt-3 rounded-md border border-foreground/10 bg-foreground/5 p-3">
+            <div className="text-xs font-medium text-foreground/70">Agenda preview</div>
+            <iframe
+              title="Agenda preview"
+              src={agendaPreviewUrl}
+              className="mt-2 h-96 w-full rounded border border-foreground/10"
+            />
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-foreground/70">
+              <a
+                href={agendaPreviewUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="underline underline-offset-2"
+              >
+                Open in new tab
+              </a>
+              <Button type="button" variant="outline" size="sm" onClick={() => handleDownload(latestAgendaDoc)}>
+                <IconDownload className="h-3.5 w-3.5" />
+                Download
+              </Button>
+            </div>
           </div>
         ) : null}
 
@@ -867,6 +985,7 @@ export function MeetingDocsPanel({
                   <textarea
                     value={agendaDescription}
                     onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setAgendaDescription(e.target.value)}
+                    placeholder="e.g., Final agenda before posting"
                     rows={2}
                     className="w-full rounded border border-foreground/20 bg-background px-2 py-2 text-sm"
                   />
@@ -973,6 +1092,9 @@ export function MeetingDocsPanel({
                         {formatVisibility(latest.visibility)}
                         {versionCount > 1 ? ` - ${versionCount} versions` : ""}
                       </div>
+                      {latest.description ? (
+                        <div className="text-xs text-foreground/60">{latest.description}</div>
+                      ) : null}
                     </div>
                     {versionCount > 1 ? (
                       <div className="space-y-1 text-xs text-foreground/70">
@@ -985,6 +1107,9 @@ export function MeetingDocsPanel({
                             <span>
                               {new Date(doc.created_at).toLocaleString()} • {formatBytes(doc.size_bytes)} • {doc.mime_type ?? "Unknown type"}
                             </span>
+                            {doc.description ? (
+                              <span className="w-full text-[11px] text-foreground/60">{doc.description}</span>
+                            ) : null}
                             <Button type="button" variant="ghost" size="sm" onClick={() => handleDownload(doc)}>
                               <IconDownload className="h-3.5 w-3.5" />
                               Download
