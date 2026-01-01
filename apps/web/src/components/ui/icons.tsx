@@ -184,6 +184,16 @@ export function IconFilter(props: IconProps) {
   );
 }
 
+export function IconMenu(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="M3 6h18" />
+      <path d="M3 12h18" />
+      <path d="M3 18h18" />
+    </IconBase>
+  );
+}
+
 export function IconTrash(props: IconProps) {
   return (
     <IconBase {...props}>

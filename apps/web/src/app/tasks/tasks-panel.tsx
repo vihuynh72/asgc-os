@@ -128,6 +128,11 @@ function formatDateInputValue(iso: string | null): string {
   return "";
 }
 
+function dateOnlyFromIso(iso: string | null): string | null {
+  const value = formatDateInputValue(iso);
+  return value ? value : null;
+}
+
 function formatDateOnly(date: Date): string {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -183,18 +188,18 @@ function formatTaskErrorMessage(message: string): string {
 }
 function isTaskOverdue(task: TaskRow): boolean {
   if (!task.due_at || task.status === "done") return false;
-  const due = new Date(task.due_at);
-  if (Number.isNaN(due.getTime())) return false;
-  return due.getTime() < Date.now();
+  const dueDate = dateOnlyFromIso(task.due_at);
+  if (!dueDate) return false;
+  return dueDate < formatDateOnly(new Date());
 }
 
 function isTaskDueSoon(task: TaskRow, days: number = 7): boolean {
   if (!task.due_at || task.status === "done") return false;
-  const due = new Date(task.due_at).getTime();
-  if (Number.isNaN(due)) return false;
-  const now = Date.now();
-  const windowMs = days * 24 * 60 * 60 * 1000;
-  return due >= now && due <= now + windowMs;
+  const dueDate = dateOnlyFromIso(task.due_at);
+  if (!dueDate) return false;
+  const today = formatDateOnly(new Date());
+  const end = formatDateOnly(addDays(new Date(), days));
+  return dueDate >= today && dueDate <= end;
 }
 
 function formatTaskPriority(priority: TaskRow["priority"]): string {
@@ -338,6 +343,13 @@ export function TasksPanel({
     if (!newDue) return "";
     return isDateInPast(newDue) ? "Due date is in the past." : "";
   }, [newDue]);
+  const createDisabled = !newCommitteeId || !newTitle.trim();
+  const createDisabledReason = !newCommitteeId
+    ? "Select a committee to create a task."
+    : !newTitle.trim()
+      ? "Add a title to create a task."
+      : "";
+  const createDisabledHelpId = "task-create-disabled-help";
 
   const prefillActive = Boolean(
     prefill?.title ||
@@ -397,19 +409,18 @@ export function TasksPanel({
       next = next.filter((t) => t.status !== "done");
     }
     if (filterDueStart || filterDueEnd) {
-      const startTs = filterDueStart ? new Date(`${filterDueStart}T00:00:00`).getTime() : null;
-      const endTs = filterDueEnd ? new Date(`${filterDueEnd}T23:59:59`).getTime() : null;
+      const start = filterDueStart.trim();
+      const end = filterDueEnd.trim();
       const invalidRange =
         filterDueStart && filterDueEnd && filterDueStart.trim() && filterDueEnd.trim()
           ? filterDueStart > filterDueEnd
           : false;
       if (!invalidRange) {
         next = next.filter((t) => {
-          if (!t.due_at) return false;
-          const due = new Date(t.due_at).getTime();
-          if (Number.isNaN(due)) return false;
-          if (startTs && !Number.isNaN(startTs) && due < startTs) return false;
-          if (endTs && !Number.isNaN(endTs) && due > endTs) return false;
+          const dueDate = dateOnlyFromIso(t.due_at);
+          if (!dueDate) return false;
+          if (start && dueDate < start) return false;
+          if (end && dueDate > end) return false;
           return true;
         });
       }
@@ -1414,10 +1425,20 @@ export function TasksPanel({
             <div className="flex items-end md:col-span-5">
               <div className="flex w-full items-center justify-between gap-2">
                 <span className="text-xs text-foreground/60">* Required fields</span>
-                <Button type="submit" disabled={!newTitle.trim() || !newCommitteeId}>
+                <Button
+                  type="submit"
+                  disabled={createDisabled}
+                  title={createDisabledReason || undefined}
+                  aria-describedby={createDisabledReason ? createDisabledHelpId : undefined}
+                >
                   <IconPlus className="h-3.5 w-3.5" />
                   Create task
                 </Button>
+                {createDisabledReason ? (
+                  <span id={createDisabledHelpId} className="sr-only">
+                    {createDisabledReason}
+                  </span>
+                ) : null}
               </div>
             </div>
           </form>
