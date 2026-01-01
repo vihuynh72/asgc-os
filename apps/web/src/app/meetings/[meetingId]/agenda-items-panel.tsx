@@ -1295,19 +1295,47 @@ export function AgendaItemsPanel({
             {agendaSummary.late}
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            <Button variant="outline" size="sm" onClick={handleCopyAccepted} disabled={acceptedItems.length === 0}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleCopyAccepted}
+              disabled={acceptedItems.length === 0}
+              title="Copy accepted agenda items to your clipboard"
+              aria-label="Copy accepted agenda items"
+            >
               <IconCopy className="h-3.5 w-3.5" />
               Copy accepted agenda
             </Button>
-            <Button variant="outline" size="sm" onClick={handleCopyFiltered} disabled={exportItems.length === 0}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleCopyFiltered}
+              disabled={exportItems.length === 0}
+              title="Copy the filtered agenda list to your clipboard"
+              aria-label="Copy filtered agenda list"
+            >
               <IconCopy className="h-3.5 w-3.5" />
               Copy filtered list
             </Button>
-            <Button variant="outline" size="sm" onClick={handleDownloadAcceptedCsv} disabled={acceptedItems.length === 0}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleDownloadAcceptedCsv}
+              disabled={acceptedItems.length === 0}
+              title="Download accepted agenda items as CSV"
+              aria-label="Download accepted agenda items CSV"
+            >
               <IconDownload className="h-3.5 w-3.5" />
               Download accepted CSV
             </Button>
-            <Button variant="outline" size="sm" onClick={handleDownloadCsv} disabled={exportItems.length === 0}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleDownloadCsv}
+              disabled={exportItems.length === 0}
+              title="Download the filtered agenda list as CSV"
+              aria-label="Download filtered agenda CSV"
+            >
               <IconDownload className="h-3.5 w-3.5" />
               Download CSV
             </Button>
@@ -1319,10 +1347,16 @@ export function AgendaItemsPanel({
               </summary>
               <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
                 <span className="text-[11px] text-foreground/60">Need to copy again?</span>
-                <Button variant="ghost" size="sm" onClick={handleCopyPreview}>
-                  <IconCopy className="h-3.5 w-3.5" />
-                  Copy to clipboard
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button variant="ghost" size="sm" onClick={handleCopyPreview}>
+                    <IconCopy className="h-3.5 w-3.5" />
+                    Copy to clipboard
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => setCopyPreview(null)}>
+                    <IconX className="h-3.5 w-3.5" />
+                    Hide preview
+                  </Button>
+                </div>
               </div>
               <pre className="mt-2 max-h-48 whitespace-pre-wrap text-xs text-foreground/70">
                 {copyPreview.text}
@@ -1368,13 +1402,24 @@ export function AgendaItemsPanel({
             <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
               <label className="space-y-1 text-xs text-foreground/70 sm:col-span-2">
                 <span>Search</span>
-                <input
-                  type="search"
-                  className="h-9 w-full rounded border border-foreground/20 bg-background px-2 text-sm"
-                  value={agendaSearch}
-                  onChange={(e: ChangeEvent<HTMLInputElement>) => setAgendaSearch(e.target.value)}
-                  placeholder="Title, background, motion, or fiscal impact..."
-                />
+                <div className="flex items-center gap-2">
+                  <input
+                    type="search"
+                    className="h-9 w-full rounded border border-foreground/20 bg-background px-2 text-sm"
+                    value={agendaSearch}
+                    onChange={(e: ChangeEvent<HTMLInputElement>) => setAgendaSearch(e.target.value)}
+                    placeholder="Search agenda items..."
+                  />
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setAgendaSearch("")}
+                    disabled={!agendaSearch.trim()}
+                  >
+                    <IconX className="h-3.5 w-3.5" />
+                    Clear
+                  </Button>
+                </div>
               </label>
               <label className="space-y-1 text-xs text-foreground/70">
                 <span>State</span>

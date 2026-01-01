@@ -722,6 +722,7 @@ export function MeetingDocsPanel({
               size="sm"
               onClick={() => void handlePreviewMinutes(latestMinutesDoc)}
               title="Preview the latest minutes."
+              aria-label="Preview the latest minutes document"
               disabled={minutesPreviewLoading}
             >
               <IconDownload className="h-3.5 w-3.5" />
@@ -850,7 +851,14 @@ export function MeetingDocsPanel({
                   ) : null}
                   {minutesUploadProgress !== null ? (
                     <div className="mt-2">
-                      <div className="h-2 w-full rounded bg-foreground/10">
+                      <div
+                        className="h-2 w-full rounded bg-foreground/10"
+                        role="progressbar"
+                        aria-label="Minutes upload progress"
+                        aria-valuenow={minutesUploadProgress ?? 0}
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                      >
                         <div className="h-2 rounded bg-primary" style={{ width: `${minutesUploadProgress}%` }} />
                       </div>
                       <div className="mt-1 text-xs text-foreground/70">{minutesUploadProgress}%</div>
@@ -1016,6 +1024,7 @@ export function MeetingDocsPanel({
                   size="sm"
                   onClick={() => void handlePreviewAgenda(latestAgendaDoc)}
                   title="Preview the latest agenda."
+                  aria-label="Preview the latest agenda document"
                   disabled={agendaPreviewLoading}
                 >
                   <IconDownload className="h-3.5 w-3.5" />
@@ -1160,7 +1169,14 @@ export function MeetingDocsPanel({
                   ) : null}
                   {agendaUploadProgress !== null ? (
                     <div className="mt-2">
-                      <div className="h-2 w-full rounded bg-foreground/10">
+                      <div
+                        className="h-2 w-full rounded bg-foreground/10"
+                        role="progressbar"
+                        aria-label="Agenda upload progress"
+                        aria-valuenow={agendaUploadProgress ?? 0}
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                      >
                         <div className="h-2 rounded bg-primary" style={{ width: `${agendaUploadProgress}%` }} />
                       </div>
                       <div className="mt-1 text-xs text-foreground/70">{agendaUploadProgress}%</div>

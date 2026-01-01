@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { PageShell } from "@/components/page-shell";
 import { Button } from "@/components/ui/button";
-import { IconAlert, IconCalendar, IconCheck, IconChevronRight, IconLink } from "@/components/ui/icons";
+import { IconAlert, IconCalendar, IconCheck, IconChevronRight, IconLink, IconX } from "@/components/ui/icons";
 import { copyTextWithFallback } from "@/lib/clipboard";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 
@@ -213,6 +213,8 @@ export default function MeetingsPage() {
   const [pageSize, setPageSize] = useState(9);
   const [actionStatus, setActionStatus] = useState<string>("");
   const [reloadKey, setReloadKey] = useState(0);
+  const [calendarFeedUrl, setCalendarFeedUrl] = useState("");
+  const [calendarHelpOpen, setCalendarHelpOpen] = useState(false);
 
   const formatInOfficeTz = useCallback(
     (iso: string) => {
@@ -396,24 +398,132 @@ export default function MeetingsPage() {
       ? "Start date is after end date."
       : "";
 
-  const meetingActiveFilterLabels = useMemo(() => {
-    const labels: string[] = [];
+  const meetingActiveFilters = useMemo(() => {
+    const filters: Array<{ key: string; label: string; onClear: () => void }> = [];
     const query = meetingSearch.trim();
-    if (query) labels.push(`Search: "${query}"`);
-    if (meetingTypeFilter !== "all") labels.push(`Type: ${meetingTypeFilter}`);
-    if (meetingStatusFilter !== "all") labels.push(`Status: ${meetingStatusFilter}`);
-    if (meetingScopeFilter !== "all") labels.push(`Scope: ${meetingScopeFilter}`);
-    if (meetingSort !== "upcoming") labels.push(`Sort: ${meetingSort}`);
-    if (meetingStartDateFilter || meetingEndDateFilter) {
-      labels.push(`Date: ${meetingStartDateFilter || "any"} → ${meetingEndDateFilter || "any"}`);
+    if (query) {
+      filters.push({
+        key: "query",
+        label: `Search: "${query}"`,
+        onClear: () => {
+          setMeetingSearch("");
+          setPage(1);
+        },
+      });
     }
-    if (filterRemoteOnly) labels.push("Remote only");
-    if (filterLivestreamOnly) labels.push("Livestream only");
-    if (filterCommentOnly) labels.push("Public comments");
-    if (filterNoticePosted) labels.push("Notice posted");
-    if (filterAgendaPosted) labels.push("Agenda posted");
-    if (filterMinutesPosted) labels.push("Minutes posted");
-    return labels;
+    if (meetingTypeFilter !== "all") {
+      filters.push({
+        key: "type",
+        label: `Type: ${meetingTypeFilter}`,
+        onClear: () => {
+          setMeetingTypeFilter("all");
+          setPage(1);
+        },
+      });
+    }
+    if (meetingStatusFilter !== "all") {
+      filters.push({
+        key: "status",
+        label: `Status: ${meetingStatusFilter}`,
+        onClear: () => {
+          setMeetingStatusFilter("all");
+          setPage(1);
+        },
+      });
+    }
+    if (meetingScopeFilter !== "all") {
+      filters.push({
+        key: "scope",
+        label: `Scope: ${meetingScopeFilter}`,
+        onClear: () => {
+          setMeetingScopeFilter("all");
+          setPage(1);
+        },
+      });
+    }
+    if (meetingSort !== "upcoming") {
+      filters.push({
+        key: "sort",
+        label: `Sort: ${meetingSort}`,
+        onClear: () => {
+          setMeetingSort("upcoming");
+          setPage(1);
+        },
+      });
+    }
+    if (meetingStartDateFilter || meetingEndDateFilter) {
+      filters.push({
+        key: "date",
+        label: `Date: ${meetingStartDateFilter || "any"} → ${meetingEndDateFilter || "any"}`,
+        onClear: () => {
+          setMeetingStartDateFilter("");
+          setMeetingEndDateFilter("");
+          setActiveDatePreset("");
+          setPage(1);
+        },
+      });
+    }
+    if (filterRemoteOnly) {
+      filters.push({
+        key: "remote",
+        label: "Remote only",
+        onClear: () => {
+          setFilterRemoteOnly(false);
+          setPage(1);
+        },
+      });
+    }
+    if (filterLivestreamOnly) {
+      filters.push({
+        key: "livestream",
+        label: "Livestream only",
+        onClear: () => {
+          setFilterLivestreamOnly(false);
+          setPage(1);
+        },
+      });
+    }
+    if (filterCommentOnly) {
+      filters.push({
+        key: "comment",
+        label: "Public comments",
+        onClear: () => {
+          setFilterCommentOnly(false);
+          setPage(1);
+        },
+      });
+    }
+    if (filterNoticePosted) {
+      filters.push({
+        key: "notice",
+        label: "Notice posted",
+        onClear: () => {
+          setFilterNoticePosted(false);
+          setPage(1);
+        },
+      });
+    }
+    if (filterAgendaPosted) {
+      filters.push({
+        key: "agenda",
+        label: "Agenda posted",
+        onClear: () => {
+          setFilterAgendaPosted(false);
+          setPage(1);
+        },
+      });
+    }
+    if (filterMinutesPosted) {
+      filters.push({
+        key: "minutes",
+        label: "Minutes posted",
+        onClear: () => {
+          setFilterMinutesPosted(false);
+          setPage(1);
+        },
+      });
+    }
+    return filters;
   }, [
     filterAgendaPosted,
     filterCommentOnly,
@@ -504,11 +614,24 @@ export default function MeetingsPage() {
     setActionStatus("Calendar file downloaded.");
   }
 
-  function handleSubscribeCalendar() {
-    const url = new URL("/api/meetings/calendar", window.location.origin).toString();
+  function handleToggleCalendarHelp() {
+    const url = calendarFeedUrl || new URL("/api/meetings/calendar", window.location.origin).toString();
+    if (!calendarFeedUrl) setCalendarFeedUrl(url);
+    setCalendarHelpOpen((prev) => !prev);
+    setActionStatus("Calendar feed details ready.");
+  }
+
+  function handleOpenCalendarFeed() {
+    const url = calendarFeedUrl || new URL("/api/meetings/calendar", window.location.origin).toString();
     const webcalUrl = url.replace(/^https?:/, "webcal:");
     window.open(webcalUrl, "_blank", "noopener");
     setActionStatus("Calendar feed opened.");
+  }
+
+  async function handleCopyCalendarFeed() {
+    const url = calendarFeedUrl || new URL("/api/meetings/calendar", window.location.origin).toString();
+    const ok = await copyTextWithFallback(url, { promptLabel: "Copy calendar feed URL" });
+    setActionStatus(ok ? "Calendar feed URL copied." : "Clipboard blocked. Use the prompt to copy the URL.");
   }
 
   return (
@@ -556,9 +679,16 @@ export default function MeetingsPage() {
                   Past
                 </Button>
               </div>
-              <Button variant="outline" size="sm" onClick={handleSubscribeCalendar}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleToggleCalendarHelp}
+                aria-expanded={calendarHelpOpen}
+                aria-controls="calendar-feed-help"
+                title="Get the calendar feed URL and setup instructions."
+              >
                 <IconCalendar className="h-3.5 w-3.5" />
-                Subscribe to calendar feed
+                Calendar feed
               </Button>
               {isAdmin ? (
                 <Link href="/admin?tab=meetings#admin-meetings-create">
@@ -763,17 +893,65 @@ export default function MeetingsPage() {
               </Button>
             </div>
           </div>
-          {meetingDateRangeError ? (
-            <div className="mt-2 text-xs text-red-600">{meetingDateRangeError}</div>
+          {calendarHelpOpen ? (
+            <div
+              id="calendar-feed-help"
+              className="mt-3 rounded-md border border-foreground/10 bg-background px-3 py-2 text-xs text-foreground/70"
+            >
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <div className="text-sm font-medium text-foreground">Calendar feed</div>
+                  <div className="text-xs text-foreground/60">
+                    Subscribe once to see all upcoming meetings in your calendar app.
+                  </div>
+                </div>
+                <Button variant="ghost" size="sm" onClick={() => setCalendarHelpOpen(false)} aria-label="Close calendar feed help">
+                  <IconX className="h-3.5 w-3.5" />
+                  Close
+                </Button>
+              </div>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <code className="rounded bg-foreground/5 px-2 py-1 text-[11px] text-foreground/80">
+                  {calendarFeedUrl || "Calendar feed URL will appear here."}
+                </code>
+                <Button variant="outline" size="sm" onClick={() => void handleCopyCalendarFeed()}>
+                  Copy feed URL
+                </Button>
+                <Button variant="ghost" size="sm" onClick={handleOpenCalendarFeed}>
+                  Open in calendar app
+                </Button>
+              </div>
+              <div className="mt-2 text-[11px] text-foreground/60">
+                <div>Google Calendar: Settings → Add calendar → From URL.</div>
+                <div>Apple Calendar: File → New Calendar Subscription.</div>
+                <div>Outlook: Add calendar → Subscribe from web.</div>
+              </div>
+            </div>
           ) : null}
-          {meetingActiveFilterLabels.length > 0 ? (
+
+          {meetingDateRangeError ? (
+            <div className="mt-2 text-xs text-red-600" role="alert" aria-live="polite">
+              {meetingDateRangeError}
+            </div>
+          ) : null}
+          {meetingActiveFilters.length > 0 ? (
             <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-foreground/60">
               <span>Active filters</span>
-              {meetingActiveFilterLabels.map((label) => (
-                <span key={label} className="rounded bg-foreground/5 px-2 py-0.5 text-foreground/70">
-                  {label}
-                </span>
+              {meetingActiveFilters.map((filter) => (
+                <button
+                  key={filter.key}
+                  type="button"
+                  onClick={filter.onClear}
+                  className="inline-flex items-center gap-1 rounded bg-foreground/5 px-2 py-0.5 text-foreground/70 hover:bg-foreground/10"
+                  aria-label={`Clear ${filter.label}`}
+                >
+                  <span>{filter.label}</span>
+                  <IconX className="h-3 w-3" />
+                </button>
               ))}
+              <Button variant="ghost" size="sm" onClick={resetMeetingFilters}>
+                Clear all
+              </Button>
             </div>
           ) : null}
 
@@ -995,7 +1173,13 @@ export default function MeetingsPage() {
                         {complianceSegments.filter((segment) => segment.posted).length}/{complianceSegments.length} posted
                       </span>
                     </div>
-                    <div className="mt-1 grid grid-cols-3 gap-1">
+                    <div
+                      className="mt-1 grid grid-cols-3 gap-1"
+                      role="img"
+                      aria-label={`Compliance progress: ${
+                        complianceSegments.filter((segment) => segment.posted).length
+                      } of ${complianceSegments.length} posted`}
+                    >
                       {complianceSegments.map((segment) => (
                         <div
                           key={segment.label}
@@ -1022,6 +1206,8 @@ export default function MeetingsPage() {
                           event.stopPropagation();
                           void handleCopyMeetingLink(m);
                         }}
+                        title="Copy meeting link"
+                        aria-label={`Copy link for ${m.title}`}
                       >
                         <IconLink className="h-3.5 w-3.5" />
                         Copy link
@@ -1035,6 +1221,7 @@ export default function MeetingsPage() {
                           handleDownloadCalendar(m);
                         }}
                         title="Download a calendar file (.ics) for this meeting."
+                        aria-label={`Add ${m.title} to your calendar`}
                       >
                         <IconCalendar className="h-3.5 w-3.5" />
                         Add to calendar
