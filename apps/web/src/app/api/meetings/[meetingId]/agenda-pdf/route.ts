@@ -104,11 +104,6 @@ export async function POST(request: NextRequest, { params }: Params) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
-  const { data: isAdmin, error: adminErr } = await supabase.rpc("is_admin", { _uid: user.id });
-  if (adminErr || !isAdmin) {
-    return NextResponse.json({ error: "forbidden" }, { status: 403 });
-  }
-
   const { data: meeting, error: meetingErr } = await supabase
     .from("meetings")
     .select("id,title,meeting_type,starts_at,ends_at,location,committee_id")
@@ -121,6 +116,20 @@ export async function POST(request: NextRequest, { params }: Params) {
 
   if (!meeting) {
     return NextResponse.json({ error: "meeting_not_found" }, { status: 404 });
+  }
+
+  const { data: isAdmin, error: adminErr } = await supabase.rpc("is_admin", { _uid: user.id });
+  let canManageAgenda = !adminErr && !!isAdmin;
+
+  if (!canManageAgenda && meeting.committee_id) {
+    const { data: isChair, error: chairErr } = await supabase.rpc("is_committee_chair", {
+      _committee_id: meeting.committee_id,
+    });
+    canManageAgenda = !chairErr && !!isChair;
+  }
+
+  if (!canManageAgenda) {
+    return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
 
   const { data: agendaItems, error: agendaErr } = await supabase.rpc("meeting_agenda_items", {

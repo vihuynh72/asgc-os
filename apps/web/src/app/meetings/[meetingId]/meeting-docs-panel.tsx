@@ -62,14 +62,14 @@ function formatDocErrorMessage(message: string, docLabel?: string): string {
   const lower = message.trim().toLowerCase();
   if (lower.includes("row-level security")) {
     return docLabel
-      ? `You do not have permission to upload ${docLabel}. Check that you have admin access for this committee.`
+      ? `You do not have permission to upload ${docLabel}. Check that you are a committee chair or admin for this meeting.`
       : "You do not have permission to complete this action.";
   }
   if (lower.includes("unauthorized")) {
     return "Please sign in to continue.";
   }
   if (lower.includes("forbidden")) {
-    return "You do not have permission to complete this action.";
+    return "You do not have permission to complete this action. Contact your committee chair or an admin.";
   }
   if (lower.includes("meeting_id_required")) {
     return "Meeting selection is required for agenda or minutes uploads.";
@@ -163,7 +163,7 @@ function groupDocsByVersion(docs: DocRow[]): Array<{ rootId: string; docs: DocRo
 export function MeetingDocsPanel({
   meetingId,
   committeeId,
-  isAdmin,
+  canManageDocs,
   initialDocs,
   acceptedAgendaCount,
   meetingTitle,
@@ -174,7 +174,7 @@ export function MeetingDocsPanel({
 }: {
   meetingId: string;
   committeeId: string | null;
-  isAdmin: boolean;
+  canManageDocs: boolean;
   initialDocs: DocRow[];
   acceptedAgendaCount: number;
   meetingTitle?: string | null;
@@ -209,10 +209,11 @@ export function MeetingDocsPanel({
   const [agendaPreviewDocId, setAgendaPreviewDocId] = useState<string | null>(null);
   const [agendaPreviewError, setAgendaPreviewError] = useState<string>("");
   const [agendaPreviewLoading, setAgendaPreviewLoading] = useState<boolean>(false);
+  const [agendaGenerating, setAgendaGenerating] = useState<boolean>(false);
   const [agendaPostedAtState, setAgendaPostedAtState] = useState<string | null>(agendaPostedAt ?? null);
   const [minutesPostedAtState, setMinutesPostedAtState] = useState<string | null>(minutesPostedAt ?? null);
   const meetingIsCancelled = meetingStatus === "cancelled";
-  const canEdit = isAdmin && !meetingIsCancelled;
+  const canEdit = canManageDocs && !meetingIsCancelled;
   const canUploadMinutes = canEdit && !!uploadFile && minutesTitle.trim().length > 0 && !minutesUploading;
   const canUploadAgenda = canEdit && !!agendaFile && agendaTitle.trim().length > 0 && !agendaUploading;
 
@@ -269,7 +270,11 @@ export function MeetingDocsPanel({
   }, [meetingId]);
 
   async function markMeetingPosted(type: "agenda" | "minutes", options?: { skipConfirm?: boolean }) {
-    if (!canEdit) {
+    if (!canManageDocs) {
+      setStatus("You do not have permission to update meeting documents.");
+      return;
+    }
+    if (meetingIsCancelled) {
       setStatus("Meeting is cancelled. Posting updates are disabled.");
       return;
     }
@@ -279,8 +284,8 @@ export function MeetingDocsPanel({
         ? { agenda_posted_at: new Date().toISOString() }
         : { minutes_posted_at: new Date().toISOString() };
     try {
-      await fetchJson(`/api/admin/meetings/${encodeURIComponent(meetingId)}`, {
-        method: "PATCH",
+      await fetchJson(`/api/meetings/${encodeURIComponent(meetingId)}/posted`, {
+        method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
@@ -302,7 +307,13 @@ export function MeetingDocsPanel({
   async function handleMinutesUpload(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
 
-    if (!canEdit) {
+    if (!canManageDocs) {
+      const msg = "You do not have permission to upload meeting documents.";
+      setStatus(msg);
+      toast.error(msg);
+      return;
+    }
+    if (meetingIsCancelled) {
       setStatus("Meeting is cancelled. Uploads are disabled.");
       toast.error("Meeting is cancelled. Uploads are disabled.");
       return;
@@ -396,7 +407,13 @@ export function MeetingDocsPanel({
   async function handleAgendaUpload(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
 
-    if (!canEdit) {
+    if (!canManageDocs) {
+      const msg = "You do not have permission to upload meeting documents.";
+      setStatus(msg);
+      toast.error(msg);
+      return;
+    }
+    if (meetingIsCancelled) {
       setStatus("Meeting is cancelled. Uploads are disabled.");
       toast.error("Meeting is cancelled. Uploads are disabled.");
       return;
@@ -552,7 +569,11 @@ export function MeetingDocsPanel({
   }
 
   async function handleToggleVisibility(doc: DocRow) {
-    if (!canEdit) {
+    if (!canManageDocs) {
+      setStatus("You do not have permission to update meeting documents.");
+      return;
+    }
+    if (meetingIsCancelled) {
       setStatus("Meeting is cancelled. Updates are disabled.");
       return;
     }
@@ -583,7 +604,11 @@ export function MeetingDocsPanel({
   }
 
   async function handleGenerateAgenda() {
-    if (!canEdit) {
+    if (!canManageDocs) {
+      setStatus("You do not have permission to generate agendas for this meeting.");
+      return;
+    }
+    if (meetingIsCancelled) {
       setStatus("Meeting is cancelled. Agenda generation is disabled.");
       return;
     }
@@ -595,6 +620,7 @@ export function MeetingDocsPanel({
       acceptedAgendaCount === 1 ? "" : "s"
     }.`;
     if (!confirm(confirmMessage)) return;
+    setAgendaGenerating(true);
     setStatus("Generating agenda PDF...");
     try {
       await fetchJson(`/api/meetings/${encodeURIComponent(meetingId)}/agenda-pdf`, {
@@ -608,6 +634,8 @@ export function MeetingDocsPanel({
       const msg = formatDocErrorMessage(raw);
       setStatus(msg);
       toast.error(msg);
+    } finally {
+      setAgendaGenerating(false);
     }
   }
 
@@ -756,11 +784,11 @@ export function MeetingDocsPanel({
               </div>
             </form>
           </details>
-        ) : isAdmin ? (
+        ) : canManageDocs ? (
           <div className="mt-4 text-sm text-foreground/70">Uploads are disabled for cancelled meetings.</div>
         ) : (
           <div className="mt-4 text-sm text-foreground/70">
-            Only admins can upload minutes. Contact your committee chair or an admin for help.
+            Only committee chairs or admins can upload minutes. Contact your chair or an admin for help.
           </div>
         )}
 
@@ -861,13 +889,13 @@ export function MeetingDocsPanel({
             <div className="text-xs text-foreground/60">Accepted items: {acceptedAgendaCount}</div>
             <div className="text-xs text-foreground/60">Posted at: {formatPostedAt(agendaPostedAtState)}</div>
           </div>
-          {isAdmin ? (
+          {canManageDocs ? (
             <div className="flex flex-wrap items-center gap-2">
               <Button
                 type="button"
                 size="sm"
                 onClick={() => void handleGenerateAgenda()}
-                disabled={!canGenerateAgenda}
+                disabled={!canGenerateAgenda || agendaGenerating}
                 title={
                   canGenerateAgenda
                     ? "Generate agenda PDF"
@@ -877,7 +905,7 @@ export function MeetingDocsPanel({
                 }
               >
                 <IconFileText className="h-3.5 w-3.5" />
-                Generate Agenda PDF
+                {agendaGenerating ? "Generating..." : "Generate Agenda PDF"}
               </Button>
               {latestAgendaDoc ? (
                 <Button
@@ -897,14 +925,14 @@ export function MeetingDocsPanel({
             </div>
           ) : null}
         </div>
-        {!isAdmin ? (
+        {!canManageDocs ? (
           <div className="mt-2 text-xs text-foreground/60">
             {acceptedAgendaCount > 0
-              ? "Agenda PDF generation is restricted to admins. Contact your committee chair or an admin for help."
+              ? "Agenda PDF generation is restricted to committee chairs and admins. Contact your chair or an admin for help."
               : "No accepted agenda items yet. The agenda PDF will be available once items are accepted by an admin."}
           </div>
         ) : null}
-        {!canGenerateAgenda && isAdmin ? (
+        {!canGenerateAgenda && canManageDocs ? (
           <div className="mt-2 text-xs text-foreground/60">
             {meetingIsCancelled
               ? "Agenda generation is disabled for cancelled meetings."
@@ -1064,11 +1092,11 @@ export function MeetingDocsPanel({
               </div>
             </form>
           </details>
-        ) : isAdmin ? (
+        ) : canManageDocs ? (
           <div className="mt-4 text-sm text-foreground/70">Uploads are disabled for cancelled meetings.</div>
         ) : (
           <div className="mt-4 text-sm text-foreground/70">
-            Only admins can upload agenda documents. Contact your committee chair or an admin for help.
+            Only committee chairs or admins can upload agenda documents. Contact your chair or an admin for help.
           </div>
         )}
 

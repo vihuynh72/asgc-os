@@ -87,8 +87,37 @@ export async function POST(request: NextRequest) {
   const isMeetingDoc = docType === "minutes" || docType === "agenda";
 
   if (isMeetingDoc) {
+    if (!body.meeting_id || typeof body.meeting_id !== "string") {
+      return NextResponse.json({ error: "meeting_id_required" }, { status: 400 });
+    }
+
     const { data: isAdmin, error: adminErr } = await supabase.rpc("is_admin", { _uid: user.id });
-    if (adminErr || !isAdmin) {
+    let canManageMeetingDocs = !adminErr && !!isAdmin;
+
+    if (!canManageMeetingDocs) {
+      const { data: meeting, error: meetingErr } = await supabase
+        .from("meetings")
+        .select("committee_id")
+        .eq("id", body.meeting_id)
+        .maybeSingle();
+
+      if (meetingErr) {
+        return NextResponse.json({ error: meetingErr.message }, { status: 500 });
+      }
+
+      if (!meeting) {
+        return NextResponse.json({ error: "meeting_not_found" }, { status: 404 });
+      }
+
+      if (meeting.committee_id) {
+        const { data: isChair, error: chairErr } = await supabase.rpc("is_committee_chair", {
+          _committee_id: meeting.committee_id,
+        });
+        canManageMeetingDocs = !chairErr && !!isChair;
+      }
+    }
+
+    if (!canManageMeetingDocs) {
       return NextResponse.json({ error: "forbidden" }, { status: 403 });
     }
   }
@@ -106,13 +135,6 @@ export async function POST(request: NextRequest) {
     (!body.committee_id || typeof body.committee_id !== "string")
   ) {
     return NextResponse.json({ error: "committee_id_required" }, { status: 400 });
-  }
-
-  if (
-    (docType === "minutes" || docType === "agenda") &&
-    (!body.meeting_id || typeof body.meeting_id !== "string")
-  ) {
-    return NextResponse.json({ error: "meeting_id_required" }, { status: 400 });
   }
 
   if (body.version_of_doc_id && typeof body.version_of_doc_id !== "string") {
