@@ -151,6 +151,7 @@ export function MeetingActions({ meeting, officeTz }: MeetingActionsProps) {
     const body = encodeURIComponent(`${buildSummary()}\n\nLink: ${window.location.href}`);
     window.location.href = `mailto:?subject=${subject}&body=${body}`;
     setStatus("Email draft opened.");
+    toast.success("Email draft opened");
   }
 
   function handleSubscribeCalendar() {
@@ -164,37 +165,71 @@ export function MeetingActions({ meeting, officeTz }: MeetingActionsProps) {
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" variant="outline" onClick={() => void copyText("Meeting link", window.location.href)}>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => void copyText("Meeting link", window.location.href)}
+          title="Copy the meeting link"
+        >
           <IconLink className="h-3.5 w-3.5" />
           Copy link
         </Button>
-        <Button size="sm" variant="outline" onClick={() => void copyText("Meeting summary", buildSummary())}>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => void copyText("Meeting summary", buildSummary())}
+          title="Copy a quick meeting summary"
+        >
           <IconCopy className="h-3.5 w-3.5" />
           Copy summary
         </Button>
         {meeting.remote_url ? (
-          <Button size="sm" variant="outline" onClick={() => void copyText("Remote link", meeting.remote_url!)}>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => void copyText("Remote link", meeting.remote_url!)}
+            title="Copy the remote meeting link"
+          >
             <IconLink className="h-3.5 w-3.5" />
             Copy remote link
           </Button>
         ) : null}
         {meeting.livestream_url ? (
-          <Button size="sm" variant="outline" onClick={() => void copyText("Livestream link", meeting.livestream_url!)}>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => void copyText("Livestream link", meeting.livestream_url!)}
+            title="Copy the livestream link"
+          >
             <IconLink className="h-3.5 w-3.5" />
             Copy livestream link
           </Button>
         ) : null}
-        <Button size="sm" onClick={handleDownloadCalendar}>
+        <Button size="sm" onClick={handleDownloadCalendar} title="Download a calendar file (.ics)">
           <IconCalendar className="h-3.5 w-3.5" />
           Add to calendar
         </Button>
-        <Button size="sm" variant="outline" onClick={handleShareEmail}>
+        <Button size="sm" variant="outline" onClick={handleShareEmail} title="Open your email client with a draft">
           <IconMail className="h-3.5 w-3.5" />
           Share via email
         </Button>
-        <Button size="sm" variant="outline" onClick={handleSubscribeCalendar}>
+        <Button size="sm" variant="outline" onClick={handleSubscribeCalendar} title="Open the calendar feed">
           <IconCalendar className="h-3.5 w-3.5" />
           Subscribe to calendar feed
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() =>
+            void copyText(
+              "Calendar feed URL",
+              new URL("/api/meetings/calendar", window.location.origin).toString(),
+            )
+          }
+          title="Copy the calendar feed URL for subscriptions"
+        >
+          <IconCalendar className="h-3.5 w-3.5" />
+          Copy feed URL
         </Button>
       </div>
       {status ? (

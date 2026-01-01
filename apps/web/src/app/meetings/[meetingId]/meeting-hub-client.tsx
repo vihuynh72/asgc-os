@@ -581,7 +581,14 @@ export function MeetingHubClient({
             <div className="mt-2 text-xs text-foreground/60">
               {publishComplete} of {publishTotal} steps complete.
             </div>
-            <div className="mt-2 h-2 w-full rounded bg-foreground/10" role="progressbar" aria-valuenow={publishPercent} aria-valuemin={0} aria-valuemax={100}>
+            <div
+              className="mt-2 h-2 w-full rounded bg-foreground/10"
+              role="progressbar"
+              aria-valuenow={publishPercent}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuetext={`${publishComplete} of ${publishTotal} steps complete`}
+            >
               <div className="h-2 rounded bg-primary" style={{ width: `${publishPercent}%` }} />
             </div>
             <div className="mt-3 grid gap-2 text-sm">
@@ -684,7 +691,9 @@ export function MeetingHubClient({
           size="sm"
           variant="outline"
           onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
-          className="fixed bottom-6 right-6 z-30 shadow-md"
+          className="fixed bottom-5 right-4 z-30 shadow-md sm:bottom-6 sm:right-6"
+          title="Back to top"
+          aria-label="Back to top"
         >
           <IconChevronUp className="h-3.5 w-3.5" />
           Back to top

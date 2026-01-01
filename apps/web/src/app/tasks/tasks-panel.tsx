@@ -221,6 +221,25 @@ function statusBadgeClass(status: TaskRow["status"]): string {
   return "bg-green-100 text-green-700";
 }
 
+function formatTaskSortLabel(
+  sortKey: "updated" | "due" | "title" | "priority" | "created" | "status",
+): string {
+  switch (sortKey) {
+    case "due":
+      return "Due date";
+    case "title":
+      return "Title";
+    case "priority":
+      return "Priority";
+    case "created":
+      return "Created date";
+    case "status":
+      return "Status";
+    default:
+      return "Recently updated";
+  }
+}
+
 function toCsvValue(value: string | number | null | undefined): string {
   if (value === null || value === undefined) return "";
   const raw = String(value);
@@ -257,7 +276,9 @@ export function TasksPanel({
   const [filterDueSoonOnly, setFilterDueSoonOnly] = useState<boolean>(false);
   const [filterDueStart, setFilterDueStart] = useState<string>("");
   const [filterDueEnd, setFilterDueEnd] = useState<string>("");
-  const [sortKey, setSortKey] = useState<"updated" | "due" | "title" | "priority">("updated");
+  const [filterHideDone, setFilterHideDone] = useState<boolean>(false);
+  const [dueRangePreset, setDueRangePreset] = useState<"" | "today" | "next7" | "next30">("");
+  const [sortKey, setSortKey] = useState<"updated" | "due" | "title" | "priority" | "created" | "status">("updated");
   const [taskPage, setTaskPage] = useState<number>(1);
   const [taskPageSize, setTaskPageSize] = useState<number>(10);
   const [showAdvancedFilters, setShowAdvancedFilters] = useState<boolean>(false);
@@ -372,6 +393,9 @@ export function TasksPanel({
     if (filterDueSoonOnly) {
       next = next.filter((t) => isTaskDueSoon(t));
     }
+    if (filterHideDone) {
+      next = next.filter((t) => t.status !== "done");
+    }
     if (filterDueStart || filterDueEnd) {
       const startTs = filterDueStart ? new Date(`${filterDueStart}T00:00:00`).getTime() : null;
       const endTs = filterDueEnd ? new Date(`${filterDueEnd}T23:59:59`).getTime() : null;
@@ -412,6 +436,20 @@ export function TasksPanel({
       });
       return sorted;
     }
+    if (sortKey === "created") {
+      sorted.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      return sorted;
+    }
+    if (sortKey === "status") {
+      const order: Record<TaskRow["status"], number> = { todo: 0, doing: 1, done: 2 };
+      sorted.sort((a, b) => {
+        const aRank = order[a.status];
+        const bRank = order[b.status];
+        if (aRank !== bRank) return aRank - bRank;
+        return a.title.localeCompare(b.title);
+      });
+      return sorted;
+    }
     if (sortKey === "priority") {
       const order: Record<TaskRow["priority"], number> = { high: 0, medium: 1, low: 2 };
       sorted.sort((a, b) => {
@@ -432,6 +470,7 @@ export function TasksPanel({
     filterDueEnd,
     filterDueSoonOnly,
     filterDueStart,
+    filterHideDone,
     filterOverdueOnly,
     filterPriorities,
     filterQuery,
@@ -487,6 +526,7 @@ export function TasksPanel({
     filterAssignee.length > 0 ||
     filterOverdueOnly ||
     filterDueSoonOnly ||
+    filterHideDone ||
     filterDueStart.trim().length > 0 ||
     filterDueEnd.trim().length > 0 ||
     sortKey !== "updated";
@@ -574,6 +614,16 @@ export function TasksPanel({
         },
       });
     }
+    if (filterHideDone) {
+      chips.push({
+        key: "hideDone",
+        label: "Hide done",
+        onClear: () => {
+          setFilterHideDone(false);
+          setTaskPage(1);
+        },
+      });
+    }
     if (filterDueStart || filterDueEnd) {
       chips.push({
         key: "dueRange",
@@ -581,6 +631,7 @@ export function TasksPanel({
         onClear: () => {
           setFilterDueStart("");
           setFilterDueEnd("");
+          setDueRangePreset("");
           setTaskPage(1);
         },
       });
@@ -588,7 +639,7 @@ export function TasksPanel({
     if (sortKey !== "updated") {
       chips.push({
         key: "sort",
-        label: `Sort: ${sortKey}`,
+        label: `Sort: ${formatTaskSortLabel(sortKey)}`,
         onClear: () => {
           setSortKey("updated");
           setTaskPage(1);
@@ -603,6 +654,7 @@ export function TasksPanel({
     filterDueEnd,
     filterDueSoonOnly,
     filterDueStart,
+    filterHideDone,
     filterOverdueOnly,
     filterPriorities,
     filterQuery,
@@ -724,6 +776,21 @@ export function TasksPanel({
     setTaskPage(1);
   }
 
+  function applyDueRangePreset(preset: "today" | "next7" | "next30") {
+    const today = new Date();
+    const start = formatDateOnly(today);
+    const end =
+      preset === "today"
+        ? start
+        : preset === "next7"
+          ? formatDateOnly(addDays(today, 7))
+          : formatDateOnly(addDays(today, 30));
+    setFilterDueStart(start);
+    setFilterDueEnd(end);
+    setDueRangePreset(preset);
+    setTaskPage(1);
+  }
+
   function resetFilters() {
     setFilterQuery("");
     setFilterStatuses([]);
@@ -732,8 +799,10 @@ export function TasksPanel({
     setFilterAssignee("");
     setFilterOverdueOnly(false);
     setFilterDueSoonOnly(false);
+    setFilterHideDone(false);
     setFilterDueStart("");
     setFilterDueEnd("");
+    setDueRangePreset("");
     setSortKey("updated");
     setTaskPage(1);
     setShowAdvancedFilters(false);
@@ -1498,9 +1567,11 @@ export function TasksPanel({
                 }}
               >
                 <option value="updated">Recently updated</option>
+                <option value="created">Created date</option>
                 <option value="due">Due date</option>
                 <option value="title">Title</option>
                 <option value="priority">Priority</option>
+                <option value="status">Status</option>
               </select>
             </label>
           </div>
@@ -1525,6 +1596,7 @@ export function TasksPanel({
                     value={filterDueStart}
                     onChange={(e: ChangeEvent<HTMLInputElement>) => {
                       setFilterDueStart(e.target.value);
+                      setDueRangePreset("");
                       setTaskPage(1);
                     }}
                     aria-invalid={!!dueRangeError}
@@ -1538,6 +1610,7 @@ export function TasksPanel({
                     value={filterDueEnd}
                     onChange={(e: ChangeEvent<HTMLInputElement>) => {
                       setFilterDueEnd(e.target.value);
+                      setDueRangePreset("");
                       setTaskPage(1);
                     }}
                     aria-invalid={!!dueRangeError}
@@ -1548,6 +1621,46 @@ export function TasksPanel({
                 </div>
               </div>
               {dueRangeError ? <div className="mt-1 text-xs text-red-600">{dueRangeError}</div> : null}
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-foreground/60">
+                <span className="text-foreground/50">Quick range</span>
+                <Button
+                  variant={dueRangePreset === "today" ? "default" : "ghost"}
+                  size="sm"
+                  aria-pressed={dueRangePreset === "today"}
+                  onClick={() => applyDueRangePreset("today")}
+                >
+                  Today
+                </Button>
+                <Button
+                  variant={dueRangePreset === "next7" ? "default" : "ghost"}
+                  size="sm"
+                  aria-pressed={dueRangePreset === "next7"}
+                  onClick={() => applyDueRangePreset("next7")}
+                >
+                  Next 7 days
+                </Button>
+                <Button
+                  variant={dueRangePreset === "next30" ? "default" : "ghost"}
+                  size="sm"
+                  aria-pressed={dueRangePreset === "next30"}
+                  onClick={() => applyDueRangePreset("next30")}
+                >
+                  Next 30 days
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setFilterDueStart("");
+                    setFilterDueEnd("");
+                    setDueRangePreset("");
+                    setTaskPage(1);
+                  }}
+                  disabled={!filterDueStart && !filterDueEnd}
+                >
+                  Clear range
+                </Button>
+              </div>
 
               <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-foreground/60">
                 <span className="text-foreground/50">Status</span>
@@ -1675,6 +1788,17 @@ export function TasksPanel({
                 >
                   Unassigned ({unassignedCount})
                 </Button>
+                <Button
+                  variant={filterHideDone ? "default" : "ghost"}
+                  size="sm"
+                  aria-pressed={filterHideDone}
+                  onClick={() => {
+                    setFilterHideDone((prev) => !prev);
+                    setTaskPage(1);
+                  }}
+                >
+                  Hide done
+                </Button>
               </div>
               <label className="flex items-center gap-2">
                 <span>Rows</span>
@@ -1699,6 +1823,7 @@ export function TasksPanel({
                 size="sm"
                 onClick={() => setTaskPage(Math.max(1, resolvedTaskPage - 1))}
                 disabled={resolvedTaskPage <= 1}
+                aria-label="Previous tasks page"
               >
                 Prev
               </Button>
@@ -1707,18 +1832,29 @@ export function TasksPanel({
                 size="sm"
                 onClick={() => setTaskPage(Math.min(pageCount, resolvedTaskPage + 1))}
                 disabled={resolvedTaskPage >= pageCount}
+                aria-label="Next tasks page"
               >
                 Next
               </Button>
-              <Button variant="ghost" size="sm" onClick={() => void reload()}>
+              <Button variant="ghost" size="sm" onClick={() => void reload()} title="Reload tasks">
                 <IconRefresh className="h-3.5 w-3.5" />
                 Refresh list
               </Button>
-              <Button variant="ghost" size="sm" onClick={() => void handleCopyTaskList()}>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => void handleCopyTaskList()}
+                title="Copy the filtered task list"
+              >
                 <IconCopy className="h-3.5 w-3.5" />
                 Copy list
               </Button>
-              <Button variant="ghost" size="sm" onClick={handleDownloadTasksCsv}>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleDownloadTasksCsv}
+                title="Export the filtered tasks as CSV"
+              >
                 <IconDownload className="h-3.5 w-3.5" />
                 Export CSV
               </Button>
