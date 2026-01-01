@@ -155,7 +155,7 @@ function formatVisibility(visibility: string): string {
 function formatDocErrorMessage(message: string): string {
   switch (message) {
     case "forbidden":
-      return "You do not have permission to update this document.";
+      return "You do not have permission to update this document. Contact your committee chair or an admin.";
     case "doc_not_found":
       return "Document not found.";
     case "doc_deleted":

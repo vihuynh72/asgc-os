@@ -109,6 +109,18 @@ export default async function MeetingDetailPage({ params }: { params: Params }) 
   });
 
   const typedMeeting = meeting as Meeting;
+  let canManageDocs = isAdminUser;
+
+  if (!canManageDocs && typedMeeting.committee_id) {
+    const { data: chairMembership } = await supabase
+      .from("committee_memberships")
+      .select("role")
+      .eq("committee_id", typedMeeting.committee_id)
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    canManageDocs = chairMembership?.role === "chair";
+  }
   const typedItems = (agendaItems ?? []) as AgendaItem[];
   const typedDeadline = (Array.isArray(deadline) ? deadline[0] : deadline) as DeadlineInfo | null;
 
@@ -148,6 +160,7 @@ export default async function MeetingDetailPage({ params }: { params: Params }) 
         initialDocs={typedDocs}
         officeTz={officeTz}
         isAdmin={isAdminUser}
+        canManageDocs={canManageDocs}
         userId={user.id}
       />
     </PageShell>

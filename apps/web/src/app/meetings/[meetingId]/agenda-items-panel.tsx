@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import {
   useCallback,
   useEffect,
@@ -369,7 +370,7 @@ export function AgendaItemsPanel({
     isAdmin ? "agenda" : "recent",
   );
   const [showAdvancedFilters, setShowAdvancedFilters] = useState<boolean>(false);
-  const [filtersOpen, setFiltersOpen] = useState<boolean>(false);
+  const [filtersOpen, setFiltersOpen] = useState<boolean>(true);
   const [copyPreview, setCopyPreview] = useState<{ label: string; text: string } | null>(null);
   const [pendingScrollId, setPendingScrollId] = useState<string | null>(null);
   const [highlightedItemId, setHighlightedItemId] = useState<string | null>(null);
@@ -485,7 +486,9 @@ export function AgendaItemsPanel({
         ? "This meeting is completed. Agenda submissions are closed."
         : "";
   const meetingCancelledGuidance = meetingIsCancelled
-    ? "This meeting was cancelled. To reschedule, ask an admin to duplicate the meeting and set a new date."
+    ? isAdmin
+      ? "Create a replacement meeting in Admin to reschedule."
+      : "This meeting was cancelled. To reschedule, ask an admin to create a replacement meeting."
     : "";
   const meetingDateLabel = formatMeetingDate(meetingStartsAt, officeTz);
   const meetingHubPath = `/meetings/${meetingId}`;
@@ -733,11 +736,12 @@ export function AgendaItemsPanel({
       setStatus(meetingStatusNotice || "Submissions are disabled for this meeting.");
       return;
     }
-    if (
-      !confirm(
-        "Withdraw this item? It will be marked withdrawn and removed from review. You will need to submit a new item to be considered again.",
-      )
-    )
+    const currentItem = items.find((item) => item.id === itemId);
+    const confirmMessage =
+      currentItem?.state === "draft"
+        ? "Delete this draft? It will be removed from your submissions list."
+        : "Withdraw this item? It will be marked withdrawn and removed from review. You will need to submit a new item to be considered again.";
+    if (!confirm(confirmMessage))
       return;
 
     if (actionBusy) return;
@@ -1172,6 +1176,13 @@ export function AgendaItemsPanel({
           {meetingCancelledGuidance ? (
             <div className="mt-1 text-xs text-red-700/80">{meetingCancelledGuidance}</div>
           ) : null}
+          {meetingIsCancelled && isAdmin ? (
+            <div className="mt-2">
+              <Link href="/admin?tab=meetings#admin-meetings-create">
+                <Button size="sm" variant="outline">Reschedule meeting</Button>
+              </Link>
+            </div>
+          ) : null}
         </div>
       ) : null}
       {status ? (
@@ -1396,8 +1407,10 @@ export function AgendaItemsPanel({
                 <label className="flex items-center gap-2">
                   <input
                     type="checkbox"
+                    className="h-4 w-4"
                     checked={agendaLateOnly}
                     onChange={(e) => setAgendaLateOnly(e.target.checked)}
+                    aria-label="Filter late agenda items"
                   />
                   Late only
                 </label>
@@ -1799,9 +1812,13 @@ export function AgendaItemsPanel({
                           size="sm"
                           onClick={() => handleWithdraw(item.id)}
                           disabled={!!actionBusy}
-                          title="Withdrawn items are removed from review and cannot be edited."
+                          title={
+                            item.state === "draft"
+                              ? "Delete this draft. You can submit a new item later."
+                              : "Withdrawn items are removed from review and cannot be edited."
+                          }
                         >
-                          Withdraw
+                          {item.state === "draft" ? "Delete draft" : "Withdraw"}
                         </Button>
                       </div>
                     ) : null}
@@ -1837,14 +1854,16 @@ export function AgendaItemsPanel({
             All Submissions ({filteredAllItems.length} of {allItems.length})
           </h3>
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-            <div className="text-xs text-foreground/60">You have chair privileges for this meeting.</div>
+            <div className="text-xs text-foreground/60">You have review privileges for this meeting.</div>
             <div className="flex flex-wrap items-center gap-2 text-xs text-foreground/70">
               <label className="flex items-center gap-2">
                 <input
                   type="checkbox"
+                  className="h-4 w-4"
                   checked={allSelectableSelected}
                   onChange={(e) => toggleSelectAllAdminItems(e.target.checked)}
                   disabled={selectableAdminItems.length === 0}
+                  aria-label="Select all submitted agenda items"
                 />
                 <span>Select all submitted ({selectableAdminItems.length})</span>
               </label>
@@ -1911,10 +1930,11 @@ export function AgendaItemsPanel({
                     <div className="flex items-start gap-2">
                       <input
                         type="checkbox"
-                        className={`mt-1 ${isSelectable ? "" : "opacity-50"}`}
+                        className={`mt-1 h-4 w-4 ${isSelectable ? "" : "opacity-50"}`}
                         checked={!!selectedAdminItems[item.id]}
                         onChange={() => toggleAdminSelection(item.id)}
                         disabled={!isSelectable || !!actionBusy}
+                        aria-label={`Select ${item.title}`}
                         title={
                           isSelectable ? "Select for bulk review" : "Only submitted items can be selected"
                         }

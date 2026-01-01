@@ -106,6 +106,15 @@ function complianceBadgeClass(posted: boolean): string {
   return posted ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700";
 }
 
+function complianceMissingCount(meeting: Meeting): number {
+  if (meeting.status === "cancelled") return 0;
+  let missing = 0;
+  if (!meeting.notice_posted_at) missing += 1;
+  if (!meeting.agenda_posted_at) missing += 1;
+  if (meeting.status === "completed" && !meeting.minutes_posted_at) missing += 1;
+  return missing;
+}
+
 function ComplianceBadge({ label, posted }: { label: string; posted: boolean }) {
   const statusLabel = posted ? "posted" : "missing";
   return (
@@ -182,12 +191,13 @@ export default function MeetingsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [officeTz, setOfficeTz] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [showPast, setShowPast] = useState(false);
   const [meetingSearch, setMeetingSearch] = useState("");
   const [meetingTypeFilter, setMeetingTypeFilter] = useState("all");
   const [meetingStatusFilter, setMeetingStatusFilter] = useState("all");
   const [meetingScopeFilter, setMeetingScopeFilter] = useState<"all" | "committee" | "general">("all");
-  const [meetingSort, setMeetingSort] = useState<"upcoming" | "recent" | "title">("upcoming");
+  const [meetingSort, setMeetingSort] = useState<"upcoming" | "recent" | "title" | "compliance">("upcoming");
   const [meetingStartDateFilter, setMeetingStartDateFilter] = useState("");
   const [meetingEndDateFilter, setMeetingEndDateFilter] = useState("");
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
@@ -231,6 +241,20 @@ export default function MeetingsPage() {
       const { data: tzData, error: tzErr } = await supabase.rpc("office_timezone");
       if (!cancelled && !tzErr && typeof tzData === "string" && tzData.length > 0) {
         setOfficeTz(tzData);
+      }
+
+      try {
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+        if (!cancelled && user) {
+          const { data: adminData, error: adminErr } = await supabase.rpc("is_admin", { _uid: user.id });
+          if (!cancelled) setIsAdmin(!adminErr && !!adminData);
+        } else if (!cancelled) {
+          setIsAdmin(false);
+        }
+      } catch {
+        if (!cancelled) setIsAdmin(false);
       }
 
       const res = await fetch(showPast ? "/api/meetings?includePast=1" : "/api/meetings");
@@ -296,6 +320,13 @@ export default function MeetingsPage() {
       const aTime = new Date(a.starts_at).getTime();
       const bTime = new Date(b.starts_at).getTime();
       if (meetingSort === "title") return a.title.localeCompare(b.title);
+      if (meetingSort === "compliance") {
+        const aMissing = complianceMissingCount(a);
+        const bMissing = complianceMissingCount(b);
+        if (aMissing !== bMissing) return bMissing - aMissing;
+        if (Number.isNaN(aTime) || Number.isNaN(bTime)) return 0;
+        return aTime - bTime;
+      }
       if (Number.isNaN(aTime) || Number.isNaN(bTime)) return 0;
       return meetingSort === "upcoming" ? aTime - bTime : bTime - aTime;
     });
@@ -523,6 +554,11 @@ export default function MeetingsPage() {
                 <IconCalendar className="h-3.5 w-3.5" />
                 Subscribe to calendar feed
               </Button>
+              {isAdmin ? (
+                <Link href="/admin?tab=meetings#admin-meetings-create">
+                  <Button variant="outline" size="sm">Create meeting</Button>
+                </Link>
+              ) : null}
             </div>
           </div>
 
@@ -605,13 +641,14 @@ export default function MeetingsPage() {
                 className="h-9 w-full rounded border border-foreground/20 bg-background px-2 text-sm text-foreground"
                 value={meetingSort}
                 onChange={(event) => {
-                  setMeetingSort(event.target.value as "upcoming" | "recent" | "title");
+                  setMeetingSort(event.target.value as "upcoming" | "recent" | "title" | "compliance");
                   setPage(1);
                 }}
               >
                 <option value="upcoming">Upcoming</option>
                 <option value="recent">Most recent</option>
                 <option value="title">Title (A-Z)</option>
+                <option value="compliance">Compliance needs</option>
               </select>
             </label>
             <label className="space-y-1 text-xs text-foreground/70">
@@ -954,6 +991,7 @@ export default function MeetingsPage() {
                           event.stopPropagation();
                           handleDownloadCalendar(m);
                         }}
+                        title="Download a calendar file (.ics) for this meeting."
                       >
                         <IconCalendar className="h-3.5 w-3.5" />
                         Add to calendar

@@ -210,6 +210,7 @@ export function MeetingHubClient({
   initialDocs,
   officeTz,
   isAdmin,
+  canManageDocs,
   userId,
 }: {
   meeting: Meeting;
@@ -218,6 +219,7 @@ export function MeetingHubClient({
   initialDocs: DocRow[];
   officeTz: string | null;
   isAdmin: boolean;
+  canManageDocs: boolean;
   userId: string;
 }) {
   const [items, setItems] = useState<AgendaItem[]>(initialItems);
@@ -572,29 +574,42 @@ export function MeetingHubClient({
               <div className="h-2 rounded bg-primary" style={{ width: `${publishPercent}%` }} />
             </div>
             <div className="mt-3 grid gap-2 text-sm">
-              <div className="flex items-center justify-between">
+              <a
+                href="#agenda-items"
+                className="flex items-center justify-between rounded-md px-2 py-1 hover:bg-foreground/5"
+              >
                 <span>Accepted agenda items</span>
                 <span className={`text-xs ${acceptedAgendaCount > 0 ? "text-green-600" : "text-foreground/60"}`}>
-                  {acceptedAgendaCount > 0
-                    ? `${acceptedAgendaCount} ready`
-                    : "No accepted items yet"}
+                  {acceptedAgendaCount > 0 ? `${acceptedAgendaCount} ready` : "No accepted items yet"}
                 </span>
-              </div>
-              <div className="flex items-center justify-between">
+              </a>
+              <a
+                href="#meeting-docs"
+                className="flex items-center justify-between rounded-md px-2 py-1 hover:bg-foreground/5"
+              >
                 <span>Agenda document</span>
                 <span className={`text-xs ${agendaDocCount > 0 ? "text-green-600" : "text-foreground/60"}`}>
                   {agendaDocCount > 0 ? "Uploaded" : "Missing upload"}
                 </span>
-              </div>
-              <div className="flex items-center justify-between">
+              </a>
+              <a
+                href="#meeting-docs"
+                className="flex items-center justify-between rounded-md px-2 py-1 hover:bg-foreground/5"
+              >
                 <span>Minutes document</span>
                 <span className={`text-xs ${minutesDocCount > 0 ? "text-green-600" : "text-foreground/60"}`}>
                   {minutesDocCount > 0 ? "Uploaded" : "Missing upload"}
                 </span>
-              </div>
+              </a>
             </div>
-            <div className="mt-2 text-xs text-foreground/60">
-              Complete these steps in Agenda Items and Meeting Documents below.
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-foreground/60">
+              <span>Complete these steps in:</span>
+              <a href="#agenda-items" className="underline underline-offset-2 hover:text-foreground">
+                Agenda items
+              </a>
+              <a href="#meeting-docs" className="underline underline-offset-2 hover:text-foreground">
+                Meeting documents
+              </a>
             </div>
           </div>
 
@@ -641,7 +656,7 @@ export function MeetingHubClient({
           <MeetingDocsPanel
             meetingId={meeting.id}
             committeeId={meeting.committee_id}
-            isAdmin={isAdmin}
+            canManageDocs={canManageDocs}
             initialDocs={initialDocs}
             acceptedAgendaCount={acceptedAgendaCount}
             meetingStatus={meeting.status}
