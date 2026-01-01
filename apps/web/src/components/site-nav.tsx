@@ -6,15 +6,15 @@ import { getSupabaseServerComponentClient } from "@/lib/supabaseServerComponent"
 
 const primaryLinks = [
   { href: "/dashboard", label: "Dashboard" },
-  { href: "/tasks", label: "Tasks" },
   { href: "/meetings", label: "Meetings" },
+  { href: "/tasks", label: "Tasks" },
   { href: "/office-hours", label: "Office Hours" },
+  { href: "/finance", label: "Finance" },
+  { href: "/docs", label: "Documents" },
 ];
-const secondaryLinks = [
+const communityLinks = [
   { href: "/clubs", label: "Clubs" },
   { href: "/icc", label: "ICC" },
-  { href: "/finance", label: "Finance" },
-  { href: "/docs", label: "Docs" },
 ];
 const adminLink = { href: "/admin", label: "Admin" };
 
@@ -43,7 +43,7 @@ export async function SiteNav() {
   const navLinks = user ? primaryLinks : publicLinks;
   const navSections = user
     ? [
-        { label: "Operations", items: secondaryLinks },
+        { label: "Community", items: communityLinks },
         ...(isAdmin ? [{ label: "Admin", items: [adminLink] }] : []),
       ]
     : [];
@@ -51,12 +51,31 @@ export async function SiteNav() {
   return (
     <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
       <div className="mx-auto flex h-14 w-full max-w-5xl items-center justify-between gap-4 px-4">
-        <Link href="/dashboard" className="font-semibold tracking-tight hover:text-foreground/90" aria-label="Go to dashboard">
-          ASGC OS
+        <Link
+          href="/dashboard"
+          className="flex items-center gap-3 font-semibold tracking-tight hover:text-foreground/90"
+          aria-label="Go to dashboard"
+        >
+          <span className="flex h-9 w-9 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground">
+            AS
+          </span>
+          <span className="flex flex-col leading-tight">
+            <span className="text-sm font-semibold">ASGC OS</span>
+            <span className="hidden text-[0.65rem] font-normal text-foreground/60 sm:block">
+              Student government operations
+            </span>
+          </span>
         </Link>
         <SiteNavLinks primary={navLinks} sections={navSections} />
 
         <div className="flex shrink-0 items-center gap-2">
+          {isAdmin ? (
+            <Link href="/admin?tab=meetings#admin-meetings-create">
+              <Button size="sm" variant="outline">
+                Create meeting
+              </Button>
+            </Link>
+          ) : null}
           {user ? (
             <>
               <Link

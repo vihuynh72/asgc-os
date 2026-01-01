@@ -24,13 +24,11 @@ export function SiteNavLinks({
   const pathname = usePathname() ?? "/";
   const primaryLinks = primary ?? [];
   const navSections = sections ?? [];
-  const activeSection =
-    navSections.find((section) => section.items.some((item) => isActive(pathname, item.href))) ?? null;
   const hasSections = navSections.length > 0;
 
   return (
     <nav aria-label="Primary" className="flex min-w-0 flex-1 items-center gap-4">
-      <div className="flex min-w-0 flex-1 items-center gap-5 overflow-x-auto whitespace-nowrap text-sm">
+      <div className="flex min-w-0 flex-1 items-center gap-4 overflow-x-auto whitespace-nowrap text-sm">
         {primaryLinks.map((item) => {
           const active = isActive(pathname, item.href);
           return (
@@ -39,8 +37,8 @@ export function SiteNavLinks({
               href={item.href}
               className={`rounded-md px-2 py-1 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 ${
                 active
-                  ? "bg-foreground/10 font-semibold text-foreground shadow-sm"
-                  : "text-foreground/70 hover:bg-foreground/5 hover:text-foreground"
+                  ? "border border-primary/30 bg-primary/15 font-semibold text-foreground underline underline-offset-4"
+                  : "border border-transparent text-foreground/70 hover:bg-foreground/5 hover:text-foreground"
               }`}
               aria-current={active ? "page" : undefined}
             >
@@ -51,51 +49,52 @@ export function SiteNavLinks({
       </div>
 
       {hasSections ? (
-        <Popover>
-          <PopoverTrigger asChild>
-            <button
-              type="button"
-              className={`rounded-md px-2 py-1 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 ${
-                activeSection
-                  ? "bg-muted/70 text-foreground shadow-sm"
-                  : "text-foreground/70 hover:bg-muted/60 hover:text-foreground"
-              }`}
-            >
-              <span className="inline-flex items-center gap-1">
-                {activeSection?.label ?? "More"}
-                <IconChevronDown className="h-3.5 w-3.5" />
-              </span>
-            </button>
-          </PopoverTrigger>
-          <PopoverContent align="end" className="w-56 p-3">
-            <div className="space-y-3">
-              {navSections.map((section) => (
-                <div key={section.label} className="space-y-1">
-                  <div className="px-2 text-[0.7rem] font-semibold uppercase tracking-wide text-foreground/50">
-                    {section.label}
+        <div className="flex items-center gap-2">
+          {navSections.map((section) => {
+            const sectionActive = section.items.some((item) => isActive(pathname, item.href));
+            return (
+              <Popover key={section.label}>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    className={`rounded-md px-2 py-1 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 ${
+                      sectionActive
+                        ? "border border-primary/30 bg-primary/10 font-semibold text-foreground"
+                        : "border border-transparent text-foreground/70 hover:bg-muted/60 hover:text-foreground"
+                    }`}
+                    aria-haspopup="menu"
+                  >
+                    <span className="inline-flex items-center gap-1">
+                      {section.label}
+                      <IconChevronDown className="h-3.5 w-3.5" />
+                    </span>
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent align="end" className="w-56 p-3">
+                  <div className="space-y-1">
+                    {section.items.map((item) => {
+                      const active = isActive(pathname, item.href);
+                      return (
+                        <Link
+                          key={item.href}
+                          href={item.href}
+                          className={`flex items-center rounded-md px-2 py-1 text-sm transition-colors ${
+                            active
+                              ? "bg-muted/60 font-medium text-foreground"
+                              : "text-foreground/70 hover:bg-muted/60 hover:text-foreground"
+                          }`}
+                          aria-current={active ? "page" : undefined}
+                        >
+                          {item.label}
+                        </Link>
+                      );
+                    })}
                   </div>
-                  {section.items.map((item) => {
-                    const active = isActive(pathname, item.href);
-                    return (
-                      <Link
-                        key={item.href}
-                        href={item.href}
-                        className={`flex items-center rounded-md px-2 py-1 text-sm transition-colors ${
-                          active
-                            ? "bg-muted/60 font-medium text-foreground"
-                            : "text-foreground/70 hover:bg-muted/60 hover:text-foreground"
-                        }`}
-                        aria-current={active ? "page" : undefined}
-                      >
-                        {item.label}
-                      </Link>
-                    );
-                  })}
-                </div>
-              ))}
-            </div>
-          </PopoverContent>
-        </Popover>
+                </PopoverContent>
+              </Popover>
+            );
+          })}
+        </div>
       ) : null}
     </nav>
   );

@@ -970,6 +970,31 @@ export function AgendaItemsPanel({
     }
   }, [agendaFiltersActive]);
 
+  useEffect(() => {
+    const openForm = () => {
+      if (!meetingActive) {
+        toast.error(meetingStatusNotice || "Submissions are closed.");
+        return;
+      }
+      if (!submissionOpen) {
+        toast.error("Submission deadline has passed.");
+        return;
+      }
+      setShowNewForm(true);
+      requestAnimationFrame(() => {
+        document.getElementById("new-agenda-item")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    };
+
+    if (typeof window !== "undefined" && window.location.hash === "#new-agenda-item") {
+      openForm();
+    }
+
+    const handler = () => openForm();
+    window.addEventListener("agenda:open-form", handler);
+    return () => window.removeEventListener("agenda:open-form", handler);
+  }, [meetingActive, meetingStatusNotice, submissionOpen]);
+
   const agendaSummary = useMemo(() => {
     const total = items.length;
     const submitted = items.filter((i) => i.state === "submitted").length;
@@ -1468,11 +1493,27 @@ export function AgendaItemsPanel({
       </section>
 
       {meetingActive ? (
-        <div className="rounded-lg border border-foreground/10 p-4">
+        <div id="new-agenda-item" className="scroll-mt-24 rounded-lg border border-foreground/10 p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="text-base font-semibold">New agenda item</div>
             {submissionOpen ? (
-              <Button type="button" size="sm" onClick={() => setShowNewForm(!showNewForm)}>
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => {
+                  setShowNewForm((prev) => {
+                    const next = !prev;
+                    if (next) {
+                      requestAnimationFrame(() =>
+                        document
+                          .getElementById("new-agenda-item")
+                          ?.scrollIntoView({ behavior: "smooth", block: "start" }),
+                      );
+                    }
+                    return next;
+                  });
+                }}
+              >
                 {showNewFormResolved ? (
                   "Hide form"
                 ) : (
@@ -1519,6 +1560,9 @@ export function AgendaItemsPanel({
                     <option value="consent">Consent</option>
                     <option value="other">Other</option>
                   </select>
+                  <div className="mt-1 text-[11px] text-foreground/60">
+                    Action items usually require a vote. Discussion items prompt input before decisions.
+                  </div>
                 </div>
               </div>
 
@@ -1545,6 +1589,9 @@ export function AgendaItemsPanel({
                       rows={2}
                       className="w-full rounded border border-foreground/20 bg-background px-2 py-2 text-sm"
                     />
+                    <div className="mt-1 text-[11px] text-foreground/60">
+                      Provide the exact motion language if this item requires a vote.
+                    </div>
                   </div>
 
                   <div className="sm:col-span-2">
@@ -1556,6 +1603,9 @@ export function AgendaItemsPanel({
                       placeholder="e.g., $500 from ASGC budget (Account 1234)"
                       className="w-full rounded border border-foreground/20 bg-background px-2 py-2 text-sm"
                     />
+                    <div className="mt-1 text-[11px] text-foreground/60">
+                      Include amounts, funding sources, and any required account details.
+                    </div>
                   </div>
 
                   <div className="sm:col-span-2">

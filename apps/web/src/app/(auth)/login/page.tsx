@@ -113,7 +113,7 @@ export default function LoginPage() {
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [rememberEmail, setRememberEmail] = useState(true);
+  const [rememberEmail, setRememberEmail] = useState(false);
   const [rememberedEmails, setRememberedEmails] = useState<string[]>([]);
   const [token, setToken] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -414,6 +414,9 @@ export default function LoginPage() {
           />
           Remember this email on this device
         </label>
+        <p className="text-xs text-foreground/60">
+          Saves your email address in this browser for faster sign-in. Avoid enabling on shared devices.
+        </p>
 
         <Button type="submit" disabled={isSigningIn || normalizedEmail.length === 0 || password.length === 0}>
           {isSigningIn ? "Signing in..." : "Sign in"}

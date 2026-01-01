@@ -3,6 +3,7 @@ import { Lato, Source_Code_Pro } from "next/font/google";
 import "./globals.css";
 
 import { SiteNav } from "@/components/site-nav";
+import { SiteFooter } from "@/components/site-footer";
 import { OfficeHoursPresenceMonitor } from "@/components/office-hours-presence-monitor";
 import { RoleChangeListener } from "@/components/role-change-listener";
 import { Toaster } from "@/components/ui/toaster";
@@ -43,6 +44,7 @@ export default function RootLayout({
           <OfficeHoursPresenceMonitor />
           <RoleChangeListener />
           {children}
+          <SiteFooter />
           <Toaster />
         </div>
       </body>
