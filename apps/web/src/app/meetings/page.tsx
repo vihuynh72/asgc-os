@@ -200,6 +200,7 @@ export default function MeetingsPage() {
   const [meetingSort, setMeetingSort] = useState<"upcoming" | "recent" | "title" | "compliance">("upcoming");
   const [meetingStartDateFilter, setMeetingStartDateFilter] = useState("");
   const [meetingEndDateFilter, setMeetingEndDateFilter] = useState("");
+  const [activeDatePreset, setActiveDatePreset] = useState<"" | "today" | "next7" | "next30" | "past30">("");
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [filterRemoteOnly, setFilterRemoteOnly] = useState(false);
   const [filterLivestreamOnly, setFilterLivestreamOnly] = useState(false);
@@ -435,6 +436,7 @@ export default function MeetingsPage() {
       const value = formatDateOnly(today);
       setMeetingStartDateFilter(value);
       setMeetingEndDateFilter(value);
+      setActiveDatePreset("today");
       setPage(1);
       return;
     }
@@ -443,6 +445,7 @@ export default function MeetingsPage() {
       const end = formatDateOnly(addDays(today, 7));
       setMeetingStartDateFilter(start);
       setMeetingEndDateFilter(end);
+      setActiveDatePreset("next7");
       setPage(1);
       return;
     }
@@ -451,6 +454,7 @@ export default function MeetingsPage() {
       const end = formatDateOnly(addDays(today, 30));
       setMeetingStartDateFilter(start);
       setMeetingEndDateFilter(end);
+      setActiveDatePreset("next30");
       setPage(1);
       return;
     }
@@ -458,6 +462,7 @@ export default function MeetingsPage() {
     const end = formatDateOnly(today);
     setMeetingStartDateFilter(start);
     setMeetingEndDateFilter(end);
+    setActiveDatePreset("past30");
     setPage(1);
   }
 
@@ -469,6 +474,7 @@ export default function MeetingsPage() {
     setMeetingSort("upcoming");
     setMeetingStartDateFilter("");
     setMeetingEndDateFilter("");
+    setActiveDatePreset("");
     setFilterRemoteOnly(false);
     setFilterLivestreamOnly(false);
     setFilterCommentOnly(false);
@@ -659,6 +665,7 @@ export default function MeetingsPage() {
                 value={meetingStartDateFilter}
                 onChange={(event) => {
                   setMeetingStartDateFilter(event.target.value);
+                  setActiveDatePreset("");
                   setPage(1);
                 }}
               />
@@ -671,6 +678,7 @@ export default function MeetingsPage() {
                 value={meetingEndDateFilter}
                 onChange={(event) => {
                   setMeetingEndDateFilter(event.target.value);
+                  setActiveDatePreset("");
                   setPage(1);
                 }}
               />
@@ -689,17 +697,50 @@ export default function MeetingsPage() {
             <div className="flex flex-wrap items-center gap-2">
               <div className="flex flex-wrap items-center gap-1">
                 <span className="text-foreground/50">Quick range</span>
-                <Button variant="ghost" size="sm" onClick={() => applyMeetingDatePreset("today")}>
+                <Button
+                  variant={activeDatePreset === "today" ? "default" : "ghost"}
+                  size="sm"
+                  aria-pressed={activeDatePreset === "today"}
+                  onClick={() => applyMeetingDatePreset("today")}
+                >
                   Today
                 </Button>
-                <Button variant="ghost" size="sm" onClick={() => applyMeetingDatePreset("next7")}>
+                <Button
+                  variant={activeDatePreset === "next7" ? "default" : "ghost"}
+                  size="sm"
+                  aria-pressed={activeDatePreset === "next7"}
+                  onClick={() => applyMeetingDatePreset("next7")}
+                >
                   Next 7 days
                 </Button>
-                <Button variant="ghost" size="sm" onClick={() => applyMeetingDatePreset("next30")}>
+                <Button
+                  variant={activeDatePreset === "next30" ? "default" : "ghost"}
+                  size="sm"
+                  aria-pressed={activeDatePreset === "next30"}
+                  onClick={() => applyMeetingDatePreset("next30")}
+                >
                   Next 30 days
                 </Button>
-                <Button variant="ghost" size="sm" onClick={() => applyMeetingDatePreset("past30")}>
+                <Button
+                  variant={activeDatePreset === "past30" ? "default" : "ghost"}
+                  size="sm"
+                  aria-pressed={activeDatePreset === "past30"}
+                  onClick={() => applyMeetingDatePreset("past30")}
+                >
                   Past 30 days
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setMeetingStartDateFilter("");
+                    setMeetingEndDateFilter("");
+                    setActiveDatePreset("");
+                    setPage(1);
+                  }}
+                  disabled={!meetingStartDateFilter && !meetingEndDateFilter}
+                >
+                  Clear range
                 </Button>
               </div>
               <Button
@@ -863,6 +904,7 @@ export default function MeetingsPage() {
               size="sm"
               onClick={() => setPage(Math.max(1, resolvedPage - 1))}
               disabled={resolvedPage <= 1}
+              aria-label="Previous page"
             >
               Prev
             </Button>
@@ -871,6 +913,7 @@ export default function MeetingsPage() {
               size="sm"
               onClick={() => setPage(Math.min(pageCount, resolvedPage + 1))}
               disabled={resolvedPage >= pageCount}
+              aria-label="Next page"
             >
               Next
             </Button>

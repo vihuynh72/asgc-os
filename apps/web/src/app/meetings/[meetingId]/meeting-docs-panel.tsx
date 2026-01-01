@@ -31,6 +31,8 @@ function inferMimeType(file: File): string {
   if (name.endsWith(".pdf")) return "application/pdf";
   if (name.endsWith(".docx")) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
   if (name.endsWith(".doc")) return "application/msword";
+  if (name.endsWith(".odt")) return "application/vnd.oasis.opendocument.text";
+  if (name.endsWith(".rtf")) return "application/rtf";
   if (name.endsWith(".txt")) return "text/plain";
   if (name.endsWith(".csv")) return "text/csv";
   return "application/octet-stream";
@@ -81,11 +83,14 @@ function formatDocErrorMessage(message: string, docLabel?: string): string {
 }
 
 const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
-const ALLOWED_EXTENSIONS = [".pdf", ".doc", ".docx", ".txt", ".csv"];
+const ALLOWED_EXTENSIONS = [".pdf", ".doc", ".docx", ".odt", ".rtf", ".txt", ".csv"];
 const ALLOWED_MIME_TYPES = new Set([
   "application/pdf",
   "application/msword",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.oasis.opendocument.text",
+  "application/rtf",
+  "text/rtf",
   "text/plain",
   "text/csv",
 ]);
@@ -98,7 +103,7 @@ function validateUploadFile(file: File): string | null {
   const hasAllowedMime = ALLOWED_MIME_TYPES.has(mimeType);
 
   if (!hasAllowedExtension && !hasAllowedMime) {
-    return "Unsupported file type. Use PDF, DOC, DOCX, TXT, or CSV.";
+    return "Unsupported file type. Use PDF, DOC, DOCX, ODT, RTF, TXT, or CSV.";
   }
 
   if (file.size > MAX_UPLOAD_BYTES) {
@@ -199,6 +204,10 @@ export function MeetingDocsPanel({
   const [minutesDescription, setMinutesDescription] = useState<string>("");
   const [versionSourceId, setVersionSourceId] = useState<string>("");
   const [minutesMarkPosted, setMinutesMarkPosted] = useState<boolean>(false);
+  const [minutesPreviewUrl, setMinutesPreviewUrl] = useState<string | null>(null);
+  const [minutesPreviewDocId, setMinutesPreviewDocId] = useState<string | null>(null);
+  const [minutesPreviewError, setMinutesPreviewError] = useState<string>("");
+  const [minutesPreviewLoading, setMinutesPreviewLoading] = useState<boolean>(false);
 
   const [agendaFile, setAgendaFile] = useState<File | null>(null);
   const [agendaTitle, setAgendaTitle] = useState<string>(defaultAgendaTitle);
@@ -247,12 +256,21 @@ export function MeetingDocsPanel({
     }
   }, [agendaPreviewDocId, docs]);
 
+  useEffect(() => {
+    if (minutesPreviewDocId && !docs.some((doc) => doc.id === minutesPreviewDocId)) {
+      setMinutesPreviewDocId(null);
+      setMinutesPreviewUrl(null);
+      setMinutesPreviewError("");
+    }
+  }, [minutesPreviewDocId, docs]);
+
   const fallbackVisibility = committeeId ? "committee_only" : "internal";
 
   const minutesDocs = useMemo(() => docs.filter((d) => d.doc_type === "minutes"), [docs]);
   const agendaDocs = useMemo(() => docs.filter((d) => d.doc_type === "agenda"), [docs]);
   const minutesGroups = useMemo(() => groupDocsByVersion(minutesDocs), [minutesDocs]);
   const agendaGroups = useMemo(() => groupDocsByVersion(agendaDocs), [agendaDocs]);
+  const latestMinutesDoc = minutesGroups[0]?.docs[0] ?? null;
   const latestAgendaDoc = agendaGroups[0]?.docs[0] ?? null;
   const canGenerateAgenda = canEdit && acceptedAgendaCount > 0;
 
@@ -568,6 +586,43 @@ export function MeetingDocsPanel({
     }
   }
 
+  async function handlePreviewMinutes(doc: DocRow) {
+    if (minutesPreviewDocId === doc.id && minutesPreviewUrl) {
+      setMinutesPreviewUrl(null);
+      setMinutesPreviewDocId(null);
+      setMinutesPreviewError("");
+      return;
+    }
+
+    if (doc.mime_type && !doc.mime_type.includes("pdf")) {
+      await handleDownload(doc);
+      return;
+    }
+
+    setMinutesPreviewLoading(true);
+    setMinutesPreviewError("");
+    setStatus("Loading minutes preview...");
+    try {
+      const { signedUrl } = await fetchJson<{ signedUrl: string | null }>(
+        `/api/docs/${encodeURIComponent(doc.id)}`,
+      );
+      if (!signedUrl) {
+        throw new Error("Could not generate preview link");
+      }
+      setMinutesPreviewUrl(signedUrl);
+      setMinutesPreviewDocId(doc.id);
+      setStatus("");
+    } catch (err) {
+      const raw = err instanceof Error ? err.message : "Failed to load preview";
+      const msg = formatDocErrorMessage(raw, "minutes");
+      setMinutesPreviewError(msg);
+      setStatus(msg);
+      toast.error(msg);
+    } finally {
+      setMinutesPreviewLoading(false);
+    }
+  }
+
   async function handleToggleVisibility(doc: DocRow) {
     if (!canManageDocs) {
       setStatus("You do not have permission to update meeting documents.");
@@ -660,7 +715,52 @@ export function MeetingDocsPanel({
             <div className="text-xs text-foreground/70">Upload minutes tied to this meeting.</div>
             <div className="text-xs text-foreground/60">Posted at: {formatPostedAt(minutesPostedAtState)}</div>
           </div>
+          {latestMinutesDoc ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => void handlePreviewMinutes(latestMinutesDoc)}
+              title="Preview the latest minutes."
+              disabled={minutesPreviewLoading}
+            >
+              <IconDownload className="h-3.5 w-3.5" />
+              {minutesPreviewDocId === latestMinutesDoc.id && minutesPreviewUrl
+                ? "Hide minutes preview"
+                : "Preview latest minutes"}
+            </Button>
+          ) : null}
         </div>
+        {minutesPreviewLoading ? (
+          <div className="mt-2 text-xs text-foreground/60">Loading minutes preview...</div>
+        ) : null}
+        {minutesPreviewError ? (
+          <div className="mt-2 text-xs text-red-600">{minutesPreviewError}</div>
+        ) : null}
+        {minutesPreviewUrl && latestMinutesDoc && minutesPreviewDocId === latestMinutesDoc.id ? (
+          <div className="mt-3 rounded-md border border-foreground/10 bg-foreground/5 p-3">
+            <div className="text-xs font-medium text-foreground/70">Minutes preview</div>
+            <iframe
+              title="Minutes preview"
+              src={minutesPreviewUrl}
+              className="mt-2 h-96 w-full rounded border border-foreground/10"
+            />
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-foreground/70">
+              <a
+                href={minutesPreviewUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="underline underline-offset-2"
+              >
+                Open in new tab
+              </a>
+              <Button type="button" variant="outline" size="sm" onClick={() => handleDownload(latestMinutesDoc)}>
+                <IconDownload className="h-3.5 w-3.5" />
+                Download
+              </Button>
+            </div>
+          </div>
+        ) : null}
 
         {canEdit ? (
           <details
@@ -735,7 +835,9 @@ export function MeetingDocsPanel({
                     }}
                     className="text-sm"
                   />
-                  <div className="mt-1 text-xs text-foreground/60">PDF, DOC, DOCX, TXT, or CSV. Max 20 MB.</div>
+                  <div className="mt-1 text-xs text-foreground/60">
+                    PDF, DOC, DOCX, ODT, RTF, TXT, or CSV. Max 20 MB.
+                  </div>
                   {uploadFile ? (
                     <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-foreground/70">
                       <span>
@@ -817,14 +919,14 @@ export function MeetingDocsPanel({
                       ) : null}
                     </div>
                     {versionCount > 1 ? (
-                      <div className="space-y-1 text-xs text-foreground/70">
-                        <div className="text-foreground/60">Version history</div>
+                      <div className="space-y-1 text-sm text-foreground/70">
+                        <div className="text-xs text-foreground/60">Version history</div>
                         {group.docs.map((doc, index) => (
                           <div key={doc.id} className="flex flex-wrap items-center justify-between gap-2">
                             <span>
                               {index === 0 ? "Latest" : `Version ${versionCount - index}`}
                             </span>
-                            <span>
+                            <span className="text-xs text-foreground/60">
                               {new Date(doc.created_at).toLocaleString()} • {formatBytes(doc.size_bytes)} • {doc.mime_type ?? "Unknown type"}
                             </span>
                             {doc.description ? (
@@ -1043,7 +1145,9 @@ export function MeetingDocsPanel({
                     }}
                     className="text-sm"
                   />
-                  <div className="mt-1 text-xs text-foreground/60">PDF, DOC, DOCX, TXT, or CSV. Max 20 MB.</div>
+                  <div className="mt-1 text-xs text-foreground/60">
+                    PDF, DOC, DOCX, ODT, RTF, TXT, or CSV. Max 20 MB.
+                  </div>
                   {agendaFile ? (
                     <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-foreground/70">
                       <span>
@@ -1125,14 +1229,14 @@ export function MeetingDocsPanel({
                       ) : null}
                     </div>
                     {versionCount > 1 ? (
-                      <div className="space-y-1 text-xs text-foreground/70">
-                        <div className="text-foreground/60">Version history</div>
+                      <div className="space-y-1 text-sm text-foreground/70">
+                        <div className="text-xs text-foreground/60">Version history</div>
                         {group.docs.map((doc, index) => (
                           <div key={doc.id} className="flex flex-wrap items-center justify-between gap-2">
                             <span>
                               {index === 0 ? "Latest" : `Version ${versionCount - index}`}
                             </span>
-                            <span>
+                            <span className="text-xs text-foreground/60">
                               {new Date(doc.created_at).toLocaleString()} • {formatBytes(doc.size_bytes)} • {doc.mime_type ?? "Unknown type"}
                             </span>
                             {doc.description ? (

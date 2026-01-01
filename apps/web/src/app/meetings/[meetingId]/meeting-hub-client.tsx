@@ -347,11 +347,11 @@ export function MeetingHubClient({
 
   return (
     <div className="space-y-6">
-      <nav aria-label="Breadcrumb" className="flex flex-wrap items-center gap-2 text-xs text-foreground/60">
+      <nav aria-label="Breadcrumb" className="flex flex-wrap items-center gap-2 text-sm text-foreground/70">
         {breadcrumbs.map((crumb, index) => (
           <span key={crumb.href} className="flex items-center gap-2">
             {index > 0 ? <span className="text-foreground/40">/</span> : null}
-            <Link className="hover:text-foreground" href={crumb.href}>
+            <Link className="hover:text-foreground hover:underline underline-offset-4" href={crumb.href}>
               {crumb.label}
             </Link>
           </span>
@@ -371,7 +371,12 @@ export function MeetingHubClient({
           <div className="mt-2">
             <Button
               size="sm"
-              onClick={() => document.getElementById("agenda-items")?.scrollIntoView({ behavior: "smooth" })}
+              onClick={() => {
+                window.dispatchEvent(new CustomEvent("agenda:open-form"));
+                const target =
+                  document.getElementById("new-agenda-item") ?? document.getElementById("agenda-items");
+                target?.scrollIntoView({ behavior: "smooth" });
+              }}
             >
               <IconPlus className="h-3.5 w-3.5" />
               Submit an agenda item
@@ -399,7 +404,10 @@ export function MeetingHubClient({
           )}
         </div>
         <div className="mt-3 grid gap-3 md:grid-cols-2">
-          <div className="rounded-md border border-foreground/10 bg-background px-3 py-2">
+          <a
+            href="#agenda-items"
+            className="rounded-md border border-foreground/10 bg-background px-3 py-2 transition hover:border-foreground/30 hover:bg-foreground/5"
+          >
             <div className="flex items-center gap-2 text-xs text-foreground/70">
               <span className={`flex h-6 w-6 items-center justify-center rounded-full ${submissionMeta.pillClass}`}>
                 {submissionMeta.icon}
@@ -411,8 +419,11 @@ export function MeetingHubClient({
             {submissionCountdown ? (
               <div className="mt-1 text-xs text-foreground/60">{submissionCountdown}</div>
             ) : null}
-          </div>
-          <div className="rounded-md border border-foreground/10 bg-background px-3 py-2">
+          </a>
+          <a
+            href="#meeting-docs"
+            className="rounded-md border border-foreground/10 bg-background px-3 py-2 transition hover:border-foreground/30 hover:bg-foreground/5"
+          >
             <div className="flex items-center gap-2 text-xs text-foreground/70">
               <span className={`flex h-6 w-6 items-center justify-center rounded-full ${postingMeta.pillClass}`}>
                 {postingMeta.icon}
@@ -424,7 +435,7 @@ export function MeetingHubClient({
             {postingCountdown ? (
               <div className="mt-1 text-xs text-foreground/60">{postingCountdown}</div>
             ) : null}
-          </div>
+          </a>
         </div>
       </section>
 
