@@ -586,7 +586,8 @@ export function AdminPanel({
   const canEdit = tier !== "read-only";
   const canSeeAccessTab = tier === "full";
   const canSeeRolesTab = tier === "full";
-  const canSeeOfficeConfig = tier === "full" || isEvp;
+  const canSeeOfficeConfig = (tier === "full" || isEvp) && tier !== "read-only";
+  const canManageCommittees = tier === "full";
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -1574,6 +1575,12 @@ export function AdminPanel({
   }
 
   async function onCreateCommittee() {
+    if (!canManageCommittees) {
+      const msg = "Full admin access is required to manage committees.";
+      setCommitteeActionStatus(msg);
+      toast.error(msg);
+      return;
+    }
     if (isReadOnly) {
       toast.error("Read-only mode: updates are disabled.");
       return;
@@ -1623,6 +1630,12 @@ export function AdminPanel({
   }
 
   function startEditCommittee(committee: CommitteeRow) {
+    if (!canManageCommittees) {
+      const msg = "Full admin access is required to manage committees.";
+      setCommitteeActionStatus(msg);
+      toast.error(msg);
+      return;
+    }
     setCommitteeDrafts((prev) => ({
       ...prev,
       [committee.id]: { name: committee.name, committee_key: committee.committee_key },
@@ -1646,6 +1659,12 @@ export function AdminPanel({
   }
 
   async function saveCommittee(committee: CommitteeRow) {
+    if (!canManageCommittees) {
+      const msg = "Full admin access is required to manage committees.";
+      setCommitteeActionStatus(msg);
+      toast.error(msg);
+      return;
+    }
     const draft = committeeDrafts[committee.id];
     if (!draft) return;
     const name = draft.name.trim();
@@ -1687,6 +1706,12 @@ export function AdminPanel({
   }
 
   async function deleteCommittee(committee: CommitteeRow) {
+    if (!canManageCommittees) {
+      const msg = "Full admin access is required to manage committees.";
+      setCommitteeActionStatus(msg);
+      toast.error(msg);
+      return;
+    }
     if (isReadOnly) {
       toast.error("Read-only mode: updates are disabled.");
       return;
@@ -3154,9 +3179,11 @@ export function AdminPanel({
   const committeeKeyError = getCommitteeKeyValidationError(newCommitteeKey, committees);
   const committeeCreateDisabledReason = committeeCreating
     ? "Saving committee..."
-    : isReadOnly
-      ? "Read-only mode: updates are disabled."
-      : committeeNameError || committeeKeyError;
+    : !canManageCommittees
+      ? "Full admin access is required to manage committees."
+      : isReadOnly
+        ? "Read-only mode: updates are disabled."
+        : committeeNameError || committeeKeyError;
   const canCreateCommittee = committeeCreateDisabledReason.length === 0;
 
   const canCreateMeeting =
@@ -5395,6 +5422,11 @@ export function AdminPanel({
                   <div className="text-xs text-foreground/60">
                     {filteredCommittees.length} shown • {committees.length} total
                   </div>
+                  {!canManageCommittees ? (
+                    <div className="text-xs text-foreground/60">
+                      Full admin access is required to add or edit committees.
+                    </div>
+                  ) : null}
                 </div>
                 <Button variant="ghost" size="sm" onClick={() => void loadCommittees()}>
                   Refresh
@@ -5419,6 +5451,7 @@ export function AdminPanel({
                     }}
                     placeholder="e.g. Student Outreach"
                     aria-invalid={!!committeeNameError}
+                    disabled={!canManageCommittees}
                   />
                   {committeeNameError ? (
                     <div className="text-xs text-red-600">{committeeNameError}</div>
@@ -5436,6 +5469,7 @@ export function AdminPanel({
                     onChange={(e: ChangeEvent<HTMLInputElement>) => setNewCommitteeKey(e.target.value)}
                     placeholder="e.g. outreach"
                     aria-invalid={!!committeeKeyError}
+                    disabled={!canManageCommittees}
                   />
                   {committeeKeyError ? (
                     <div className="text-xs text-red-600">{committeeKeyError}</div>
@@ -5463,7 +5497,7 @@ export function AdminPanel({
                     setNewCommitteeKey("");
                     setCommitteeActionStatus("");
                   }}
-                  disabled={isReadOnly || (!newCommitteeName.trim() && !newCommitteeKey.trim())}
+                  disabled={!canManageCommittees || isReadOnly || (!newCommitteeName.trim() && !newCommitteeKey.trim())}
                 >
                   Clear
                 </Button>
@@ -5542,6 +5576,7 @@ export function AdminPanel({
                                         updateCommitteeDraft(committee.id, { name: e.target.value })
                                       }
                                       aria-invalid={!!draftNameError}
+                                      disabled={!canManageCommittees}
                                     />
                                     {draftNameError ? (
                                       <div className="text-xs text-red-600">{draftNameError}</div>
@@ -5557,6 +5592,7 @@ export function AdminPanel({
                                         updateCommitteeDraft(committee.id, { committee_key: e.target.value })
                                       }
                                       aria-invalid={!!draftKeyError}
+                                      disabled={!canManageCommittees}
                                     />
                                     {draftKeyError ? (
                                       <div className="text-xs text-red-600">{draftKeyError}</div>
@@ -5578,7 +5614,7 @@ export function AdminPanel({
                                     size="sm"
                                     variant="outline"
                                     onClick={() => void saveCommittee(committee)}
-                                    disabled={!canSaveCommittee}
+                                    disabled={!canManageCommittees || !canSaveCommittee}
                                     title={saveCommitteeDisabledReason || "Save committee"}
                                   >
                                     Save
@@ -5587,7 +5623,7 @@ export function AdminPanel({
                                     size="sm"
                                     variant="ghost"
                                     onClick={() => cancelCommitteeEdit(committee.id)}
-                                    disabled={committeeSavingId === committee.id}
+                                    disabled={!canManageCommittees || committeeSavingId === committee.id}
                                   >
                                     Cancel
                                   </Button>
@@ -5598,11 +5634,13 @@ export function AdminPanel({
                                     size="sm"
                                     variant="ghost"
                                     onClick={() => startEditCommittee(committee)}
-                                    disabled={isReadOnly || isBusy}
+                                    disabled={!canManageCommittees || isReadOnly || isBusy}
                                     title={
-                                      isReadOnly
-                                        ? "Read-only mode: updates are disabled."
-                                        : "Edit committee details"
+                                      !canManageCommittees
+                                        ? "Full admin access is required to manage committees."
+                                        : isReadOnly
+                                          ? "Read-only mode: updates are disabled."
+                                          : "Edit committee details"
                                     }
                                   >
                                     Edit
@@ -5625,11 +5663,13 @@ export function AdminPanel({
                                     variant="ghost"
                                     className="text-red-600 hover:bg-red-500/10"
                                     onClick={() => void deleteCommittee(committee)}
-                                    disabled={isReadOnly || isBusy}
+                                    disabled={!canManageCommittees || isReadOnly || isBusy}
                                     title={
-                                      isReadOnly
-                                        ? "Read-only mode: updates are disabled."
-                                        : "Delete committee"
+                                      !canManageCommittees
+                                        ? "Full admin access is required to manage committees."
+                                        : isReadOnly
+                                          ? "Read-only mode: updates are disabled."
+                                          : "Delete committee"
                                     }
                                   >
                                     Delete

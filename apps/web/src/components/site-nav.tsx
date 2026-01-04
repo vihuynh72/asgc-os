@@ -23,6 +23,7 @@ const publicLinks = [{ href: "/office-hours/kiosk", label: "Office Hours Form" }
 export async function SiteNav() {
   let user: { id: string; email: string | null } | null = null;
   let isAdmin = false;
+  let canCreateMeeting = false;
 
   try {
     const supabase = await getSupabaseServerComponentClient();
@@ -32,12 +33,15 @@ export async function SiteNav() {
 
     if (authUser) {
       user = { id: authUser.id, email: authUser.email ?? null };
-      const { data: isAdminData, error: adminErr } = await supabase.rpc("is_admin", { _uid: authUser.id });
-      isAdmin = !adminErr && !!isAdminData;
+      const { data: tierData, error: tierErr } = await supabase.rpc("get_admin_tier", { _uid: authUser.id });
+      const tier = (tierData?.tier as string | null) ?? null;
+      isAdmin = !tierErr && !!tier;
+      canCreateMeeting = isAdmin && tier !== "read-only";
     }
   } catch {
     user = null;
     isAdmin = false;
+    canCreateMeeting = false;
   }
 
   const navLinks = user ? primaryLinks : publicLinks;
@@ -69,7 +73,7 @@ export async function SiteNav() {
         <SiteNavLinks primary={navLinks} sections={navSections} />
 
         <div className="flex shrink-0 items-center gap-2">
-          {isAdmin ? (
+          {canCreateMeeting ? (
             <Link href="/admin?tab=meetings#admin-meetings-create">
               <Button size="sm" variant="outline">
                 Create meeting

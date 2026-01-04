@@ -1,8 +1,9 @@
-import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
 import { normalizeDateOnlyString } from "@/lib/dateOnly";
-import { getPublicEnv } from "@/lib/env";
+import { requireFullAdminOrEvp } from "@/lib/adminAuth";
+import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
+import { getSupabaseRouteHandlerClient } from "@/lib/supabaseServer";
 
 export const runtime = "nodejs";
 
@@ -40,44 +41,11 @@ function csvEscape(value: unknown): string {
   return s;
 }
 
-async function isAdminForRequest(
-  request: NextRequest,
-): Promise<
-  | { ok: true; userId: string; supabase: ReturnType<typeof createServerClient> }
-  | { ok: false; response: NextResponse }
-> {
-  const env = getPublicEnv();
-
-  const supabase = createServerClient(env.NEXT_PUBLIC_SUPABASE_URL, env.NEXT_PUBLIC_SUPABASE_ANON_KEY, {
-    cookies: {
-      getAll() {
-        return request.cookies.getAll();
-      },
-      setAll() {
-        // No-op: admin endpoints don't need to refresh auth cookies.
-      },
-    },
-  });
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return { ok: false, response: NextResponse.json({ error: "unauthorized" }, { status: 401 }) };
-  }
-
-  const { data: isAdmin, error: adminErr } = await supabase.rpc("is_admin", { _uid: user.id });
-  if (adminErr || !isAdmin) {
-    return { ok: false, response: NextResponse.json({ error: "forbidden" }, { status: 403 }) };
-  }
-
-  return { ok: true, userId: user.id, supabase };
-}
-
 export async function GET(request: NextRequest) {
-  const authz = await isAdminForRequest(request);
+  const authz = await requireFullAdminOrEvp(request);
   if (!authz.ok) return authz.response;
+
+  const supabase = await getSupabaseRouteHandlerClient();
 
   const formatParamRaw = request.nextUrl.searchParams.get("format");
   const formatParam = formatParamRaw === null || formatParamRaw === "csv" || formatParamRaw === "json" ? formatParamRaw : null;
@@ -97,18 +65,19 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "invalid_weekStart" }, { status: 400 });
   }
 
-  const { data: rows, error } = await authz.supabase.rpc("admin_weekly_hours", { _week_start: weekStartParam });
+  const { data: rows, error } = await supabase.rpc("admin_weekly_hours", { _week_start: weekStartParam });
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
   const typedRows = (rows ?? []) as AdminWeeklyHoursRow[];
   const userIds = typedRows.map((r) => r.user_id);
 
+  const admin = getSupabaseAdminClient();
   const [{ data: profiles }, { data: privates }] = await Promise.all([
-    authz.supabase
+    admin
       .from("profiles")
       .select("id,display_name")
       .in("id", userIds.length > 0 ? userIds : ["00000000-0000-0000-0000-000000000000"]),
-    authz.supabase
+    admin
       .from("profile_private")
       .select("id,email")
       .in("id", userIds.length > 0 ? userIds : ["00000000-0000-0000-0000-000000000000"]),

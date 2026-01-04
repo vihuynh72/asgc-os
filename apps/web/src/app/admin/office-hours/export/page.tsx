@@ -23,8 +23,12 @@ export default async function AdminOfficeHoursExportPage({
     redirect("/login?redirectTo=/admin/office-hours/export");
   }
 
-  const { data: isAdmin, error: adminErr } = await supabase.rpc("is_admin", { _uid: user.id });
-  if (adminErr || !isAdmin) {
+  const { data: tierData, error: tierErr } = await supabase.rpc("get_admin_tier", { _uid: user.id });
+  const tier = tierData?.tier as "full" | "partial" | "read-only" | null;
+  const isEvp = tierData?.is_evp as boolean ?? false;
+  const canAccess = (tier === "full" || isEvp) && tier !== "read-only";
+
+  if (tierErr || !tier || !canAccess) {
     redirect("/unauthorized?reason=admin&redirectTo=/admin/office-hours/export");
   }
 
