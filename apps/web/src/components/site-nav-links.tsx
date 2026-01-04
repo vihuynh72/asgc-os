@@ -40,7 +40,7 @@ export function SiteNavLinks({
               href={item.href}
               className={`rounded-md px-2 py-1 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 ${
                 active
-                  ? "border border-primary/30 bg-primary/15 font-semibold text-foreground underline underline-offset-4"
+                  ? "border border-primary/40 bg-primary/20 font-semibold text-foreground underline decoration-2 decoration-primary/70 underline-offset-4 ring-1 ring-primary/30"
                   : "border border-transparent text-foreground/70 hover:bg-foreground/5 hover:text-foreground"
               }`}
               aria-current={active ? "page" : undefined}
@@ -62,7 +62,7 @@ export function SiteNavLinks({
                     type="button"
                     className={`rounded-md px-2 py-1 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 ${
                       sectionActive
-                        ? "border border-primary/30 bg-primary/10 font-semibold text-foreground"
+                        ? "border border-primary/40 bg-primary/20 font-semibold text-foreground ring-1 ring-primary/30"
                         : "border border-transparent text-foreground/70 hover:bg-muted/60 hover:text-foreground"
                     }`}
                     aria-haspopup="menu"
@@ -123,7 +123,7 @@ export function SiteNavLinks({
                     onClick={() => setMobileOpen(false)}
                     className={`flex items-center rounded-md px-3 py-2 text-sm transition-colors ${
                       active
-                        ? "bg-primary/10 font-medium text-foreground"
+                        ? "bg-primary/20 font-semibold text-foreground"
                         : "text-foreground/80 hover:bg-foreground/5 hover:text-foreground"
                     }`}
                     aria-current={active ? "page" : undefined}
@@ -149,7 +149,7 @@ export function SiteNavLinks({
                         onClick={() => setMobileOpen(false)}
                         className={`flex items-center rounded-md px-3 py-2 text-sm transition-colors ${
                           active
-                            ? "bg-primary/10 font-medium text-foreground"
+                            ? "bg-primary/20 font-semibold text-foreground"
                             : "text-foreground/80 hover:bg-foreground/5 hover:text-foreground"
                         }`}
                         aria-current={active ? "page" : undefined}

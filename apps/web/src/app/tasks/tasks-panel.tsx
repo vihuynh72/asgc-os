@@ -350,6 +350,9 @@ export function TasksPanel({
       ? "Add a title to create a task."
       : "";
   const createDisabledHelpId = "task-create-disabled-help";
+  const createCommitteeErrorId = "task-create-committee-error";
+  const createTitleErrorId = "task-create-title-error";
+  const createDueWarningId = "task-create-due-warning";
 
   const prefillActive = Boolean(
     prefill?.title ||
@@ -522,6 +525,7 @@ export function TasksPanel({
     filterDueStart && filterDueEnd && filterDueStart.trim() && filterDueEnd.trim() && filterDueStart > filterDueEnd
       ? "Start date is after end date."
       : "";
+  const dueRangeErrorId = "task-filters-due-range-error";
   const advancedFiltersActive =
     filterDueStart.trim().length > 0 ||
     filterDueEnd.trim().length > 0 ||
@@ -1232,7 +1236,7 @@ export function TasksPanel({
               </div>
             ) : null}
             {prefillCommitteeMissing ? (
-              <div className="mt-1 text-xs text-red-600">
+              <div className="mt-1 text-xs text-red-700" role="alert">
                 Committee access missing for this prefill. Choose a committee you belong to.
               </div>
             ) : null}
@@ -1272,6 +1276,8 @@ export function TasksPanel({
                   void loadAssignees(next);
                 }}
                 aria-invalid={!!createErrors.committee}
+                aria-describedby={createErrors.committee ? createCommitteeErrorId : undefined}
+                aria-required="true"
               >
                 {committees.map((c) => (
                   <option key={c.id} value={c.id}>
@@ -1280,7 +1286,9 @@ export function TasksPanel({
                 ))}
               </select>
               {createErrors.committee ? (
-                <div className="text-xs text-red-600">{createErrors.committee}</div>
+                <div id={createCommitteeErrorId} className="text-xs text-red-700" role="alert">
+                  {createErrors.committee}
+                </div>
               ) : null}
             </label>
 
@@ -1321,9 +1329,13 @@ export function TasksPanel({
                 }}
                 placeholder="e.g., Draft agenda for next meeting"
                 aria-invalid={!!createErrors.title}
+                aria-describedby={createErrors.title ? createTitleErrorId : undefined}
+                aria-required="true"
               />
               {createErrors.title ? (
-                <div className="text-xs text-red-600">{createErrors.title}</div>
+                <div id={createTitleErrorId} className="text-xs text-red-700" role="alert">
+                  {createErrors.title}
+                </div>
               ) : null}
             </label>
 
@@ -1377,8 +1389,13 @@ export function TasksPanel({
                 className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
                 value={newDue}
                 onChange={(e: ChangeEvent<HTMLInputElement>) => setNewDue(e.target.value)}
+                aria-describedby={dueWarning ? createDueWarningId : undefined}
               />
-              {dueWarning ? <div className="text-xs text-amber-600">{dueWarning}</div> : null}
+              {dueWarning ? (
+                <div id={createDueWarningId} className="text-xs text-amber-700" role="alert">
+                  {dueWarning}
+                </div>
+              ) : null}
               <div className="flex flex-wrap items-center gap-2 text-xs text-foreground/60">
                 <span className="text-foreground/50">Quick set</span>
                 <Button type="button" variant="ghost" size="sm" onClick={() => setNewDue(formatDateOnly(new Date()))}>
@@ -1621,6 +1638,7 @@ export function TasksPanel({
                       setTaskPage(1);
                     }}
                     aria-invalid={!!dueRangeError}
+                    aria-describedby={dueRangeError ? dueRangeErrorId : undefined}
                   />
                 </label>
                 <label className="space-y-1 text-sm">
@@ -1635,13 +1653,18 @@ export function TasksPanel({
                       setTaskPage(1);
                     }}
                     aria-invalid={!!dueRangeError}
+                    aria-describedby={dueRangeError ? dueRangeErrorId : undefined}
                   />
                 </label>
                 <div className="flex items-end text-xs text-foreground/60">
                   Filter tasks due within a date range (optional).
                 </div>
               </div>
-              {dueRangeError ? <div className="mt-1 text-xs text-red-600">{dueRangeError}</div> : null}
+              {dueRangeError ? (
+                <div id={dueRangeErrorId} className="mt-1 text-xs text-red-700" role="alert">
+                  {dueRangeError}
+                </div>
+              ) : null}
               <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-foreground/60">
                 <span className="text-foreground/50">Quick range</span>
                 <Button
@@ -1938,24 +1961,27 @@ export function TasksPanel({
         <div className="rounded-md border">
           <div className="divide-y">
             {filteredTasks.length === 0 ? (
-              <div className="px-3 py-2 text-sm text-foreground/70">
-                {tasks.length === 0 ? "No tasks yet." : "No tasks match the current filters."}
-                {tasks.length > 0 ? (
-                  <div className="mt-2">
-                    <Button size="sm" variant="ghost" onClick={resetFilters}>
-                      <IconFilter className="h-3.5 w-3.5" />
-                      Clear filters
-                    </Button>
-                  </div>
-                ) : (
-                  <div className="mt-2">
+              <div className="px-3 py-3">
+                {tasks.length === 0 ? (
+                  <div className="space-y-2">
+                    <div className="text-sm font-medium text-foreground">No tasks yet</div>
+                    <div className="text-sm text-foreground/80">
+                      Tasks help track action items, owners, and due dates for your committees.
+                    </div>
                     <Button
                       size="sm"
-                      variant="outline"
                       onClick={() => document.getElementById("task-create-form")?.scrollIntoView({ behavior: "smooth" })}
                     >
                       <IconPlus className="h-3.5 w-3.5" />
                       Create your first task
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="text-sm text-foreground/70">No tasks match the current filters.</div>
+                    <Button size="sm" variant="ghost" onClick={resetFilters}>
+                      <IconFilter className="h-3.5 w-3.5" />
+                      Clear filters
                     </Button>
                   </div>
                 )}
@@ -1970,6 +1996,7 @@ export function TasksPanel({
                 const dueSoon = !overdue && isTaskDueSoon(t);
                 const attachmentUrl = newAttachmentUrlByTaskId[t.id] ?? "";
                 const attachmentUrlValid = !attachmentUrl.trim() || isValidHttpUrl(attachmentUrl);
+                const attachmentErrorId = `task-attachment-error-${t.id}`;
                 return (
                   <div
                     key={t.id}
@@ -2275,9 +2302,12 @@ export function TasksPanel({
                               }}
                               placeholder="https://..."
                               aria-invalid={!attachmentUrlValid}
+                              aria-describedby={!attachmentUrlValid ? attachmentErrorId : undefined}
                             />
                             {!attachmentUrlValid ? (
-                              <div className="text-xs text-red-600">Enter a valid http(s) URL.</div>
+                              <div id={attachmentErrorId} className="text-xs text-red-700" role="alert">
+                                Enter a valid http(s) URL.
+                              </div>
                             ) : null}
                             <div className="flex gap-2">
                               <input

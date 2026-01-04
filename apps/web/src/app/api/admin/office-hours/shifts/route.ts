@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
-import { requirePartialAdmin } from "@/lib/adminAuth";
+import { requireFullAdminOrEvp } from "@/lib/adminAuth";
 import { getSupabaseRouteHandlerClient } from "@/lib/supabaseServer";
 
 export const runtime = "nodejs";
@@ -13,9 +13,9 @@ const CreateShiftSchema = z.object({
   officeLocationId: z.string().uuid().optional(),
 });
 
-// POST: Create a shift (partial admin or higher with write access)
+// POST: Create a shift (full admin or EVP with write access)
 export async function POST(request: NextRequest) {
-  const authz = await requirePartialAdmin(request);
+  const authz = await requireFullAdminOrEvp(request);
   if (!authz.ok) return authz.response;
 
   const supabase = await getSupabaseRouteHandlerClient();

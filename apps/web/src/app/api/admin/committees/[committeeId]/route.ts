@@ -1,46 +1,14 @@
-import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-import { getPublicEnv } from "@/lib/env";
+import { requireFullAdmin } from "@/lib/adminAuth";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
 
-async function isAdminForRequest(
-  request: NextRequest,
-): Promise<{ ok: true } | { ok: false; response: NextResponse }> {
-  const env = getPublicEnv();
-  const supabase = createServerClient(env.NEXT_PUBLIC_SUPABASE_URL, env.NEXT_PUBLIC_SUPABASE_ANON_KEY, {
-    cookies: {
-      getAll() {
-        return request.cookies.getAll();
-      },
-      setAll() {
-        // No-op
-      },
-    },
-  });
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return { ok: false, response: NextResponse.json({ error: "unauthorized" }, { status: 401 }) };
-  }
-
-  const { data: isAdmin, error: adminErr } = await supabase.rpc("is_admin", { _uid: user.id });
-  if (adminErr || !isAdmin) {
-    return { ok: false, response: NextResponse.json({ error: "forbidden" }, { status: 403 }) };
-  }
-
-  return { ok: true };
-}
-
 type Params = { params: Promise<{ committeeId: string }> };
 
 export async function PATCH(request: NextRequest, { params }: Params) {
-  const authz = await isAdminForRequest(request);
+  const authz = await requireFullAdmin(request);
   if (!authz.ok) return authz.response;
 
   const { committeeId } = await params;
@@ -87,7 +55,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 }
 
 export async function DELETE(request: NextRequest, { params }: Params) {
-  const authz = await isAdminForRequest(request);
+  const authz = await requireFullAdmin(request);
   if (!authz.ok) return authz.response;
 
   const { committeeId } = await params;

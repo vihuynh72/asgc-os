@@ -1,29 +1,22 @@
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
+
+import { requireFullAdmin } from "@/lib/adminAuth";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
-import { createServerClient } from "@supabase/ssr";
-import { cookies } from "next/headers";
-import { getPublicEnv } from "@/lib/env";
+import { getSupabaseRouteHandlerClient } from "@/lib/supabaseServer";
 
 /**
  * GET /api/debug/test-role-listener
  * Returns current user's roles_updated_at and tests the trigger
  */
-export async function GET() {
-  const env = getPublicEnv();
-  const cookieStore = await cookies();
-  
-  const supabase = createServerClient(
-    env.NEXT_PUBLIC_SUPABASE_URL,
-    env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-    {
-      cookies: {
-        getAll() {
-          return cookieStore.getAll();
-        },
-        setAll() {},
-      },
-    }
-  );
+export async function GET(request: NextRequest) {
+  if (process.env.NODE_ENV === "production") {
+    return new NextResponse("Not Found", { status: 404 });
+  }
+
+  const authz = await requireFullAdmin(request);
+  if (!authz.ok) return authz.response;
+
+  const supabase = await getSupabaseRouteHandlerClient();
 
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {
@@ -72,22 +65,15 @@ export async function GET() {
  * Body: { action: "grant", roleKey: "volunteer" } - grants a role
  * Body: { action: "revoke" } - revokes all active roles
  */
-export async function POST(request: Request) {
-  const env = getPublicEnv();
-  const cookieStore = await cookies();
-  
-  const supabase = createServerClient(
-    env.NEXT_PUBLIC_SUPABASE_URL,
-    env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-    {
-      cookies: {
-        getAll() {
-          return cookieStore.getAll();
-        },
-        setAll() {},
-      },
-    }
-  );
+export async function POST(request: NextRequest) {
+  if (process.env.NODE_ENV === "production") {
+    return new NextResponse("Not Found", { status: 404 });
+  }
+
+  const authz = await requireFullAdmin(request);
+  if (!authz.ok) return authz.response;
+
+  const supabase = await getSupabaseRouteHandlerClient();
 
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {

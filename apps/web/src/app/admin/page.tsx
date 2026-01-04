@@ -137,14 +137,22 @@ export default async function AdminPage() {
     redirect("/unauthorized?reason=admin&redirectTo=/admin");
   }
 
+  const canSeeAccessTab = tier === "full";
+  const canSeeOfficeConfig = (tier === "full" || isEvp) && tier !== "read-only";
+  const shouldLoadUsers = canSeeAccessTab || canSeeOfficeConfig;
+
   const admin = getSupabaseAdminClient();
+
+  const usersPromise = shouldLoadUsers
+    ? admin
+        .from("profiles")
+        .select("id,display_name,status,created_at,profile_private(email)")
+        .order("created_at", { ascending: false })
+    : Promise.resolve({ data: [] as Array<unknown> });
 
   const [{ data: terms }, { data: usersRaw }] = await Promise.all([
     admin.from("terms").select("id,name,start_date,end_date,is_current").order("created_at", { ascending: false }),
-    admin
-      .from("profiles")
-      .select("id,display_name,status,created_at,profile_private(email)")
-      .order("created_at", { ascending: false }),
+    usersPromise,
   ]);
 
   const safeTerms = terms ?? [];
@@ -162,7 +170,11 @@ export default async function AdminPage() {
   const selectedTermId =
     safeTerms.find((t) => t.is_current)?.id ?? safeTerms[0]?.id ?? "";
 
-  const [{ data: globalAdvisorAssignments }, { data: termAssignments }] = await Promise.all([
+  let globalAdvisorAssignments: AssignmentRow[] = [];
+  let termAssignments: AssignmentRow[] = [];
+
+  if (canSeeAccessTab) {
+    const [globalAdvisorRes, termAssignmentsRes] = await Promise.all([
       admin
         .from("role_assignments")
         .select("id,user_id,role_key,term_id,starts_at,ends_at,is_primary")
@@ -180,44 +192,54 @@ export default async function AdminPage() {
         : Promise.resolve({ data: [] as AssignmentRow[] }),
     ]);
 
+    globalAdvisorAssignments = (globalAdvisorRes.data ?? []) as AssignmentRow[];
+    termAssignments = (termAssignmentsRes.data ?? []) as AssignmentRow[];
+  }
+
   let initialInvitesAllowlist: InviteAllowlistRow[] = [];
-  try {
-    const { data: invites } = await admin
-      .from("invites_allowlist")
-      .select("id,email,email_normalized,sort_order,is_active,invited_by,invited_at,revoked_at,notes")
-      .order("sort_order", { ascending: false })
-      .order("invited_at", { ascending: false })
-      .limit(200);
-    initialInvitesAllowlist = (invites ?? []) as InviteAllowlistRow[];
-  } catch {
-    initialInvitesAllowlist = [];
+  if (canSeeAccessTab) {
+    try {
+      const { data: invites } = await admin
+        .from("invites_allowlist")
+        .select("id,email,email_normalized,sort_order,is_active,invited_by,invited_at,revoked_at,notes")
+        .order("sort_order", { ascending: false })
+        .order("invited_at", { ascending: false })
+        .limit(200);
+      initialInvitesAllowlist = (invites ?? []) as InviteAllowlistRow[];
+    } catch {
+      initialInvitesAllowlist = [];
+    }
   }
 
   let initialInvitesBlocklist: InviteBlocklistRow[] = [];
-  try {
-    const { data: bans } = await admin
-      .from("invites_blocklist")
-      .select("id,pattern,pattern_normalized,is_active,banned_by,banned_at,unbanned_at,notes")
-      .order("is_active", { ascending: false })
-      .order("banned_at", { ascending: false })
-      .limit(200);
-    initialInvitesBlocklist = (bans ?? []) as InviteBlocklistRow[];
-  } catch {
-    initialInvitesBlocklist = [];
+  if (canSeeAccessTab) {
+    try {
+      const { data: bans } = await admin
+        .from("invites_blocklist")
+        .select("id,pattern,pattern_normalized,is_active,banned_by,banned_at,unbanned_at,notes")
+        .order("is_active", { ascending: false })
+        .order("banned_at", { ascending: false })
+        .limit(200);
+      initialInvitesBlocklist = (bans ?? []) as InviteBlocklistRow[];
+    } catch {
+      initialInvitesBlocklist = [];
+    }
   }
 
   let initialBootstrapRoleGrants: BootstrapRoleGrantRow[] = [];
-  try {
-    const { data: grants } = await admin
-      .from("bootstrap_role_grants")
-      .select("id,email,email_normalized,role_key,term_id,is_active,consumed_at,created_at,notes")
-      .eq("is_active", true)
-      .is("consumed_at", null)
-      .order("created_at", { ascending: false })
-      .limit(500);
-    initialBootstrapRoleGrants = (grants ?? []) as BootstrapRoleGrantRow[];
-  } catch {
-    initialBootstrapRoleGrants = [];
+  if (canSeeAccessTab) {
+    try {
+      const { data: grants } = await admin
+        .from("bootstrap_role_grants")
+        .select("id,email,email_normalized,role_key,term_id,is_active,consumed_at,created_at,notes")
+        .eq("is_active", true)
+        .is("consumed_at", null)
+        .order("created_at", { ascending: false })
+        .limit(500);
+      initialBootstrapRoleGrants = (grants ?? []) as BootstrapRoleGrantRow[];
+    } catch {
+      initialBootstrapRoleGrants = [];
+    }
   }
 
   // Phase 11: office config + quiet hours (best-effort; requires Phase 11 migration applied)
@@ -227,40 +249,42 @@ export default async function AdminPage() {
   // Phase 12: office hour requirements (best-effort)
   let initialOfficeHourRequirements: OfficeHourRequirementRow[] = [];
 
-  try {
-    initialOfficeConfig = await ensureOfficeConfigRow(admin);
+  if (canSeeOfficeConfig) {
+    try {
+      initialOfficeConfig = await ensureOfficeConfigRow(admin);
 
-    const { data: location, error: locationErr } = await admin
-      .from("office_locations")
-      .select("id,name,lat,lon,radius_m,grace_radius_m,timezone,active")
-      .eq("id", initialOfficeConfig.primary_office_location_id)
-      .single();
+      const { data: location, error: locationErr } = await admin
+        .from("office_locations")
+        .select("id,name,lat,lon,radius_m,grace_radius_m,timezone,active")
+        .eq("id", initialOfficeConfig.primary_office_location_id)
+        .single();
 
-    if (!locationErr) {
-      initialOfficeLocation = location as OfficeLocationRow;
-    }
-  } catch {
-    // If Phase 11 isn't applied yet, keep nulls. The client can still load via /api/admin/office-config.
-  }
-
-  try {
-    if (selectedTermId) {
-      const { data: reqs, error: reqErr } = await admin
-        .from("office_hour_requirements")
-        .select(
-          "id,role_key,term_id,weekly_total_hours,weekly_in_office_hours,effective_start,effective_end",
-        )
-        .eq("term_id", selectedTermId)
-        .is("effective_start", null)
-        .is("effective_end", null)
-        .order("role_key", { ascending: true });
-
-      if (!reqErr) {
-        initialOfficeHourRequirements = (reqs ?? []) as OfficeHourRequirementRow[];
+      if (!locationErr) {
+        initialOfficeLocation = location as OfficeLocationRow;
       }
+    } catch {
+      // If Phase 11 isn't applied yet, keep nulls. The client can still load via /api/admin/office-config.
     }
-  } catch {
-    // Keep empty; the client can load via /api/admin/office-hour-requirements.
+
+    try {
+      if (selectedTermId) {
+        const { data: reqs, error: reqErr } = await admin
+          .from("office_hour_requirements")
+          .select(
+            "id,role_key,term_id,weekly_total_hours,weekly_in_office_hours,effective_start,effective_end",
+          )
+          .eq("term_id", selectedTermId)
+          .is("effective_start", null)
+          .is("effective_end", null)
+          .order("role_key", { ascending: true });
+
+        if (!reqErr) {
+          initialOfficeHourRequirements = (reqs ?? []) as OfficeHourRequirementRow[];
+        }
+      }
+    } catch {
+      // Keep empty; the client can load via /api/admin/office-hour-requirements.
+    }
   }
 
   return (

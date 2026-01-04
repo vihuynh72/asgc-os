@@ -1,10 +1,10 @@
-import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
 import { normalizeDateOnlyString } from "@/lib/dateOnly";
-import { getPublicEnv } from "@/lib/env";
+import { requireFullAdminOrEvp } from "@/lib/adminAuth";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
+import { getSupabaseRouteHandlerClient } from "@/lib/supabaseServer";
 
 export const runtime = "nodejs";
 
@@ -44,41 +44,6 @@ type OfficeHourSessionRow = {
   updated_at: string;
 };
 
-async function isAdminForRequest(
-  request: NextRequest,
-): Promise<
-  | { ok: true; userId: string; supabase: ReturnType<typeof createServerClient> }
-  | { ok: false; response: NextResponse }
-> {
-  const env = getPublicEnv();
-
-  const supabase = createServerClient(env.NEXT_PUBLIC_SUPABASE_URL, env.NEXT_PUBLIC_SUPABASE_ANON_KEY, {
-    cookies: {
-      getAll() {
-        return request.cookies.getAll();
-      },
-      setAll() {
-        // No-op: admin endpoints don't need to refresh auth cookies.
-      },
-    },
-  });
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return { ok: false, response: NextResponse.json({ error: "unauthorized" }, { status: 401 }) };
-  }
-
-  const { data: isAdmin, error: adminErr } = await supabase.rpc("is_admin", { _uid: user.id });
-  if (adminErr || !isAdmin) {
-    return { ok: false, response: NextResponse.json({ error: "forbidden" }, { status: 403 }) };
-  }
-
-  return { ok: true, userId: user.id, supabase };
-}
-
 function clampLimit(raw: string | undefined): number {
   const n = raw ? Number(raw) : 2000;
   if (!Number.isFinite(n)) return 2000;
@@ -94,8 +59,10 @@ function computeDurationMinutes(checkinAtIso: string, checkoutAtIso: string | nu
 }
 
 export async function GET(request: NextRequest) {
-  const authz = await isAdminForRequest(request);
+  const authz = await requireFullAdminOrEvp(request);
   if (!authz.ok) return authz.response;
+
+  const supabase = await getSupabaseRouteHandlerClient();
 
   const parsed = QuerySchema.safeParse({
     startDate: request.nextUrl.searchParams.get("startDate"),
@@ -126,7 +93,7 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  const boundsRes = await authz.supabase.rpc("office_date_bounds", { _start_date: startDate, _end_date: endDate });
+  const boundsRes = await supabase.rpc("office_date_bounds", { _start_date: startDate, _end_date: endDate });
   if (boundsRes.error) {
     return NextResponse.json({ error: boundsRes.error.message }, { status: 500 });
   }
