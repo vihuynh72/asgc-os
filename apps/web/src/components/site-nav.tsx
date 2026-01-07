@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { SiteNavLinks } from "@/components/site-nav-links";
 import { Button } from "@/components/ui/button";
+import { ButtonLink } from "@/components/ui/button-link";
 import { getSupabaseServerComponentClient } from "@/lib/supabaseServerComponent";
 
 const primaryLinks = [
@@ -74,11 +75,9 @@ export async function SiteNav() {
 
         <div className="flex shrink-0 items-center gap-2">
           {canCreateMeeting ? (
-            <Link href="/admin?tab=meetings#admin-meetings-create">
-              <Button size="sm" variant="outline">
-                Create meeting
-              </Button>
-            </Link>
+            <ButtonLink href="/admin?tab=meetings#admin-meetings-create" size="sm" variant="outline">
+              Create meeting
+            </ButtonLink>
           ) : null}
           {user ? (
             <>
@@ -96,9 +95,9 @@ export async function SiteNav() {
               </form>
             </>
           ) : (
-            <Link href="/login" className="text-sm text-foreground/80 hover:text-foreground">
+            <ButtonLink href="/login" size="sm" variant="outline">
               Sign in
-            </Link>
+            </ButtonLink>
           )}
         </div>
       </div>

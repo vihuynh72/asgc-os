@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { PageShell } from "@/components/page-shell";
 import { Button } from "@/components/ui/button";
+import { ButtonLink } from "@/components/ui/button-link";
 import { hasPublicSupabaseEnv } from "@/lib/env";
 import { safeRedirectPath } from "@/lib/redirects";
 import { getSupabaseServerComponentClient } from "@/lib/supabaseServerComponent";
@@ -57,9 +58,9 @@ export default async function UnauthorizedPage({
 
         <div className="flex flex-wrap items-center gap-3">
           {reason === "admin" ? (
-            <Link href="/meetings">
-              <Button size="sm">Go to meetings</Button>
-            </Link>
+            <ButtonLink href="/meetings" size="sm">
+              Go to meetings
+            </ButtonLink>
           ) : null}
           <Link className="text-sm underline" href="/dashboard">
             Go to dashboard

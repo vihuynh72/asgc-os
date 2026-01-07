@@ -4,6 +4,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getPublicEnv } from "@/lib/env";
 import { sendEmail } from "@/lib/emailSender";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
+import { TEST_EMAIL_TEMPLATE } from "@/lib/testEmailTemplate";
 
 export const runtime = "nodejs";
 
@@ -59,8 +60,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "no email on file for current user" }, { status: 400 });
   }
 
-  const subject = "ASGC OS: Test email";
-  const text = "This is a test email from ASGC OS.";
+  const { subject, text } = TEST_EMAIL_TEMPLATE;
 
   const admin = getSupabaseAdminClient();
 
@@ -99,7 +99,14 @@ export async function POST(request: NextRequest) {
       metadata: { to: toEmail, provider: result.provider, providerMessageId: result.providerMessageId },
     });
 
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({
+      ok: true,
+      to: toEmail,
+      subject,
+      text,
+      providerMessageId: result.providerMessageId,
+      notificationId: queuedRow?.id ?? null,
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to send test email";
 
@@ -118,6 +125,15 @@ export async function POST(request: NextRequest) {
       metadata: { to: toEmail, error: message },
     });
 
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json(
+      {
+        error: message,
+        to: toEmail,
+        subject,
+        text,
+        notificationId: queuedRow?.id ?? null,
+      },
+      { status: 500 },
+    );
   }
 }

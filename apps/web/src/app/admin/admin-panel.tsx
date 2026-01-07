@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { copyTextWithFallback } from "@/lib/clipboard";
 import { addDaysDateOnly, normalizeDateOnlyString, startOfWeekMondayDateOnly, todayDateString } from "@/lib/dateOnly";
 import { allowlistKeysForNormalizedEmail } from "@/lib/invitesAllowlist";
+import { TEST_EMAIL_TEMPLATE } from "@/lib/testEmailTemplate";
 
 type TermRow = {
   id: string;
@@ -109,6 +110,15 @@ type InviteBlocklistRow = {
   banned_at: string;
   unbanned_at: string | null;
   notes: string | null;
+};
+
+type TestEmailResponse = {
+  ok: true;
+  to: string;
+  subject: string;
+  text: string;
+  providerMessageId: string | null;
+  notificationId: string | null;
 };
 
 type BootstrapRoleGrantRow = {
@@ -765,6 +775,7 @@ export function AdminPanel({
   const [meetingDrafts, setMeetingDrafts] = useState<Record<string, AdminMeetingDraft>>({});
 
   const [status, setStatus] = useState<string>("");
+  const [lastTestEmail, setLastTestEmail] = useState<TestEmailResponse | null>(null);
 
   async function loadOfficeHourRequirements(termId: string) {
     if (!termId) return;
@@ -881,10 +892,14 @@ export function AdminPanel({
   async function onSendTestEmail() {
     setStatus("Sending test email...");
     try {
-      await fetchJson<{ ok: true }>("/api/admin/send-test-email", { method: "POST" });
-      setStatus("Test email sent (or queued). Check notification_log and your inbox.");
+      const result = await fetchJson<TestEmailResponse>("/api/admin/send-test-email", { method: "POST" });
+      setLastTestEmail(result);
+      setStatus(`Test email sent to ${result.to}.`);
+      toast.success(`Test email sent to ${result.to}`);
     } catch (e) {
-      setStatus(e instanceof Error ? e.message : "Failed to send test email");
+      const msg = e instanceof Error ? e.message : "Failed to send test email";
+      setStatus(msg);
+      toast.error(msg);
     }
   }
 
@@ -5098,7 +5113,7 @@ export function AdminPanel({
 
       {adminTab === "meetings" ? (
         <>
-      <nav className="rounded-md border bg-foreground/5 px-3 py-2 text-sm">
+      <nav className="sticky top-16 z-30 rounded-md border bg-background/95 px-3 py-2 text-sm backdrop-blur">
         <div className="text-xs text-foreground/60">Jump to</div>
         <div className="mt-2 flex flex-wrap gap-2">
           <a className="rounded-full border border-foreground/10 bg-background px-3 py-1 text-xs" href="#admin-meetings-notifications">
@@ -5122,6 +5137,28 @@ export function AdminPanel({
           <p className="text-sm text-foreground/70">
             Sends a test email to your own account.
           </p>
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-2">
+          <div className="rounded-md border border-foreground/10 bg-background px-3 py-2">
+            <div className="text-xs text-foreground/60">Test email preview</div>
+            <div className="mt-1 text-sm font-medium">{TEST_EMAIL_TEMPLATE.subject}</div>
+            <div className="mt-1 whitespace-pre-wrap text-xs text-foreground/70">
+              {TEST_EMAIL_TEMPLATE.text}
+            </div>
+          </div>
+          {lastTestEmail ? (
+            <div className="rounded-md border border-foreground/10 bg-background px-3 py-2">
+              <div className="text-xs text-foreground/60">Last test email</div>
+              <div className="mt-1 text-sm font-medium">{lastTestEmail.to}</div>
+              <div className="mt-1 text-xs text-foreground/70">
+                Message ID: {lastTestEmail.providerMessageId ?? "Pending"}
+              </div>
+              <div className="text-xs text-foreground/60">
+                Log ID: {lastTestEmail.notificationId ?? "Not recorded"}
+              </div>
+            </div>
+          ) : null}
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
