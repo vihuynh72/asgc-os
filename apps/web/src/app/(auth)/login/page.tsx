@@ -124,6 +124,7 @@ export default function LoginPage() {
   const [verifyStatus, setVerifyStatus] = useState<"idle" | "error">("idle");
   const [passwordStatus, setPasswordStatus] = useState<"idle" | "error">("idle");
   const [resetStatus, setResetStatus] = useState<"idle" | "sent" | "error">("idle");
+  const [authMode, setAuthMode] = useState<"email" | "password">("email");
 
   const normalizedEmail = useMemo(() => normalizeEmail(email), [email]);
 
@@ -318,7 +319,7 @@ export default function LoginPage() {
   return (
     <PageShell
       title="Sign in"
-      description="Invite-only. If you're allowlisted, you'll receive a sign-in email."
+      description="Invite-only. Use your campus email to get started."
     >
       {existingUser ? (
         <div className="mt-4 max-w-md rounded-md border p-4">
@@ -344,169 +345,220 @@ export default function LoginPage() {
       </Suspense>
       <SupabaseHashErrorBanner />
 
-      <form onSubmit={onPasswordSignIn} className="mt-6 max-w-md space-y-4">
-        <div className="space-y-1">
-          <label htmlFor="email" className="text-sm font-medium">
-            Email
-          </label>
-          <input
-            id="email"
-            name="email"
-            type="email"
-            autoComplete="email"
-            required
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className="h-9 w-full rounded-md border bg-background px-3 text-sm"
-            placeholder="you@example.com"
-          />
-        </div>
-
-        <div className="space-y-1">
-          <label htmlFor="password" className="text-sm font-medium">
-            Password
-          </label>
-          <input
-            id="password"
-            name="password"
-            type="password"
-            autoComplete="current-password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="h-9 w-full rounded-md border bg-background px-3 text-sm"
-            placeholder="••••••••"
-          />
-        </div>
-
-        {rememberedEmails.length > 0 ? (
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs text-foreground/60">Recent:</span>
-            {rememberedEmails.map((saved) => (
-              <Button
-                key={saved}
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => setEmail(saved)}
-              >
-                {saved}
-              </Button>
-            ))}
+      <div className="mt-6 max-w-md space-y-6">
+        <div className="space-y-3 rounded-md border p-4">
+          <div className="flex flex-wrap gap-2">
             <Button
               type="button"
-              variant="ghost"
               size="sm"
+              variant={authMode === "email" ? "default" : "outline"}
               onClick={() => {
-                forgetRememberedEmails();
-                setRememberedEmails([]);
+                setAuthMode("email");
+                setPasswordStatus("idle");
+                setResetStatus("idle");
               }}
             >
-              Forget
+              Email sign-in
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant={authMode === "password" ? "default" : "outline"}
+              onClick={() => {
+                setAuthMode("password");
+                setStatus("idle");
+                setVerifyStatus("idle");
+              }}
+            >
+              Password
             </Button>
           </div>
-        ) : null}
 
-        <label className="flex items-center gap-2 text-sm text-foreground/70">
-          <input
-            type="checkbox"
-            checked={rememberEmail}
-            onChange={(e) => setRememberEmail(e.target.checked)}
-          />
-          Remember this email on this device
-        </label>
-        <p className="text-xs text-foreground/60">
-          Saves your email address in this browser for faster sign-in. Avoid enabling on shared devices.
-        </p>
-
-        <Button type="submit" disabled={isSigningIn || normalizedEmail.length === 0 || password.length === 0}>
-          {isSigningIn ? "Signing in..." : "Sign in"}
-        </Button>
-
-        <div className="flex flex-wrap items-center gap-3">
-          <Button
-            type="button"
-            variant="outline"
-            disabled={isResettingPassword || normalizedEmail.length === 0}
-            onClick={() => void onRequestPasswordReset()}
+          <form
+            onSubmit={authMode === "password" ? onPasswordSignIn : onSubmit}
+            className="space-y-4"
           >
-            {isResettingPassword ? "Sending..." : "Forgot password"}
-          </Button>
-          {resetStatus === "sent" ? <span className="text-sm text-foreground/70">If invited, you’ll get a reset email shortly.</span> : null}
+            <div className="space-y-1">
+              <label htmlFor="email" className="text-sm font-medium">
+                Email
+              </label>
+              <input
+                id="email"
+                name="email"
+                type="email"
+                autoComplete="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+                placeholder="you@example.com"
+              />
+            </div>
+
+            {authMode === "password" ? (
+              <div className="space-y-1">
+                <label htmlFor="password" className="text-sm font-medium">
+                  Password
+                </label>
+                <input
+                  id="password"
+                  name="password"
+                  type="password"
+                  autoComplete="current-password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+                  placeholder="••••••••"
+                />
+              </div>
+            ) : null}
+
+            {rememberedEmails.length > 0 ? (
+              <details className="rounded-md border border-foreground/10 px-3 py-2">
+                <summary className="cursor-pointer text-xs font-medium text-foreground/70">
+                  Use a recent email
+                </summary>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  {rememberedEmails.map((saved) => (
+                    <Button
+                      key={saved}
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setEmail(saved)}
+                    >
+                      {saved}
+                    </Button>
+                  ))}
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      forgetRememberedEmails();
+                      setRememberedEmails([]);
+                    }}
+                  >
+                    Forget
+                  </Button>
+                </div>
+              </details>
+            ) : null}
+
+            <label className="flex items-center gap-2 text-sm text-foreground/70">
+              <input
+                type="checkbox"
+                checked={rememberEmail}
+                onChange={(e) => setRememberEmail(e.target.checked)}
+              />
+              Remember this email
+            </label>
+
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <Button
+                type="submit"
+                className="w-full sm:w-auto"
+                disabled={
+                  authMode === "password"
+                    ? isSigningIn || normalizedEmail.length === 0 || password.length === 0
+                    : isSubmitting || normalizedEmail.length === 0
+                }
+              >
+                {authMode === "password"
+                  ? isSigningIn
+                    ? "Signing in..."
+                    : "Sign in"
+                  : isSubmitting
+                    ? "Sending..."
+                    : "Send sign-in email"}
+              </Button>
+
+              {authMode === "password" ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full sm:w-auto"
+                  disabled={isResettingPassword || normalizedEmail.length === 0}
+                  onClick={() => void onRequestPasswordReset()}
+                >
+                  {isResettingPassword ? "Sending..." : "Forgot password"}
+                </Button>
+              ) : null}
+            </div>
+
+            {authMode === "password" && passwordStatus === "error" ? (
+              <p className="text-sm text-foreground/70">
+                Sign-in failed. Check your email/password or use email sign-in.
+              </p>
+            ) : null}
+
+            {authMode === "password" && resetStatus === "sent" ? (
+              <p className="text-sm text-foreground/70">If invited, you’ll get a reset email shortly.</p>
+            ) : null}
+
+            {authMode === "password" && resetStatus === "error" ? (
+              <p className="text-sm text-foreground/70">
+                Could not send a reset email. Please try again.
+              </p>
+            ) : null}
+
+            {authMode === "email" && status === "sent" ? (
+              <p className="text-sm text-foreground/70">
+                Check your inbox for a sign-in email. You can also enter the one-time code below.
+              </p>
+            ) : null}
+
+            {authMode === "email" && status === "error" ? (
+              <p className="text-sm text-foreground/70">
+                Something went wrong. Please try again.
+              </p>
+            ) : null}
+          </form>
         </div>
 
-        {passwordStatus === "error" ? (
-          <p className="text-sm text-foreground/70">
-            Sign-in failed. Check your email/password, or use email sign-in below.
-          </p>
+        {authMode === "email" && status === "sent" ? (
+          <form onSubmit={onVerify} className="space-y-4 rounded-md border p-4">
+            <div className="space-y-1">
+              <label htmlFor="token" className="text-sm font-medium">
+                One-time code
+              </label>
+              <input
+                id="token"
+                name="token"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                value={token}
+                onChange={(e) => setToken(e.target.value)}
+                className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+                placeholder="Enter the code from your email"
+              />
+            </div>
+
+            <Button type="submit" disabled={isVerifying || normalizedEmail.length === 0 || token.trim().length === 0}>
+              {isVerifying ? "Verifying..." : "Verify code"}
+            </Button>
+
+            {verifyStatus === "error" ? (
+              <p className="text-sm text-foreground/70">
+                That code could not be verified. Request a new sign-in email and try again.
+              </p>
+            ) : null}
+          </form>
         ) : null}
 
-        {resetStatus === "error" ? (
-          <p className="text-sm text-foreground/70">
-            Could not send a reset email. Please try again.
-          </p>
-        ) : null}
-      </form>
-
-      <div className="mt-10 max-w-md border-t pt-6">
-        <h2 className="text-sm font-semibold">Email sign-in (first time / fallback)</h2>
-        <p className="mt-1 text-sm text-foreground/70">
-          If you don’t have a password yet, request a sign-in email. You can set a password from your Account page after you’re in.
-        </p>
-        {process.env.NODE_ENV !== "production" ? (
-          <p className="mt-2 text-xs text-foreground/60">
-            Local dev emails are captured in Supabase Inbucket at http://localhost:54324.
-          </p>
-        ) : null}
-      </div>
-
-      <form onSubmit={onSubmit} className="mt-4 max-w-md space-y-4">
-        <Button type="submit" disabled={isSubmitting || normalizedEmail.length === 0}>
-          {isSubmitting ? "Sending..." : "Send sign-in email"}
-        </Button>
-
-        {status === "sent" ? (
-          <p className="text-sm text-foreground/70">
-            If this email is invited, you’ll receive a sign-in email shortly. If your email provider
-            rewrites links (Safe Links), the link may fail — use a one-time code instead.
-          </p>
-        ) : null}
-
-        {status === "error" ? (
-          <p className="text-sm text-foreground/70">
-            Something went wrong. Please try again.
-          </p>
-        ) : null}
-      </form>
-
-      {status === "sent" ? (
-        <form onSubmit={onVerify} className="mt-8 max-w-md space-y-4">
-          <div className="space-y-1">
-            <label htmlFor="token" className="text-sm font-medium">
-              One-time code
-            </label>
-            <input
-              id="token"
-              name="token"
-              inputMode="numeric"
-              autoComplete="one-time-code"
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
-              className="h-9 w-full rounded-md border bg-background px-3 text-sm"
-              placeholder="Enter the code from your email"
-            />
+        <details className="rounded-md border border-foreground/10 px-3 py-2 text-sm text-foreground/70">
+          <summary className="cursor-pointer text-sm font-medium">Trouble signing in?</summary>
+          <div className="mt-2 space-y-2 text-sm text-foreground/70">
+            <p>If your email provider rewrites links (Safe Links), use the one-time code instead.</p>
+            <p>After you sign in, you can set a password from your Account page.</p>
+            {process.env.NODE_ENV !== "production" ? (
+              <p className="text-xs text-foreground/60">
+                Local dev emails are captured in Supabase Inbucket at http://localhost:54324.
+              </p>
+            ) : null}
           </div>
-
-          <Button type="submit" disabled={isVerifying || normalizedEmail.length === 0 || token.trim().length === 0}>
-            {isVerifying ? "Verifying..." : "Verify code"}
-          </Button>
-
-          {verifyStatus === "error" ? (
-            <p className="text-sm text-foreground/70">
-              That code could not be verified. Request a new sign-in email and try again.
-            </p>
-          ) : null}
-        </form>
-      ) : null}
+        </details>
+      </div>
     </PageShell>
   );
 }

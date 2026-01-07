@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { PageShell } from "@/components/page-shell";
 import { Button } from "@/components/ui/button";
+import { ButtonLink } from "@/components/ui/button-link";
 import { IconAlert, IconCalendar, IconCheck, IconChevronRight, IconLink, IconX } from "@/components/ui/icons";
 import { copyTextWithFallback } from "@/lib/clipboard";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
@@ -691,9 +692,9 @@ export default function MeetingsPage() {
                 Calendar feed
               </Button>
               {isAdmin ? (
-                <Link href="/admin?tab=meetings#admin-meetings-create">
-                  <Button variant="outline" size="sm">Create meeting</Button>
-                </Link>
+                <ButtonLink href="/admin?tab=meetings#admin-meetings-create" variant="outline" size="sm">
+                  Create meeting
+                </ButtonLink>
               ) : null}
             </div>
           </div>

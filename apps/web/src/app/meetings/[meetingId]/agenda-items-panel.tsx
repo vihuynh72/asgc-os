@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import {
   useCallback,
   useEffect,
@@ -14,6 +13,7 @@ import {
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { ButtonLink } from "@/components/ui/button-link";
 import {
   IconAlert,
   IconCheck,
@@ -1203,9 +1203,9 @@ export function AgendaItemsPanel({
           ) : null}
           {meetingIsCancelled && isAdmin ? (
             <div className="mt-2">
-              <Link href="/admin?tab=meetings#admin-meetings-create">
-                <Button size="sm" variant="outline">Reschedule meeting</Button>
-              </Link>
+              <ButtonLink href="/admin?tab=meetings#admin-meetings-create" size="sm" variant="outline">
+                Reschedule meeting
+              </ButtonLink>
             </div>
           ) : null}
         </div>

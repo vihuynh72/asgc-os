@@ -43,7 +43,9 @@ export default function RootLayout({
           <SiteNav />
           <OfficeHoursPresenceMonitor />
           <RoleChangeListener />
-          {children}
+          <main id="main-content" tabIndex={-1}>
+            {children}
+          </main>
           <SiteFooter />
           <Toaster />
         </div>
