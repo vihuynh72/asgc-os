@@ -3,6 +3,8 @@
 import { useEffect, useId, useMemo, useState, type FormEvent } from "react";
 
 import { Button } from "@/components/ui/button";
+import { parseFiscalYearInput, sanitizeFiscalYearInput } from "@/lib/finance-inputs.mjs";
+import { formatFinanceErrorMessage } from "@/lib/finance-errors.mjs";
 
 import { fetchJson, formatCurrency, formatDateTime } from "./finance-utils";
 
@@ -231,6 +233,11 @@ export function FinanceDashboard({
 }) {
   const [lookups, setLookups] = useState<FinanceLookups>(EMPTY_LOOKUPS);
   const [lookupError, setLookupError] = useState<string>("");
+  const [lookupsRefreshToken, setLookupsRefreshToken] = useState(0);
+
+  function refreshLookups() {
+    setLookupsRefreshToken((prev) => prev + 1);
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -239,6 +246,7 @@ export function FinanceDashboard({
       try {
         const data = await fetchJson<FinanceLookups>("/api/finance/lookups");
         if (!cancelled) {
+          setLookupError("");
           setLookups({
             committees: data.committees ?? [],
             meetings: data.meetings ?? [],
@@ -262,7 +270,7 @@ export function FinanceDashboard({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [lookupsRefreshToken]);
 
   const navItems = [
     { id: "finance-config", label: "Config", show: isFinanceAdmin },
@@ -285,7 +293,12 @@ export function FinanceDashboard({
       ) : null}
       {navItems.length > 1 ? (
         <nav className="rounded-lg border border-foreground/10 bg-foreground/5 p-4" aria-label="Finance sections">
-          <div className="text-sm font-medium">Jump to section</div>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="text-sm font-medium">Jump to section</div>
+            <Button type="button" variant="outline" size="sm" onClick={refreshLookups}>
+              Refresh data
+            </Button>
+          </div>
           <div className="mt-2 flex flex-wrap gap-2 text-xs">
             {navItems.map((item) => (
               <a
@@ -300,12 +313,13 @@ export function FinanceDashboard({
         </nav>
       ) : null}
       {isFinanceAdmin ? <FinanceConfigPanel sectionId="finance-config" /> : null}
-      {isFinanceAdmin ? <BudgetLinesPanel sectionId="budget-lines" /> : null}
+      {isFinanceAdmin ? <BudgetLinesPanel sectionId="budget-lines" onLookupsChanged={refreshLookups} /> : null}
       <FundingRequestsPanel
         sectionId="funding-requests"
         isFinanceAdmin={isFinanceAdmin}
         committees={lookups.committees}
         docs={lookups.docs}
+        onLookupsChanged={refreshLookups}
       />
       {isBoardMember || isFinanceAdmin ? (
         <BoardVotesPanel
@@ -495,10 +509,16 @@ function FinanceConfigPanel({ sectionId }: { sectionId?: string }) {
   );
 }
 
-function BudgetLinesPanel({ sectionId }: { sectionId?: string }) {
+function BudgetLinesPanel({ sectionId, onLookupsChanged }: { sectionId?: string; onLookupsChanged?: () => void }) {
   const [lines, setLines] = useState<BudgetLine[]>([]);
   const [status, setStatus] = useState<string>("");
-  const [form, setForm] = useState({ fiscal_year: "", name: "", category: "", allocated_amount: "", notes: "" });
+  const [form, setForm] = useState(() => ({
+    fiscal_year: String(new Date().getFullYear()),
+    name: "",
+    category: "",
+    allocated_amount: "",
+    notes: "",
+  }));
 
   useEffect(() => {
     let cancelled = false;
@@ -528,10 +548,10 @@ function BudgetLinesPanel({ sectionId }: { sectionId?: string }) {
     setStatus("Saving...");
 
     try {
-      const fiscalYear = Number(form.fiscal_year);
+      const fiscalYear = parseFiscalYearInput(form.fiscal_year);
       const allocatedAmount = Number(form.allocated_amount);
-      if (!Number.isFinite(fiscalYear) || fiscalYear < 2000) {
-        setStatus("Fiscal year is required");
+      if (fiscalYear == null) {
+        setStatus("Fiscal year must be a 4-digit year (e.g., 2026).");
         return;
       }
       if (!form.name.trim() || !form.category.trim()) {
@@ -566,8 +586,9 @@ function BudgetLinesPanel({ sectionId }: { sectionId?: string }) {
       });
 
       setLines((prev) => [data.budgetLine, ...prev]);
-      setForm({ fiscal_year: "", name: "", category: "", allocated_amount: "", notes: "" });
+      setForm((prev) => ({ fiscal_year: prev.fiscal_year, name: "", category: "", allocated_amount: "", notes: "" }));
       setStatus("Saved");
+      onLookupsChanged?.();
     } catch (err) {
       const raw = err instanceof Error ? err.message : "Failed to save budget line";
       const msg = raw.toLowerCase().includes("budget_line_duplicate")
@@ -592,6 +613,7 @@ function BudgetLinesPanel({ sectionId }: { sectionId?: string }) {
       });
       setLines((prev) => prev.map((item) => (item.id === line.id ? data.budgetLine : item)));
       setStatus(line.is_active ? "Archived." : "Restored.");
+      onLookupsChanged?.();
     } catch (err) {
       setStatus(err instanceof Error ? err.message : "Failed to update budget line");
     }
@@ -608,11 +630,14 @@ function BudgetLinesPanel({ sectionId }: { sectionId?: string }) {
         <label className="text-sm">
           Fiscal year
           <input
-            type="number"
-            min={2000}
-            step={1}
+            type="text"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            maxLength={4}
             value={form.fiscal_year}
-            onChange={(event) => setForm((prev) => ({ ...prev, fiscal_year: event.target.value }))}
+            onChange={(event) =>
+              setForm((prev) => ({ ...prev, fiscal_year: sanitizeFiscalYearInput(event.target.value) }))
+            }
             className="mt-1 w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
           />
         </label>
@@ -700,11 +725,13 @@ function FundingRequestsPanel({
   isFinanceAdmin,
   committees,
   docs,
+  onLookupsChanged,
 }: {
   sectionId?: string;
   isFinanceAdmin: boolean;
   committees: CommitteeLookup[];
   docs: DocLookup[];
+  onLookupsChanged?: () => void;
 }) {
   const [requests, setRequests] = useState<FundingRequest[]>([]);
   const [status, setStatus] = useState<string>("");
@@ -820,6 +847,7 @@ function FundingRequestsPanel({
       setForm({ committee_id: "", title: "", purpose: "", amount_requested: "", requires_contract: false, event_date: "" });
       setBreakdown([{ description: "", amount: "" }]);
       setStatus("Submitted");
+      onLookupsChanged?.();
     } catch (err) {
       setStatus(err instanceof Error ? err.message : "Failed to create request");
     }
@@ -834,6 +862,7 @@ function FundingRequestsPanel({
       );
       setRequests((prev) => prev.map((item) => (item.id === requestId ? fundingRequest : item)));
       setStatus("");
+      onLookupsChanged?.();
     } catch (err) {
       setStatus(err instanceof Error ? err.message : "Failed to submit request");
     }
@@ -851,6 +880,7 @@ function FundingRequestsPanel({
       );
       setRequests((prev) => prev.map((item) => (item.id === requestId ? fundingRequest : item)));
       setStatus("");
+      onLookupsChanged?.();
     } catch (err) {
       setStatus(err instanceof Error ? err.message : "Failed to withdraw request");
     }
@@ -877,6 +907,7 @@ function FundingRequestsPanel({
       );
       setRequests((prev) => prev.map((item) => (item.id === requestId ? fundingRequest : item)));
       setStatus("");
+      onLookupsChanged?.();
     } catch (err) {
       setStatus(err instanceof Error ? err.message : "Failed to transition request");
     }
@@ -1265,6 +1296,10 @@ function BoardVotesPanel({
     notes: "",
   });
   const meetingsById = useMemo(() => new Map(meetings.map((m) => [m.id, m])), [meetings]);
+  const scheduledRequests = useMemo(
+    () => fundingRequests.filter((request) => request.state === "scheduled_for_vote"),
+    [fundingRequests],
+  );
   const requestsById = useMemo(() => new Map(fundingRequests.map((r) => [r.id, r])), [fundingRequests]);
   const usersById = useMemo(() => new Map(users.map((user) => [user.id, user])), [users]);
   const suggestedResult = useMemo(() => {
@@ -1288,7 +1323,8 @@ function BoardVotesPanel({
         }
       } catch (err) {
         if (!cancelled) {
-          setStatus(err instanceof Error ? err.message : "Failed to load votes");
+          const raw = err instanceof Error ? err.message : "Failed to load votes";
+          setStatus(formatFinanceErrorMessage(raw));
         }
       }
     }
@@ -1354,7 +1390,8 @@ function BoardVotesPanel({
       });
       setStatus("Saved");
     } catch (err) {
-      setStatus(err instanceof Error ? err.message : "Failed to save vote");
+      const raw = err instanceof Error ? err.message : "Failed to save vote";
+      setStatus(formatFinanceErrorMessage(raw));
     }
   }
 
@@ -1368,6 +1405,7 @@ function BoardVotesPanel({
       <div className="text-xs text-foreground/60">
         Select members by name; the vote counts suggest a result, but you can override it.
       </div>
+      <div className="text-xs text-foreground/60">Only funding requests scheduled for vote can be linked.</div>
       <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2">
         <label className="text-sm">
           Meeting
@@ -1392,7 +1430,7 @@ function BoardVotesPanel({
             className="mt-1 w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
           >
             <option value="">— None —</option>
-            {fundingRequests.map((request) => (
+            {scheduledRequests.map((request) => (
               <option key={request.id} value={request.id}>
                 {request.title} • {formatCurrency(request.amount_requested)} • {request.state}
               </option>
@@ -1580,10 +1618,10 @@ function ExpensesPanel({
     receipt_doc_id: "",
     status: "pending",
   });
+  const activeBudgetLines = useMemo(() => budgetLines.filter((line) => line.is_active), [budgetLines]);
   const budgetLinesById = useMemo(() => new Map(budgetLines.map((line) => [line.id, line])), [budgetLines]);
   const requestsById = useMemo(() => new Map(fundingRequests.map((r) => [r.id, r])), [fundingRequests]);
   const docsById = useMemo(() => new Map(docs.map((doc) => [doc.id, doc])), [docs]);
-
 
   useEffect(() => {
     let cancelled = false;
@@ -1613,6 +1651,10 @@ function ExpensesPanel({
     setStatus("Saving...");
 
     try {
+      if (activeBudgetLines.length === 0) {
+        setStatus("Create a budget line before logging expenses.");
+        return;
+      }
       if (!form.budget_line_id.trim()) {
         setStatus("Please select a budget line");
         return;
@@ -1672,16 +1714,26 @@ function ExpensesPanel({
           {status}
         </div>
       ) : null}
+      {activeBudgetLines.length === 0 ? (
+        <div className="rounded-md border border-foreground/10 bg-foreground/5 px-3 py-2 text-sm text-foreground/80">
+          No active budget lines found. Create one in{" "}
+          <a className="text-primary underline underline-offset-2" href="#budget-lines">
+            Budget Lines
+          </a>{" "}
+          to log expenses.
+        </div>
+      ) : null}
       <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2">
         <label className="text-sm">
           Budget line
           <select
             value={form.budget_line_id}
             onChange={(event) => setForm((prev) => ({ ...prev, budget_line_id: event.target.value }))}
+            disabled={activeBudgetLines.length === 0}
             className="mt-1 w-full rounded border border-foreground/20 bg-background px-2 py-1 text-sm"
           >
             <option value="">— Select budget line —</option>
-            {budgetLines.filter((line) => line.is_active).map((line) => (
+            {activeBudgetLines.map((line) => (
               <option key={line.id} value={line.id}>
                 {line.name} ({line.fiscal_year}) — {line.category}
               </option>
@@ -1771,7 +1823,7 @@ function ExpensesPanel({
           />
         </label>
         <div className="sm:col-span-2 flex justify-end">
-          <Button type="submit" size="sm">
+          <Button type="submit" size="sm" disabled={activeBudgetLines.length === 0}>
             Log Expense
           </Button>
         </div>
