@@ -1,6 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 
+import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 import { getSupabaseRouteHandlerClient } from "@/lib/supabaseServer";
+import { createSignedUrlWithFallback } from "@/lib/storage-signed-url.mjs";
 
 export const runtime = "nodejs";
 
@@ -45,11 +47,14 @@ export async function GET(request: NextRequest, { params }: Params) {
 
   let signedUrl: string | null = null;
   if (doc.storage_path) {
-    const { data: signedUrlData, error: urlErr } = await supabase.storage
-      .from(doc.storage_bucket)
-      .createSignedUrl(doc.storage_path, 3600);
-
-    signedUrl = urlErr ? null : signedUrlData?.signedUrl ?? null;
+    const admin = getSupabaseAdminClient();
+    signedUrl = await createSignedUrlWithFallback({
+      primary: supabase.storage,
+      fallback: admin.storage,
+      bucket: doc.storage_bucket,
+      path: doc.storage_path,
+      expiresIn: 3600,
+    });
   }
 
   return NextResponse.json({
