@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
+import { isProbablyNetworkError, swallowNetworkError } from "@/lib/network-errors.mjs";
 
 type OfficeGeo = {
   lat: number;
@@ -66,51 +67,78 @@ export function OfficeHoursPresenceMonitor() {
 
     let cancelled = false;
     async function bootstrap() {
-      const { data: userData } = await supabase.auth.getUser();
-      if (cancelled || !userData?.user) return;
+      try {
+        const userResult = await swallowNetworkError(() => supabase.auth.getUser());
+        if (!userResult) return;
+        if (cancelled || !userResult.data?.user) return;
 
-      const { data: openSession, error: sessionErr } = await supabase
-        .from("office_hour_sessions")
-        .select("id,checkin_at")
-        .eq("status", "open")
-        .is("checkout_at", null)
-        .order("checkin_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
+        const sessionResult = await swallowNetworkError(() =>
+          supabase
+            .from("office_hour_sessions")
+            .select("id,checkin_at")
+            .eq("status", "open")
+            .is("checkout_at", null)
+            .order("checkin_at", { ascending: false })
+            .limit(1)
+            .maybeSingle()
+        );
 
-      if (cancelled) return;
-      if (sessionErr || !openSession?.id) {
-        setOpenSessionId(null);
-        return;
+        if (!sessionResult) return;
+        const { data: openSession, error: sessionErr } = sessionResult;
+
+        if (cancelled) return;
+        if (sessionErr || !openSession?.id) {
+          setOpenSessionId(null);
+          return;
+        }
+
+        setOpenSessionId(openSession.id);
+
+        if (officeGeo) return;
+
+        const configResult = await swallowNetworkError(() =>
+          supabase
+            .from("office_config")
+            .select("primary_office_location_id")
+            .eq("id", true)
+            .maybeSingle()
+        );
+
+        if (!configResult) return;
+        const { data: config, error: cfgErr } = configResult;
+
+        if (cancelled || cfgErr || !config?.primary_office_location_id) return;
+
+        const officeResult = await swallowNetworkError(() =>
+          supabase
+            .from("office_locations")
+            .select("lat,lon,radius_m,grace_radius_m")
+            .eq("id", config.primary_office_location_id)
+            .maybeSingle()
+        );
+
+        if (!officeResult) return;
+        const { data: office, error: officeErr } = officeResult;
+
+        if (cancelled || officeErr || !office) return;
+        if (
+          office.lat === null ||
+          office.lon === null ||
+          office.radius_m === null ||
+          office.grace_radius_m === null
+        )
+          return;
+
+        setOfficeGeo({
+          lat: office.lat,
+          lon: office.lon,
+          radiusM: office.radius_m,
+          graceRadiusM: office.grace_radius_m,
+        });
+      } catch (error) {
+        if (isProbablyNetworkError(error)) return;
+        console.error("[OfficeHoursPresenceMonitor] bootstrap error:", error);
       }
-
-      setOpenSessionId(openSession.id);
-
-      if (officeGeo) return;
-
-      const { data: config, error: cfgErr } = await supabase
-        .from("office_config")
-        .select("primary_office_location_id")
-        .eq("id", true)
-        .maybeSingle();
-
-      if (cancelled || cfgErr || !config?.primary_office_location_id) return;
-
-      const { data: office, error: officeErr } = await supabase
-        .from("office_locations")
-        .select("lat,lon,radius_m,grace_radius_m")
-        .eq("id", config.primary_office_location_id)
-        .maybeSingle();
-
-      if (cancelled || officeErr || !office) return;
-      if (office.lat === null || office.lon === null || office.radius_m === null || office.grace_radius_m === null) return;
-
-      setOfficeGeo({
-        lat: office.lat,
-        lon: office.lon,
-        radiusM: office.radius_m,
-        graceRadiusM: office.grace_radius_m,
-      });
     }
 
     void bootstrap();

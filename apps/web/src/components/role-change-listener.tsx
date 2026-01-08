@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
+import { isProbablyNetworkError, swallowNetworkError } from "@/lib/network-errors.mjs";
 
 /**
  * RoleChangeListener - Polls profile_private.roles_updated_at and role_assignments updates to detect role changes.
@@ -11,7 +12,17 @@ export function RoleChangeListener() {
   const [showModal, setShowModal] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
   const baselineRef = useRef<string | null>(null);
+  const baselineUserIdRef = useRef<string | null>(null);
   const hasShownModalRef = useRef(false);
+  const lastNetworkErrorAtRef = useRef<number>(0);
+
+  const shouldLogNetworkError = () => {
+    const now = Date.now();
+    // Avoid spamming the console on flaky connections.
+    if (now - lastNetworkErrorAtRef.current < 30_000) return false;
+    lastNetworkErrorAtRef.current = now;
+    return true;
+  };
 
   const handleSignOut = useCallback(async () => {
     setIsSigningOut(true);
@@ -31,27 +42,48 @@ export function RoleChangeListener() {
     let cancelled = false;
 
     async function fetchRoleChangeToken(userId: string) {
-      const [profileResult, assignmentResult] = await Promise.all([
-        supabase
-          .from("profile_private")
-          .select("roles_updated_at")
-          .eq("id", userId)
-          .maybeSingle(),
-        supabase
-          .from("role_assignments")
-          .select("updated_at")
-          .eq("user_id", userId)
-          .order("updated_at", { ascending: false })
-          .limit(1)
-          .maybeSingle(),
-      ]);
+      const results = await swallowNetworkError(() =>
+        Promise.all([
+          supabase
+            .from("profile_private")
+            .select("roles_updated_at")
+            .eq("id", userId)
+            .maybeSingle(),
+          supabase
+            .from("role_assignments")
+            .select("updated_at")
+            .eq("user_id", userId)
+            .order("updated_at", { ascending: false })
+            .limit(1)
+            .maybeSingle(),
+        ])
+      );
 
-      if (profileResult.error) {
-        console.error("[RoleChangeListener] profile_private error:", profileResult.error.message);
+      if (!results) {
+        if (shouldLogNetworkError()) {
+          console.warn("[RoleChangeListener] network error (will retry).");
+        }
+        return null;
       }
 
-      if (assignmentResult.error) {
-        console.error("[RoleChangeListener] role_assignments error:", assignmentResult.error.message);
+      const [profileResult, assignmentResult] = results;
+
+      const profileErrorMessage = profileResult.error?.message ?? null;
+      const assignmentErrorMessage = assignmentResult.error?.message ?? null;
+
+      const profileNetworkError = isProbablyNetworkError(profileErrorMessage);
+      const assignmentNetworkError = isProbablyNetworkError(assignmentErrorMessage);
+
+      if (profileResult.error && !profileNetworkError) {
+        console.error("[RoleChangeListener] profile_private error:", profileErrorMessage);
+      } else if (profileNetworkError && shouldLogNetworkError()) {
+        console.warn("[RoleChangeListener] profile_private network error (will retry).");
+      }
+
+      if (assignmentResult.error && !assignmentNetworkError) {
+        console.error("[RoleChangeListener] role_assignments error:", assignmentErrorMessage);
+      } else if (assignmentNetworkError && shouldLogNetworkError()) {
+        console.warn("[RoleChangeListener] role_assignments network error (will retry).");
       }
 
       if (profileResult.error && assignmentResult.error) {
@@ -70,34 +102,62 @@ export function RoleChangeListener() {
 
     async function checkRolesUpdated() {
       if (cancelled || hasShownModalRef.current) return;
+      if (typeof navigator !== "undefined" && navigator.onLine === false) return;
 
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) return;
+      try {
+        const authResult = await swallowNetworkError(() => supabase.auth.getUser());
+        if (!authResult) {
+          if (shouldLogNetworkError()) {
+            console.warn("[RoleChangeListener] auth network error (will retry).");
+          }
+          return;
+        }
 
-      const tokenResult = await fetchRoleChangeToken(user.id);
-      if (!tokenResult) return;
+        const {
+          data: { user },
+          error,
+        } = authResult;
 
-      if (baselineRef.current === null) {
-        // First check - set baseline
-        baselineRef.current = tokenResult.token;
-        console.log("[RoleChangeListener] Baseline set:", {
-          roles_updated_at: tokenResult.rolesUpdatedAt,
-          role_assignments_updated_at: tokenResult.assignmentUpdatedAt,
-        });
-      } else if (tokenResult.token !== baselineRef.current) {
-        // Token changed - role was granted or revoked
-        console.log("[RoleChangeListener] Role change detected!", {
-          was: baselineRef.current,
-          now: tokenResult.token,
-          roles_updated_at: tokenResult.rolesUpdatedAt,
-          role_assignments_updated_at: tokenResult.assignmentUpdatedAt,
-        });
-        hasShownModalRef.current = true;
-        if (interval) clearInterval(interval);
-        console.log("[RoleChangeListener] Setting showModal to true");
-        setShowModal(true);
+        if (error) {
+          if (isProbablyNetworkError(error.message) && shouldLogNetworkError()) {
+            console.warn("[RoleChangeListener] auth network error (will retry).");
+          } else if (!isProbablyNetworkError(error.message)) {
+            console.error("[RoleChangeListener] auth error:", error.message);
+          }
+          return;
+        }
+
+        if (!user) return;
+        const userId = user.id;
+
+        if (baselineUserIdRef.current !== userId) {
+          baselineUserIdRef.current = userId;
+          baselineRef.current = null;
+          hasShownModalRef.current = false;
+        }
+
+        const tokenResult = await fetchRoleChangeToken(userId);
+        if (!tokenResult) return;
+        if (cancelled || hasShownModalRef.current) return;
+
+        if (baselineRef.current === null) {
+          // First check - set baseline
+          baselineRef.current = tokenResult.token;
+        } else if (tokenResult.token !== baselineRef.current) {
+          // Token changed - role was granted or revoked
+          hasShownModalRef.current = true;
+          if (interval) clearInterval(interval);
+          setShowModal(true);
+        }
+      } catch (error) {
+        if (isProbablyNetworkError(error)) {
+          if (shouldLogNetworkError()) {
+            console.warn("[RoleChangeListener] network error (will retry).");
+          }
+          return;
+        }
+        console.error("[RoleChangeListener] unexpected error:", error);
+        return;
       }
     }
 
@@ -110,11 +170,7 @@ export function RoleChangeListener() {
     };
   }, []);
 
-  console.log("[RoleChangeListener] Render, showModal =", showModal);
-
   if (!showModal) return null;
-
-  console.log("[RoleChangeListener] Rendering modal!");
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center">

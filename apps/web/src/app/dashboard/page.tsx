@@ -157,18 +157,19 @@ export default async function DashboardPage() {
 
   const dashStyle = (value: number): CSSProperties => ({ "--dash-delay": value } as CSSProperties);
   const surfaceClassName =
-    "rounded-2xl bg-card/80 p-6 shadow-sm ring-1 ring-border/60 backdrop-blur supports-[backdrop-filter]:bg-card/70";
+    "rounded-3xl bg-card p-6 shadow-sm ring-1 ring-border/70 sm:p-7";
   const sectionTitleClassName = "text-sm font-semibold text-foreground";
   const sectionMetaClassName = "text-sm text-foreground/70";
-  const listClassName = "mt-4 overflow-hidden rounded-xl bg-muted/40 ring-1 ring-border/50";
+  const listClassName = "mt-4 divide-y divide-border/60 overflow-hidden rounded-2xl bg-muted/50 ring-1 ring-border/60";
   const listRowClassName =
-    "flex items-start gap-3 px-4 py-3 transition-colors hover:bg-background/60 focus-visible:bg-background/60";
+    "flex items-start gap-3 px-4 py-3 transition-colors hover:bg-background/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40";
   const rowIconWrapClassName =
     "mt-0.5 flex h-9 w-9 items-center justify-center rounded-full bg-background shadow-sm ring-1 ring-border/40 text-primary";
   const rowTitleClassName = "text-sm font-medium text-foreground";
   const rowBodyClassName = "mt-1 text-sm text-foreground/70";
-  const dockClassName = "rounded-2xl bg-muted/40 p-2 shadow-sm ring-1 ring-border/60";
-  const dockItemClassName = "flex items-center gap-3 rounded-xl px-3 py-3 transition-colors hover:bg-background/60";
+  const dockClassName = "rounded-3xl bg-card p-3 shadow-sm ring-1 ring-border/70";
+  const dockItemClassName =
+    "flex items-center gap-3 rounded-2xl px-3 py-3 transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40";
   const dockIconWrapClassName =
     "flex h-10 w-10 items-center justify-center rounded-xl bg-background shadow-sm ring-1 ring-border/40 text-primary";
 
@@ -178,8 +179,7 @@ export default async function DashboardPage() {
   return (
     <PageShell
       title="Dashboard"
-      description="Hours, tasks, meetings, and shifts at a glance."
-      descriptionClassName="max-w-2xl text-base text-foreground/70"
+      showHeader={false}
       containerClassName="max-w-6xl"
     >
       <div className="relative">
@@ -242,7 +242,7 @@ export default async function DashboardPage() {
                 <div className={listClassName}>
                   <Link
                     href={nextMeeting ? `/meetings/${nextMeeting.id}` : "/meetings"}
-                    className={`${listRowClassName} border-b border-border/50`}
+                    className={listRowClassName}
                   >
                     <span className={rowIconWrapClassName}>
                       <IconCalendar />
@@ -261,7 +261,7 @@ export default async function DashboardPage() {
                     </div>
                   </Link>
 
-                  <Link href="/tasks" className={`${listRowClassName} border-b border-border/50`}>
+                  <Link href="/tasks" className={listRowClassName}>
                     <span className={rowIconWrapClassName}>
                       <IconCheck />
                     </span>
