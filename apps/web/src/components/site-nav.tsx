@@ -1,8 +1,8 @@
 import Link from "next/link";
 
 import { SiteNavLinks } from "@/components/site-nav-links";
-import { Button } from "@/components/ui/button";
 import { ButtonLink } from "@/components/ui/button-link";
+import { UserMenu } from "@/components/user-menu";
 import { getSupabaseServerComponentClient } from "@/lib/supabaseServerComponent";
 
 const primaryLinks = [
@@ -10,6 +10,9 @@ const primaryLinks = [
   { href: "/meetings", label: "Meetings" },
   { href: "/tasks", label: "Tasks" },
   { href: "/office-hours", label: "Office Hours" },
+];
+
+const resourceLinks = [
   { href: "/finance", label: "Finance" },
   { href: "/docs", label: "Documents" },
 ];
@@ -18,6 +21,7 @@ const communityLinks = [
   { href: "/icc", label: "ICC" },
 ];
 const adminLink = { href: "/admin", label: "Admin" };
+const createMeetingLink = { href: "/admin?tab=meetings#admin-meetings-create", label: "Create meeting" };
 
 const publicLinks = [{ href: "/office-hours/kiosk", label: "Office Hours Form" }];
 
@@ -46,22 +50,24 @@ export async function SiteNav() {
   }
 
   const navLinks = user ? primaryLinks : publicLinks;
+  const adminItems = isAdmin ? [adminLink, ...(canCreateMeeting ? [createMeetingLink] : [])] : [];
   const navSections = user
     ? [
+        { label: "Resources", items: resourceLinks },
         { label: "Community", items: communityLinks },
-        ...(isAdmin ? [{ label: "Admin", items: [adminLink] }] : []),
+        ...(adminItems.length ? [{ label: "Admin", items: adminItems }] : []),
       ]
     : [];
 
   return (
     <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
-      <div className="mx-auto flex h-14 w-full max-w-5xl items-center justify-between gap-4 px-4">
+      <div className="relative mx-auto flex h-14 w-full max-w-6xl items-center justify-between gap-4 px-4">
         <Link
           href="/dashboard"
           className="flex items-center gap-3 font-semibold tracking-tight hover:text-foreground/90"
           aria-label="Go to dashboard"
         >
-          <span className="flex h-9 w-9 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground">
+          <span className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/10 text-sm font-semibold text-primary ring-1 ring-primary/20">
             AS
           </span>
           <span className="flex flex-col leading-tight">
@@ -71,29 +77,15 @@ export async function SiteNav() {
             </span>
           </span>
         </Link>
-        <SiteNavLinks primary={navLinks} sections={navSections} />
+        <SiteNavLinks
+          primary={navLinks}
+          sections={navSections}
+          className="md:absolute md:left-1/2 md:top-1/2 md:-translate-x-1/2 md:-translate-y-1/2"
+        />
 
         <div className="flex shrink-0 items-center gap-2">
-          {canCreateMeeting ? (
-            <ButtonLink href="/admin?tab=meetings#admin-meetings-create" size="sm" variant="outline">
-              Create meeting
-            </ButtonLink>
-          ) : null}
           {user ? (
-            <>
-              <Link
-                href="/account"
-                className="hidden max-w-[14rem] truncate text-xs text-foreground/70 hover:text-foreground sm:inline"
-                title="Account"
-              >
-                {user.email ?? user.id}
-              </Link>
-              <form action="/auth/signout" method="post">
-                <Button size="sm" variant="ghost" type="submit">
-                  Sign out
-                </Button>
-              </form>
-            </>
+            <UserMenu userEmail={user.email} userId={user.id} />
           ) : (
             <ButtonLink href="/login" size="sm" variant="outline">
               Sign in
