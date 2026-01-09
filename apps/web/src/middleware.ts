@@ -1,6 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
+import { DESIGN_COOKIE_NAME, DESIGN_PARAM_NAME, normalizeDesign } from "@/lib/design-toggle.mjs";
 import { getPublicEnv, hasPublicSupabaseEnv } from "@/lib/env";
 import { POST_AUTH_REDIRECT_COOKIE } from "@/lib/redirects";
 
@@ -26,6 +27,22 @@ export async function middleware(request: NextRequest) {
     redirectUrl.searchParams.set("env", "missing");
     redirectUrl.searchParams.set("redirectTo", `${request.nextUrl.pathname}${request.nextUrl.search}`);
     return NextResponse.redirect(redirectUrl);
+  }
+
+  const requestedDesign = normalizeDesign(request.nextUrl.searchParams.get(DESIGN_PARAM_NAME));
+  if (requestedDesign) {
+    const redirectUrl = request.nextUrl.clone();
+    redirectUrl.searchParams.delete(DESIGN_PARAM_NAME);
+
+    const response = NextResponse.redirect(redirectUrl);
+    response.cookies.set(DESIGN_COOKIE_NAME, requestedDesign, {
+      path: "/",
+      httpOnly: false,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      maxAge: 60 * 60 * 24 * 365,
+    });
+    return response;
   }
 
   const pathname = request.nextUrl.pathname;

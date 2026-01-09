@@ -2,6 +2,7 @@ import type { CSSProperties } from "react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
+import { DashboardGetStartedHint } from "./get-started-hint";
 import { PageShell } from "@/components/page-shell";
 import { ButtonLink } from "@/components/ui/button-link";
 import { IconCalendar, IconCheck, IconClock, IconFileText } from "@/components/ui/icons";
@@ -150,6 +151,7 @@ export default async function DashboardPage() {
   const openMinutes = openSession?.checkin_at
     ? Math.max(0, Math.floor((nowMs - Date.parse(openSession.checkin_at)) / 60000))
     : 0;
+  const hasOpenSession = !!openSession?.checkin_at;
 
   const nextTask = tasks[0] ?? null;
   const nextMeeting = meetings[0] ?? null;
@@ -201,6 +203,8 @@ export default async function DashboardPage() {
                   <div className="text-4xl font-semibold tracking-tight">{formatHours(totalMinutes)}</div>
                   <div className="mt-1 text-sm text-foreground/70">{hoursStatusLabel}</div>
                 </div>
+
+                <DashboardGetStartedHint totalMinutes={totalMinutes} hasOpenSession={hasOpenSession} />
 
                 <div className="mt-5 space-y-2">
                   <div className="flex items-center justify-between gap-3 text-xs text-foreground/60">
