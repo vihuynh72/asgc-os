@@ -29,7 +29,7 @@ Rules:
 Ongoing presence:
 - While checked in, periodically re-check location (every 10 minutes)
 - If outside the office geofence, automatically check out
-- If location cannot be verified for 15 minutes, automatically check out (strict)
+- If location cannot be verified for 60 minutes, automatically check out (Hobby-friendly)
 
 ## 3) Sessions
 - Only 1 open session at a time per user

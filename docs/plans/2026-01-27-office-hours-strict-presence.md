@@ -2,9 +2,9 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use `superpowers:executing-plans` to implement this plan task-by-task.
 
-**Goal:** Enforce Office Hours presence reliably even if the user closes the tab by using 10-minute location heartbeats and server-side auto-checkout after 15 minutes without a successful heartbeat (excluding kiosk sessions).
+**Goal:** Enforce Office Hours presence reliably even if the user closes the tab by using 10-minute location heartbeats and server-side auto-checkout after 60 minutes without a successful heartbeat (excluding kiosk sessions).
 
-**Architecture:** While a session is open, the browser periodically sends a geolocation heartbeat to a new API route. The server records `last_presence_at` when within the office geofence and immediately checks out the user if they leave. A Vercel Cron job runs server-side enforcement to auto-checkout sessions that have not produced a successful heartbeat within 15 minutes.
+**Architecture:** While a session is open, the browser periodically sends a geolocation heartbeat to a new API route. The server records `last_presence_at` when within the office geofence and immediately checks out the user if they leave. A Vercel Cron job runs server-side enforcement to auto-checkout sessions that have not produced a successful heartbeat within 60 minutes.
 
 **Tech Stack:** Next.js (App Router), Supabase Postgres (RLS + RPCs), Vercel Cron Jobs.
 
@@ -70,8 +70,8 @@ Expected: PASS
 
 **Step 4: Add RPC `auto_checkout_stale_presence(_now default now())`**
 - Service role only.
-- Close any open session where `requires_presence = true` and `coalesce(last_presence_at, checkin_at) <= _now - interval '15 minutes'`.
-- Insert an audit log entry per session closed with reason `presence_timeout`.
+- Close any open session where `requires_presence = true` and `coalesce(last_presence_at, checkin_at) <= _now - interval '60 minutes'`.
+- Insert an audit log entry per session closed with reason `presence_timeout` and `timeout_minutes=60`.
 
 **Step 5: Patch `check_in_office_hours`**
 - Ensure new sessions set `last_presence_at = now()` on insert.
@@ -129,7 +129,7 @@ Expected: PASS
 **Steps:**
 1. Add Vercel cron to call `/api/cron/office-hours-reminders` on a short schedule:
    - Pro/Enterprise: per-minute is supported (e.g. `* * * * *`).
-   - Hobby: hourly precision only (e.g. `0 * * * *`). Presence timeout still uses a strict 15-minute cutoff, but the DB/UI may not reflect closure until the next cron run (unless the user returns and triggers a heartbeat).
+   - Hobby: hourly precision only (e.g. `0 * * * *`). With a 60-minute presence timeout, the DB/UI may still not reflect closure until the next cron run (unless the user returns and triggers a heartbeat).
 2. Document required env var: `CRON_SECRET` (must be set in Vercel project env).
 
 ---
@@ -141,7 +141,7 @@ Expected: PASS
 - `npm run lint` (from `apps/web`)
 
 **Manual checks (staging):**
-1. Check in, then close tab → confirm timeout cutoff is 15 minutes after last heartbeat; DB/UI may not reflect closure until the next cron run (hourly on Hobby, per-minute on Pro).
+1. Check in, then close tab → confirm timeout cutoff is 60 minutes after last heartbeat; DB/UI may not reflect closure until the next cron run (hourly on Hobby, per-minute on Pro).
 2. Check in, stay in office → confirm session remains open past 15 minutes.
 3. Check in, leave geofence → confirm immediate auto-checkout on next heartbeat.
 4. Kiosk check-in → confirm it does not auto-checkout after 15 minutes.
