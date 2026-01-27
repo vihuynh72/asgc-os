@@ -2,7 +2,7 @@
   "crons": [
     {
       "path": "/api/cron/office-hours-reminders",
-      "schedule": "* * * * *"
+      "schedule": "0 * * * *"
     }
   ]
 }
