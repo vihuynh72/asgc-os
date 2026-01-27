@@ -127,7 +127,9 @@ Expected: PASS
 - Modify: `apps/web/README.md`
 
 **Steps:**
-1. Add Vercel cron to call `/api/cron/office-hours-reminders` on a short schedule (recommend: `* * * * *`).
+1. Add Vercel cron to call `/api/cron/office-hours-reminders` on a short schedule:
+   - Pro/Enterprise: per-minute is supported (e.g. `* * * * *`).
+   - Hobby: hourly precision only (e.g. `0 * * * *`). Presence timeout still uses a strict 15-minute cutoff, but the DB/UI may not reflect closure until the next cron run (unless the user returns and triggers a heartbeat).
 2. Document required env var: `CRON_SECRET` (must be set in Vercel project env).
 
 ---
@@ -139,7 +141,7 @@ Expected: PASS
 - `npm run lint` (from `apps/web`)
 
 **Manual checks (staging):**
-1. Check in, then close tab → confirm auto-checkout within ~15–20 minutes (depending on cron schedule).
+1. Check in, then close tab → confirm timeout cutoff is 15 minutes after last heartbeat; DB/UI may not reflect closure until the next cron run (hourly on Hobby, per-minute on Pro).
 2. Check in, stay in office → confirm session remains open past 15 minutes.
 3. Check in, leave geofence → confirm immediate auto-checkout on next heartbeat.
 4. Kiosk check-in → confirm it does not auto-checkout after 15 minutes.

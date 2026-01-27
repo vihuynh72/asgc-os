@@ -512,7 +512,7 @@ export default function OfficeHoursPage() {
 
         const action = json?.result?.action;
         if (action === "checked_out") {
-          setNotice("Checked out automatically because you left the office area.");
+          setNotice("Checked out automatically due to presence validation.");
           await refresh();
         }
       } catch {
