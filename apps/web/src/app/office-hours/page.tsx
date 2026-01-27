@@ -66,6 +66,7 @@ type OpenSession = {
   id: string;
   checkin_at: string;
   office_location_id: string | null;
+  requires_presence: boolean;
 };
 
 function formatMinutes(totalMinutes: number): string {
@@ -331,7 +332,7 @@ export default function OfficeHoursPage() {
 
     const { data: sessionRow, error: sessionError } = await supabase
       .from("office_hour_sessions")
-      .select("id,checkin_at,office_location_id")
+      .select("id,checkin_at,office_location_id,requires_presence")
       .eq("status", "open")
       .is("checkout_at", null)
       .order("checkin_at", { ascending: false })
@@ -467,45 +468,53 @@ export default function OfficeHoursPage() {
   const runPresenceCheck = useCallback(
     async (reason: "interval" | "manual" | "resume") => {
       if (!openSession) return;
+      if (openSession.requires_presence === false) return;
       if (presenceCheckLockRef.current) return;
 
       presenceCheckLockRef.current = true;
       try {
-        const geo = officeGeo;
-        if (!geo) {
-          setLastPresenceCheckAt(new Date().toISOString());
-          setLastDistanceM(null);
-          setLastDistanceBand(null);
-          return;
-        }
-
         const { lat, lon } = await getCurrentPosition();
-        const dist = haversineMeters(lat, lon, geo.lat, geo.lon);
-        const band: typeof lastDistanceBand =
-          dist <= geo.radiusM ? "in_radius" : dist <= geo.graceRadiusM ? "in_grace" : "outside_grace";
 
         setLastPresenceCheckAt(new Date().toISOString());
-        setLastDistanceM(dist);
-        setLastDistanceBand(band);
 
-        if (band !== "outside_grace") return;
+        const geo = officeGeo;
+        if (geo) {
+          const dist = haversineMeters(lat, lon, geo.lat, geo.lon);
+          const band: typeof lastDistanceBand =
+            dist <= geo.radiusM ? "in_radius" : dist <= geo.graceRadiusM ? "in_grace" : "outside_grace";
+          setLastDistanceM(dist);
+          setLastDistanceBand(band);
+          if (band === "outside_grace") {
+            setNotice("You appear to be outside the office area. Checking you out…");
+          }
+        } else {
+          setLastDistanceM(null);
+          setLastDistanceBand(null);
+        }
 
-        setNotice("You appear to be outside the office area. Checking you out…");
-
-        const res = await fetch("/api/office-hours/check-out", {
+        const res = await fetch("/api/office-hours/presence", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ lat, lon, reason }),
         });
 
-        const json = (await res.json().catch(() => null)) as { error?: string } | null;
+        // No longer open (manual checkout, another device, stale cron enforcement, etc.)
+        if (res.status === 409) {
+          await refresh();
+          return;
+        }
+
+        const json = (await res.json().catch(() => null)) as { error?: string; result?: { action?: string } } | null;
         if (!res.ok) {
           setError(friendlyError(json?.error ?? ""));
           return;
         }
 
-        setNotice("Checked out automatically because you left the office area.");
-        await refresh();
+        const action = json?.result?.action;
+        if (action === "checked_out") {
+          setNotice("Checked out automatically because you left the office area.");
+          await refresh();
+        }
       } catch {
         setLastPresenceCheckAt(new Date().toISOString());
       } finally {
@@ -516,11 +525,11 @@ export default function OfficeHoursPage() {
   );
 
   useEffect(() => {
-    if (!openSession || !autoPresenceEnabled) return;
+    if (!openSession || openSession.requires_presence === false || !autoPresenceEnabled) return;
 
     void runPresenceCheck("resume");
 
-    const intervalMs = 30 * 60_000;
+    const intervalMs = 10 * 60_000;
     const id = window.setInterval(() => {
       void runPresenceCheck("interval");
     }, intervalMs);

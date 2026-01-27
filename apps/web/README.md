@@ -23,6 +23,7 @@ Public (browser-safe):
 
 Server-only:
 - `SUPABASE_SERVICE_ROLE_KEY`
+- `CRON_SECRET` (used for `/api/cron/*` routes; Vercel cron sends `Authorization: Bearer $CRON_SECRET`)
 
 PHASE 10 notifications (server-only):
 - `EMAIL_PROVIDER` (set to `resend`)

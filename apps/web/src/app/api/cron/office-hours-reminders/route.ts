@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 import { sendEmail } from "@/lib/emailSender";
+import { isAuthorizedCronRequest } from "@/lib/cron-auth.mjs";
 import { getCronEnv } from "@/lib/envServer";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 
@@ -14,11 +15,6 @@ type NotificationLogRow = {
   metadata: unknown;
   attempt_count: number;
 };
-
-function getHeader(request: NextRequest, name: string): string | null {
-  const v = request.headers.get(name);
-  return typeof v === "string" && v.length > 0 ? v : null;
-}
 
 function safeString(value: unknown): string {
   return typeof value === "string" ? value : "";
@@ -145,14 +141,18 @@ async function handle(request: NextRequest) {
     const message = e instanceof Error ? e.message : "missing cron env";
     return NextResponse.json({ error: message }, { status: 500 });
   }
-  const provided = getHeader(request, "x-cron-secret");
-
-  if (!provided || provided !== env.CRON_SECRET) {
+  if (!isAuthorizedCronRequest(request.headers, { cronSecret: env.CRON_SECRET })) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
   const origin = new URL(request.url).origin;
   const supabase = getSupabaseAdminClient();
+
+  // Strict presence: auto-checkout sessions with stale presence.
+  const { data: autoCheckedOutStale, error: staleErr } = await supabase.rpc("auto_checkout_stale_presence");
+  if (staleErr) {
+    return NextResponse.json({ error: staleErr.message }, { status: 500 });
+  }
 
   // Phase 19: enqueue session-open reminders and auto-close long sessions
   const { data: sessionOpenReminders, error: sessionOpenErr } = await supabase.rpc(
@@ -250,6 +250,7 @@ async function handle(request: NextRequest) {
 
   return NextResponse.json({
     ok: true,
+    auto_checked_out_stale: autoCheckedOutStale ?? 0,
     session_open_reminders: sessionOpenReminders ?? 0,
     auto_closed: autoClosed ?? 0,
     enqueue: enqueueRes ?? null,
