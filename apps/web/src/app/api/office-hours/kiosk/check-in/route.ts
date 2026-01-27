@@ -106,6 +106,8 @@ export async function POST(request: NextRequest) {
         distance_m_at_checkin: dist,
         needs_review: false,
         review_reason: null,
+        requires_presence: false,
+        last_presence_at: checkinAt,
       })
       .select("id,checkin_at,office_location_id,within_radius,within_grace,distance_m_at_checkin")
       .single();

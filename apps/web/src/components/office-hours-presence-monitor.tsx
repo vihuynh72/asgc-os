@@ -6,13 +6,6 @@ import { usePathname } from "next/navigation";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 import { isProbablyNetworkError, swallowNetworkError } from "@/lib/network-errors.mjs";
 
-type OfficeGeo = {
-  lat: number;
-  lon: number;
-  radiusM: number;
-  graceRadiusM: number;
-};
-
 async function getCurrentPosition(): Promise<{ lat: number; lon: number }> {
   return new Promise((resolve, reject) => {
     if (!navigator.geolocation) {
@@ -30,18 +23,6 @@ async function getCurrentPosition(): Promise<{ lat: number; lon: number }> {
   });
 }
 
-function haversineMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const toRad = (deg: number) => (deg * Math.PI) / 180;
-  const r = 6371000;
-  const dLat = toRad(lat2 - lat1);
-  const dLon = toRad(lon2 - lon1);
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
-  const c = 2 * Math.asin(Math.sqrt(a));
-  return Math.round(r * c);
-}
-
 function isAutoPresenceEnabled(): boolean {
   try {
     const v = window.localStorage.getItem("officeHours.autoPresenceEnabled");
@@ -56,7 +37,6 @@ export function OfficeHoursPresenceMonitor() {
   const supabase = useMemo(() => getSupabaseBrowserClient(), []);
 
   const [openSessionId, setOpenSessionId] = useState<string | null>(null);
-  const [officeGeo, setOfficeGeo] = useState<OfficeGeo | null>(null);
 
   const lockRef = useRef(false);
 
@@ -75,7 +55,7 @@ export function OfficeHoursPresenceMonitor() {
         const sessionResult = await swallowNetworkError(() =>
           supabase
             .from("office_hour_sessions")
-            .select("id,checkin_at")
+            .select("id,checkin_at,requires_presence")
             .eq("status", "open")
             .is("checkout_at", null)
             .order("checkin_at", { ascending: false })
@@ -87,54 +67,12 @@ export function OfficeHoursPresenceMonitor() {
         const { data: openSession, error: sessionErr } = sessionResult;
 
         if (cancelled) return;
-        if (sessionErr || !openSession?.id) {
+        if (sessionErr || !openSession?.id || openSession.requires_presence === false) {
           setOpenSessionId(null);
           return;
         }
 
         setOpenSessionId(openSession.id);
-
-        if (officeGeo) return;
-
-        const configResult = await swallowNetworkError(() =>
-          supabase
-            .from("office_config")
-            .select("primary_office_location_id")
-            .eq("id", true)
-            .maybeSingle()
-        );
-
-        if (!configResult) return;
-        const { data: config, error: cfgErr } = configResult;
-
-        if (cancelled || cfgErr || !config?.primary_office_location_id) return;
-
-        const officeResult = await swallowNetworkError(() =>
-          supabase
-            .from("office_locations")
-            .select("lat,lon,radius_m,grace_radius_m")
-            .eq("id", config.primary_office_location_id)
-            .maybeSingle()
-        );
-
-        if (!officeResult) return;
-        const { data: office, error: officeErr } = officeResult;
-
-        if (cancelled || officeErr || !office) return;
-        if (
-          office.lat === null ||
-          office.lon === null ||
-          office.radius_m === null ||
-          office.grace_radius_m === null
-        )
-          return;
-
-        setOfficeGeo({
-          lat: office.lat,
-          lon: office.lon,
-          radiusM: office.radius_m,
-          graceRadiusM: office.grace_radius_m,
-        });
       } catch (error) {
         if (isProbablyNetworkError(error)) return;
         console.error("[OfficeHoursPresenceMonitor] bootstrap error:", error);
@@ -145,15 +83,14 @@ export function OfficeHoursPresenceMonitor() {
     return () => {
       cancelled = true;
     };
-  }, [officeGeo, pathname, supabase]);
+  }, [pathname, supabase]);
 
   // Periodic presence check (when not on /office-hours).
   useEffect(() => {
     if (pathname.startsWith("/office-hours")) return;
-    if (!openSessionId || !officeGeo) return;
+    if (!openSessionId) return;
     if (!isAutoPresenceEnabled()) return;
 
-    const geo = officeGeo;
     let cancelled = false;
 
     async function tick(reason: "interval" | "resume") {
@@ -163,10 +100,8 @@ export function OfficeHoursPresenceMonitor() {
       lockRef.current = true;
       try {
         const { lat, lon } = await getCurrentPosition();
-        const dist = haversineMeters(lat, lon, geo.lat, geo.lon);
-        if (dist <= geo.graceRadiusM) return;
 
-        const res = await fetch("/api/office-hours/check-out", {
+        const res = await fetch("/api/office-hours/presence", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ lat, lon, reason }),
@@ -180,7 +115,11 @@ export function OfficeHoursPresenceMonitor() {
           return;
         }
 
-        if (res.ok) {
+        if (!res.ok) return;
+
+        const json = (await res.json().catch(() => null)) as { result?: { action?: string } } | null;
+        const action = json?.result?.action;
+        if (action === "checked_out") {
           setOpenSessionId(null);
         }
       } catch {
@@ -192,7 +131,7 @@ export function OfficeHoursPresenceMonitor() {
 
     void tick("resume");
 
-    const intervalMs = 30 * 60_000;
+    const intervalMs = 10 * 60_000;
     const id = window.setInterval(() => void tick("interval"), intervalMs);
     const onVisibility = () => {
       if (document.visibilityState === "visible") void tick("resume");
@@ -204,7 +143,7 @@ export function OfficeHoursPresenceMonitor() {
       window.clearInterval(id);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [officeGeo, openSessionId, pathname]);
+  }, [openSessionId, pathname]);
 
   return null;
 }
