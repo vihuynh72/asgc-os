@@ -28,7 +28,7 @@ Server-only:
 ### Vercel cron schedule notes
 
 - Vercel Hobby cron precision is hourly; Pro supports per-minute schedules.
-- The Office Hours “presence timeout” uses a strict 15-minute cutoff based on the last successful heartbeat, but the session may not be marked closed in the DB/UI until the next cron run (unless the user returns and triggers a heartbeat).
+- The Office Hours “presence timeout” uses a 60-minute cutoff based on the last successful heartbeat, but the session may not be marked closed in the DB/UI until the next cron run (unless the user returns and triggers a heartbeat).
 
 PHASE 10 notifications (server-only):
 - `EMAIL_PROVIDER` (set to `resend`)
