@@ -74,7 +74,7 @@ export type CronEnv = z.infer<typeof CronEnvSchema>;
 
 export function getCronEnv(): CronEnv {
   const parsed = CronEnvSchema.safeParse({
-    CRON_SECRET: process.env.CRON_SECRET,
+    CRON_SECRET: process.env.CRON_SECRET?.trim(),
   });
 
   if (!parsed.success) {
