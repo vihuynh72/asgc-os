@@ -23,12 +23,15 @@ Public (browser-safe):
 
 Server-only:
 - `SUPABASE_SERVICE_ROLE_KEY`
-- `CRON_SECRET` (used for `/api/cron/*` routes; Vercel cron sends `Authorization: Bearer $CRON_SECRET`)
+- `CRON_SECRET` (used for `/api/cron/*` routes; scheduled jobs send `Authorization: Bearer $CRON_SECRET`)
 
-### Vercel cron schedule notes
+### Scheduled jobs (cron)
 
-- Vercel Hobby cron precision is hourly; Pro supports per-minute schedules.
-- The Office Hours “presence timeout” uses a 60-minute cutoff based on the last successful heartbeat, but the session may not be marked closed in the DB/UI until the next cron run (unless the user returns and triggers a heartbeat).
+This repo runs scheduled Office Hours enforcement and notifications by calling `/api/cron/office-hours-reminders`.
+
+- Vercel Cron Jobs can be plan-limited and have precision limits on Hobby.
+- Default approach here: run the schedule from GitHub Actions (`.github/workflows/office-hours-cron.yml`).
+- The Office Hours “presence timeout” uses a 60-minute cutoff based on the last successful heartbeat, but the session may not be marked closed in the DB/UI until the next scheduled run (unless the user returns and triggers a heartbeat).
 
 PHASE 10 notifications (server-only):
 - `EMAIL_PROVIDER` (set to `resend`)

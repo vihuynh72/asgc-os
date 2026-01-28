@@ -4,9 +4,9 @@
 
 **Goal:** Enforce Office Hours presence reliably even if the user closes the tab by using 10-minute location heartbeats and server-side auto-checkout after 60 minutes without a successful heartbeat (excluding kiosk sessions).
 
-**Architecture:** While a session is open, the browser periodically sends a geolocation heartbeat to a new API route. The server records `last_presence_at` when within the office geofence and immediately checks out the user if they leave. A Vercel Cron job runs server-side enforcement to auto-checkout sessions that have not produced a successful heartbeat within 60 minutes.
+**Architecture:** While a session is open, the browser periodically sends a geolocation heartbeat to a new API route. The server records `last_presence_at` when within the office geofence and immediately checks out the user if they leave. A scheduled job calls `/api/cron/office-hours-reminders` to run server-side enforcement to auto-checkout sessions that have not produced a successful heartbeat within 60 minutes.
 
-**Tech Stack:** Next.js (App Router), Supabase Postgres (RLS + RPCs), Vercel Cron Jobs.
+**Tech Stack:** Next.js (App Router), Supabase Postgres (RLS + RPCs), scheduled HTTP cron (GitHub Actions or Vercel Cron Jobs).
 
 ---
 
@@ -116,21 +116,21 @@ Expected: PASS
 2. Replace automatic `/api/office-hours/check-out` calls with `/api/office-hours/presence`:
    - This both updates `last_presence_at` and checks out if outside grace.
 3. Ensure the first heartbeat runs immediately on resume/mount.
-4. Mark kiosk-created sessions as `requires_presence = false` so they are excluded from 15-minute enforcement.
+4. Mark kiosk-created sessions as `requires_presence = false` so they are excluded from presence enforcement.
 
 ---
 
-### Task 6: Vercel Cron config
+### Task 6: Scheduled job config
 
 **Files:**
-- Create: `apps/web/vercel.json`
+- Create: `.github/workflows/office-hours-cron.yml`
 - Modify: `apps/web/README.md`
 
 **Steps:**
-1. Add Vercel cron to call `/api/cron/office-hours-reminders` on a short schedule:
-   - Pro/Enterprise: per-minute is supported (e.g. `* * * * *`).
-   - Hobby: hourly precision only (e.g. `0 * * * *`). With a 60-minute presence timeout, the DB/UI may still not reflect closure until the next cron run (unless the user returns and triggers a heartbeat).
-2. Document required env var: `CRON_SECRET` (must be set in Vercel project env).
+1. Add a scheduled job to call `/api/cron/office-hours-reminders` on a reasonable schedule (hourly is fine).
+   - Vercel Cron Jobs are supported but can be plan-limited and have precision limits.
+   - GitHub Actions can be used as a simple plan-agnostic scheduler.
+2. Document required env var: `CRON_SECRET` (must be set in the Vercel project env) and how the scheduler authenticates.
 
 ---
 
@@ -142,6 +142,6 @@ Expected: PASS
 
 **Manual checks (staging):**
 1. Check in, then close tab → confirm timeout cutoff is 60 minutes after last heartbeat; DB/UI may not reflect closure until the next cron run (hourly on Hobby, per-minute on Pro).
-2. Check in, stay in office → confirm session remains open past 15 minutes.
+2. Check in, stay in office → confirm session remains open and periodic heartbeats succeed.
 3. Check in, leave geofence → confirm immediate auto-checkout on next heartbeat.
-4. Kiosk check-in → confirm it does not auto-checkout after 15 minutes.
+4. Kiosk check-in → confirm it does not auto-checkout due to presence enforcement.
