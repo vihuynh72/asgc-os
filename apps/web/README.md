@@ -31,6 +31,7 @@ This repo runs scheduled Office Hours enforcement and notifications by calling `
 
 - Vercel Cron Jobs can be plan-limited and have precision limits on Hobby.
 - Default approach here: run the schedule from GitHub Actions (`.github/workflows/office-hours-cron.yml`).
+- When using GitHub Actions, set repo secrets: `PROD_BASE_URL` (your deployed site URL) and `CRON_SECRET`.
 - The Office Hours “presence timeout” uses a 60-minute cutoff based on the last successful heartbeat, but the session may not be marked closed in the DB/UI until the next scheduled run (unless the user returns and triggers a heartbeat).
 
 PHASE 10 notifications (server-only):
