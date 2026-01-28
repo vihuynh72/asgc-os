@@ -78,7 +78,7 @@ export function getCronEnv(): CronEnv {
   });
 
   if (!parsed.success) {
-    throw new Error("Missing cron env. Set CRON_SECRET in .env.local (server-only). ");
+    throw new Error("Missing cron env. Set CRON_SECRET (>= 16 chars) in server env (Vercel Env Vars or .env.local).");
   }
 
   return parsed.data;
