@@ -15,12 +15,17 @@ function getHeader(headers, name) {
 }
 
 export function isAuthorizedCronRequest(headers, { cronSecret }) {
-  if (typeof cronSecret !== "string" || cronSecret.length === 0) return false;
+  if (typeof cronSecret !== "string") return false;
+  const normalizedSecret = cronSecret.trim();
+  if (normalizedSecret.length === 0) return false;
 
   const authHeader = getHeader(headers, "authorization");
-  if (authHeader === `Bearer ${cronSecret}`) return true;
+  if (typeof authHeader === "string") {
+    const match = authHeader.match(/^\s*Bearer\s+(.+?)\s*$/i);
+    if (match?.[1] === normalizedSecret) return true;
+  }
 
   // Back-compat: older deployments used a custom header.
   const legacy = getHeader(headers, "x-cron-secret");
-  return legacy === cronSecret;
+  return typeof legacy === "string" && legacy.trim() === normalizedSecret;
 }

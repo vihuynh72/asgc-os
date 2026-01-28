@@ -10,6 +10,13 @@ test("isAuthorizedCronRequest accepts matching Bearer token", () => {
   );
 });
 
+test("isAuthorizedCronRequest accepts Bearer token with whitespace", () => {
+  assert.equal(
+    isAuthorizedCronRequest({ authorization: "  Bearer   abc123  " }, { cronSecret: " abc123\n" }),
+    true
+  );
+});
+
 test("isAuthorizedCronRequest rejects mismatched Bearer token", () => {
   assert.equal(
     isAuthorizedCronRequest({ authorization: "Bearer wrong" }, { cronSecret: "abc123" }),
@@ -27,4 +34,3 @@ test("isAuthorizedCronRequest accepts matching legacy x-cron-secret", () => {
 test("isAuthorizedCronRequest rejects missing headers", () => {
   assert.equal(isAuthorizedCronRequest({}, { cronSecret: "abc123" }), false);
 });
-
