@@ -139,7 +139,18 @@ async function handle(request: NextRequest) {
     env = getCronEnv();
   } catch (e) {
     const message = e instanceof Error ? e.message : "missing cron env";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json(
+      {
+        error: message,
+        debug: {
+          vercel_env: process.env.VERCEL_ENV ?? null,
+          vercel_url: process.env.VERCEL_URL ?? null,
+          vercel_git_sha: process.env.VERCEL_GIT_COMMIT_SHA ?? null,
+          vercel_git_ref: process.env.VERCEL_GIT_COMMIT_REF ?? null,
+        },
+      },
+      { status: 500 },
+    );
   }
   if (!isAuthorizedCronRequest(request.headers, { cronSecret: env.CRON_SECRET })) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
