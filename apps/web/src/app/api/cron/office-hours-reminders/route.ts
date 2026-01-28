@@ -152,8 +152,16 @@ async function handle(request: NextRequest) {
       { status: 500 },
     );
   }
+  const debug = {
+    vercel_env: process.env.VERCEL_ENV ?? null,
+    vercel_url: process.env.VERCEL_URL ?? null,
+    vercel_git_sha: process.env.VERCEL_GIT_COMMIT_SHA ?? null,
+    vercel_git_ref: process.env.VERCEL_GIT_COMMIT_REF ?? null,
+    has_authorization_header: request.headers.has("authorization"),
+    has_legacy_cron_header: request.headers.has("x-cron-secret"),
+  };
   if (!isAuthorizedCronRequest(request.headers, { cronSecret: env.CRON_SECRET })) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+    return NextResponse.json({ error: "unauthorized", debug }, { status: 401 });
   }
 
   const origin = new URL(request.url).origin;
