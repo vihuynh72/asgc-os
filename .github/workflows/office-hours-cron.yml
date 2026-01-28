@@ -15,7 +15,8 @@ jobs:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
           PROD_BASE_URL: ${{ secrets.PROD_BASE_URL }}
         run: |
-          set -euo pipefail
+          set +e
+          set -uo pipefail
 
           if [ -z "${PROD_BASE_URL:-}" ]; then
             echo "Missing required secret: PROD_BASE_URL (e.g. https://asgc-erp.vercel.app)"
@@ -27,16 +28,37 @@ jobs:
             exit 1
           fi
 
-          url="${PROD_BASE_URL%/}/api/cron/office-hours-reminders"
+          base="${PROD_BASE_URL%/}"
+          if [[ "$base" != http://* && "$base" != https://* ]]; then
+            base="https://$base"
+          fi
+
+          url="${base}/api/cron/office-hours-reminders"
           echo "Calling: $url"
 
-          status="$(curl -sS -o response.json -w "%{http_code}" \
-            -H "Authorization: Bearer $CRON_SECRET" \
-            -H "User-Agent: github-actions-office-hours-cron" \
-            "$url")"
+          tmp="$(mktemp)"
+          status="$(
+            curl -sS -L -o "$tmp" -w "%{http_code}" \
+              -H "Authorization: Bearer $CRON_SECRET" \
+              -H "User-Agent: github-actions-office-hours-cron" \
+              "$url"
+          )"
+          curl_exit=$?
+          if [[ ! "$status" =~ ^[0-9]{3}$ ]]; then
+            status="000"
+          fi
 
           echo "HTTP $status"
-          cat response.json || true
+          if [ -s "$tmp" ]; then
+            cat "$tmp"
+          else
+            echo "(empty body)"
+          fi
+
+          if [ "$curl_exit" -ne 0 ]; then
+            echo "curl failed with exit code: $curl_exit"
+            exit "$curl_exit"
+          fi
 
           if [ "$status" -lt 200 ] || [ "$status" -ge 300 ]; then
             echo "Cron endpoint returned non-2xx: $status"
