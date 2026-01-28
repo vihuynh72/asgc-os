@@ -1,0 +1,44 @@
+name: Office Hours Cron
+
+on:
+  schedule:
+    - cron: "0 * * * *" # hourly (UTC)
+  workflow_dispatch: {}
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Call cron endpoint
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          PROD_BASE_URL: ${{ secrets.PROD_BASE_URL }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${PROD_BASE_URL:-}" ]; then
+            echo "Missing required secret: PROD_BASE_URL (e.g. https://asgc-erp.vercel.app)"
+            exit 1
+          fi
+
+          if [ -z "${CRON_SECRET:-}" ]; then
+            echo "Missing required secret: CRON_SECRET"
+            exit 1
+          fi
+
+          url="${PROD_BASE_URL%/}/api/cron/office-hours-reminders"
+          echo "Calling: $url"
+
+          status="$(curl -sS -o response.json -w "%{http_code}" \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            -H "User-Agent: github-actions-office-hours-cron" \
+            "$url")"
+
+          echo "HTTP $status"
+          cat response.json || true
+
+          if [ "$status" -lt 200 ] || [ "$status" -ge 300 ]; then
+            echo "Cron endpoint returned non-2xx: $status"
+            exit 1
+          fi

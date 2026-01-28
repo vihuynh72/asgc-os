@@ -1,8 +1,0 @@
-{
-  "crons": [
-    {
-      "path": "/api/cron/office-hours-reminders",
-      "schedule": "0 * * * *"
-    }
-  ]
-}
