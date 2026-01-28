@@ -1,6 +1,6 @@
 # ASGC OS (ASGC Work Operating System)
 
-Internal-only web app for ASGC operations.
+Internal-only web app for Associated Students of Grossmont College operations.
 
 This repo is driven by the build packet files (treat these as the product + architecture source-of-truth):
 
