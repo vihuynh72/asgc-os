@@ -167,6 +167,39 @@ async function handle(request: NextRequest) {
   const origin = new URL(request.url).origin;
   const supabase = getSupabaseAdminClient();
 
+  const presenceTimeoutMinutes = 15;
+  const nowMs = Date.now();
+  const staleBeforeMs = nowMs - presenceTimeoutMinutes * 60_000;
+  const { data: openSessionsForDebug } = await supabase
+    .from("office_hour_sessions")
+    .select("checkin_at,last_presence_at,requires_presence")
+    .eq("status", "open")
+    .is("checkout_at", null)
+    .order("checkin_at", { ascending: false })
+    .limit(10);
+  const presenceDebug = (() => {
+    const sessions = (openSessionsForDebug ?? []).map((row) => {
+      const checkinAt = safeString((row as Record<string, unknown>).checkin_at);
+      const lastPresenceAt = safeString((row as Record<string, unknown>).last_presence_at);
+      const requiresPresence = (row as Record<string, unknown>).requires_presence !== false;
+      const lastSeenMs = Date.parse(lastPresenceAt || checkinAt);
+      const isStale = requiresPresence && Number.isFinite(lastSeenMs) && lastSeenMs <= staleBeforeMs;
+      return {
+        checkin_at: checkinAt || null,
+        last_presence_at: lastPresenceAt || null,
+        requires_presence: requiresPresence,
+        stale: isStale,
+      };
+    });
+    return {
+      timeout_minutes: presenceTimeoutMinutes,
+      open_sessions_sample: sessions,
+      open_sessions_total_in_sample: sessions.length,
+      open_sessions_stale_in_sample: sessions.filter((s) => s.stale).length,
+      open_sessions_without_presence_in_sample: sessions.filter((s) => !s.requires_presence).length,
+    };
+  })();
+
   // Strict presence: auto-checkout sessions with stale presence.
   const { data: autoCheckedOutStale, error: staleErr } = await supabase.rpc("auto_checkout_stale_presence");
   if (staleErr) {
@@ -270,6 +303,7 @@ async function handle(request: NextRequest) {
   return NextResponse.json({
     ok: true,
     auto_checked_out_stale: autoCheckedOutStale ?? 0,
+    presence_debug: presenceDebug,
     session_open_reminders: sessionOpenReminders ?? 0,
     auto_closed: autoClosed ?? 0,
     enqueue: enqueueRes ?? null,
