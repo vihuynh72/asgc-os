@@ -2,7 +2,7 @@ name: Office Hours Cron
 
 on:
   schedule:
-    - cron: "*/5 * * * *" # every 5 minutes (UTC)
+    - cron: "* * * * *" # every minute (UTC)
   workflow_dispatch: {}
 
 jobs:
