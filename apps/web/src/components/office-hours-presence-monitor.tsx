@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 import { isProbablyNetworkError, swallowNetworkError } from "@/lib/network-errors.mjs";
+import { sendJsonBeacon } from "@/lib/unload-checkout.mjs";
 
 async function getCurrentPosition(): Promise<{ lat: number; lon: number }> {
   return new Promise((resolve, reject) => {
@@ -32,6 +33,32 @@ function isAutoPresenceEnabled(): boolean {
   }
 }
 
+const LAST_LOCATION_KEY = "officeHours.lastKnownLocation";
+
+function saveLastLocation(pos: { lat: number; lon: number }) {
+  try {
+    window.localStorage.setItem(
+      LAST_LOCATION_KEY,
+      JSON.stringify({ lat: pos.lat, lon: pos.lon, at: Date.now() }),
+    );
+  } catch {
+    // ignore
+  }
+}
+
+function readLastLocation(): { lat: number; lon: number } | null {
+  try {
+    const raw = window.localStorage.getItem(LAST_LOCATION_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { lat?: unknown; lon?: unknown };
+    if (typeof parsed.lat !== "number" || typeof parsed.lon !== "number") return null;
+    if (!Number.isFinite(parsed.lat) || !Number.isFinite(parsed.lon)) return null;
+    return { lat: parsed.lat, lon: parsed.lon };
+  } catch {
+    return null;
+  }
+}
+
 export function OfficeHoursPresenceMonitor() {
   const pathname = usePathname();
   const supabase = useMemo(() => getSupabaseBrowserClient(), []);
@@ -40,9 +67,8 @@ export function OfficeHoursPresenceMonitor() {
 
   const lockRef = useRef(false);
 
-  // Bootstrap: when leaving /office-hours, check if there is an open session to monitor.
+  // Bootstrap: check if there is an open session to monitor.
   useEffect(() => {
-    if (pathname.startsWith("/office-hours")) return;
     if (!isAutoPresenceEnabled()) return;
 
     let cancelled = false;
@@ -85,21 +111,21 @@ export function OfficeHoursPresenceMonitor() {
     };
   }, [pathname, supabase]);
 
-  // Periodic presence check (when not on /office-hours).
+  // Presence maintenance + unload auto-checkout.
   useEffect(() => {
-    if (pathname.startsWith("/office-hours")) return;
     if (!openSessionId) return;
     if (!isAutoPresenceEnabled()) return;
 
     let cancelled = false;
 
-    async function tick(reason: "interval" | "resume") {
+    async function tickGeo(reason: "interval" | "resume") {
       if (cancelled) return;
       if (lockRef.current) return;
 
       lockRef.current = true;
       try {
         const { lat, lon } = await getCurrentPosition();
+        saveLastLocation({ lat, lon });
 
         const res = await fetch("/api/office-hours/presence", {
           method: "POST",
@@ -129,19 +155,59 @@ export function OfficeHoursPresenceMonitor() {
       }
     }
 
-    void tick("resume");
+    async function tickPing() {
+      if (cancelled) return;
+      try {
+        const res = await fetch("/api/office-hours/presence/ping", { method: "POST" });
+        if (cancelled) return;
+        if (res.status === 409) {
+          setOpenSessionId(null);
+          return;
+        }
+        if (!res.ok) return;
+        const json = (await res.json().catch(() => null)) as { result?: { action?: string } } | null;
+        if (json?.result?.action === "checked_out") {
+          setOpenSessionId(null);
+        }
+      } catch {
+        // ignore
+      }
+    }
 
-    const intervalMs = 10 * 60_000;
-    const id = window.setInterval(() => void tick("interval"), intervalMs);
+    void tickGeo("resume");
+    void tickPing();
+
+    const pingIntervalMs = 20_000;
+    const pingId = window.setInterval(() => void tickPing(), pingIntervalMs);
+
+    const geoIntervalMs = 60_000;
+    const geoId = window.setInterval(() => void tickGeo("interval"), geoIntervalMs);
     const onVisibility = () => {
-      if (document.visibilityState === "visible") void tick("resume");
+      if (document.visibilityState === "visible") {
+        void tickGeo("resume");
+        void tickPing();
+      }
     };
     document.addEventListener("visibilitychange", onVisibility);
 
+    const onPageHide = () => {
+      const last = readLastLocation();
+      if (!last) return;
+      void sendJsonBeacon({
+        url: "/api/office-hours/check-out",
+        body: last,
+        sendBeacon: navigator.sendBeacon?.bind(navigator),
+        fetchFn: (url: string, init: RequestInit) => fetch(url, init),
+      });
+    };
+    window.addEventListener("pagehide", onPageHide);
+
     return () => {
       cancelled = true;
-      window.clearInterval(id);
+      window.clearInterval(pingId);
+      window.clearInterval(geoId);
       document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("pagehide", onPageHide);
     };
   }, [openSessionId, pathname]);
 
