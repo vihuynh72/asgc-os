@@ -58,7 +58,7 @@ begin
     update public.office_hour_sessions as sess
     set
       checkout_at = greatest(close_at, (last_seen + interval '15 minutes')),
-      status = 'closed',
+      status = 'auto_closed',
       distance_m_at_checkout = null,
       needs_review = false,
       review_reason = null
@@ -161,7 +161,7 @@ begin
     update public.office_hour_sessions as sess
     set
       checkout_at = greatest(close_at, (last_seen + interval '15 minutes')),
-      status = 'closed',
+      status = 'auto_closed',
       distance_m_at_checkout = null,
       needs_review = false,
       review_reason = null
@@ -221,7 +221,7 @@ begin
     update public.office_hour_sessions as sess
     set
       checkout_at = now(),
-      status = 'closed',
+      status = 'auto_closed',
       distance_m_at_checkout = dist,
       needs_review = false,
       review_reason = null
@@ -288,7 +288,7 @@ begin
         close_at,
         (coalesce(sess.last_presence_at, sess.checkin_at) + interval '15 minutes')
       ),
-      status = 'closed',
+      status = 'auto_closed',
       distance_m_at_checkout = null,
       needs_review = false,
       review_reason = null
