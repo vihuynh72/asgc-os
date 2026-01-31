@@ -16,6 +16,9 @@ type NotificationLogRow = {
   attempt_count: number;
 };
 
+const KIOSK_PHOTO_BUCKET = "office-hours-kiosk";
+const KIOSK_PHOTO_RETENTION_DAYS = 30;
+
 function safeString(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
@@ -35,6 +38,58 @@ function formatMinutes(totalMinutes: number | null): string {
   const hoursPart = Math.floor(minutes / 60);
   const minutesPart = minutes % 60;
   return `${hoursPart}h ${minutesPart}m`;
+}
+
+async function cleanupKioskCheckinPhotos(supabase: ReturnType<typeof getSupabaseAdminClient>) {
+  const cutoff = new Date(Date.now() - KIOSK_PHOTO_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
+
+  const { data: rows, error } = await supabase
+    .from("office_hour_sessions")
+    .select("id,checkin_at,kiosk_checkin_photo_bucket,kiosk_checkin_photo_path,kiosk_checkin_photo_deleted_at")
+    .not("kiosk_checkin_photo_path", "is", null)
+    .is("kiosk_checkin_photo_deleted_at", null)
+    .lt("checkin_at", cutoff)
+    .limit(100);
+
+  if (error) {
+    return { attempted: 0, deleted: 0, error: error.message || "query_failed" };
+  }
+
+  const candidates = (rows ?? [])
+    .map((r) => r as Record<string, unknown>)
+    .map((r) => ({
+      id: typeof r.id === "string" ? r.id : "",
+      bucket: typeof r.kiosk_checkin_photo_bucket === "string" ? r.kiosk_checkin_photo_bucket : "",
+      path: typeof r.kiosk_checkin_photo_path === "string" ? r.kiosk_checkin_photo_path : "",
+    }))
+    .filter((r) => r.id && r.path && (r.bucket === "" || r.bucket === KIOSK_PHOTO_BUCKET));
+
+  if (candidates.length === 0) {
+    return { attempted: 0, deleted: 0, error: null };
+  }
+
+  const paths = candidates.map((c) => c.path);
+  const { data: removed, error: removeErr } = await supabase.storage.from(KIOSK_PHOTO_BUCKET).remove(paths);
+  if (removeErr) {
+    return { attempted: candidates.length, deleted: 0, error: removeErr.message || "delete_failed" };
+  }
+
+  const removedNames = new Set((removed ?? []).map((r) => (r as { name?: unknown }).name).filter((n): n is string => typeof n === "string"));
+  const deletedIds = candidates.filter((c) => removedNames.has(c.path)).map((c) => c.id);
+
+  if (deletedIds.length > 0) {
+    await supabase
+      .from("office_hour_sessions")
+      .update({
+        kiosk_checkin_photo_deleted_at: new Date().toISOString(),
+        kiosk_checkin_photo_bucket: null,
+        kiosk_checkin_photo_path: null,
+        kiosk_checkin_photo_mime: null,
+      })
+      .in("id", deletedIds);
+  }
+
+  return { attempted: candidates.length, deleted: deletedIds.length, error: null };
 }
 
 function renderEmailText(type: string, metadata: unknown, origin: string): { subject: string; text: string } {
@@ -161,6 +216,8 @@ async function handle(request: NextRequest) {
 
   const origin = new URL(request.url).origin;
   const supabase = getSupabaseAdminClient();
+
+  const kioskPhotoCleanup = await cleanupKioskCheckinPhotos(supabase);
 
   const presenceTimeoutMinutes = 15;
   const nowMs = Date.now();
@@ -339,6 +396,7 @@ async function handle(request: NextRequest) {
   return NextResponse.json({
     ok: true,
     auto_checked_out_stale: autoCheckedOutStale ?? 0,
+    kiosk_photo_cleanup: kioskPhotoCleanup,
     presence_debug: presenceDebug,
     session_open_reminders: sessionOpenReminders ?? 0,
     auto_closed: autoClosed ?? 0,
