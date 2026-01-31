@@ -16,9 +16,7 @@ type AdminWeeklyHoursRow = {
   user_id: string;
   week_start: string;
   total_minutes: number;
-  in_office_minutes: number;
   deficit_minutes: number;
-  deficit_in_office_minutes: number;
 };
 
 type AdminWeeklyHoursPreviewRow = {
@@ -27,9 +25,7 @@ type AdminWeeklyHoursPreviewRow = {
   display_name: string;
   email: string;
   total_minutes: number;
-  in_office_minutes: number;
   deficit_minutes: number;
-  deficit_in_office_minutes: number;
 };
 
 function csvEscape(value: unknown): string {
@@ -104,9 +100,7 @@ export async function GET(request: NextRequest) {
       display_name: displayNameById.get(r.user_id) ?? "",
       email: emailById.get(r.user_id) ?? "",
       total_minutes: r.total_minutes,
-      in_office_minutes: r.in_office_minutes,
       deficit_minutes: r.deficit_minutes,
-      deficit_in_office_minutes: r.deficit_in_office_minutes,
     }));
 
     return NextResponse.json({ weekStart: filenameWeek, rows: previewRows }, { status: 200 });
@@ -118,9 +112,7 @@ export async function GET(request: NextRequest) {
     "display_name",
     "email",
     "total_minutes",
-    "in_office_minutes",
     "deficit_minutes",
-    "deficit_in_office_minutes",
   ];
 
   const lines: string[] = [];
@@ -134,9 +126,7 @@ export async function GET(request: NextRequest) {
         displayNameById.get(r.user_id) ?? "",
         emailById.get(r.user_id) ?? "",
         r.total_minutes,
-        r.in_office_minutes,
         r.deficit_minutes,
-        r.deficit_in_office_minutes,
       ]
         .map(csvEscape)
         .join(","),

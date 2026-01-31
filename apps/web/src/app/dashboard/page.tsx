@@ -15,9 +15,7 @@ type WeeklyHoursRow = {
   user_id: string;
   week_start: string;
   total_minutes: number;
-  in_office_minutes: number;
   deficit_minutes: number;
-  deficit_in_office_minutes: number;
 };
 
 type TaskRow = {
@@ -139,7 +137,6 @@ export default async function DashboardPage() {
   const meetings = (meetingsRaw ?? []) as MeetingRow[];
 
   const totalMinutes = weekly?.total_minutes ?? 0;
-  const inOfficeMinutes = weekly?.in_office_minutes ?? 0;
   const deficitMinutes = weekly?.deficit_minutes ?? 0;
 
   const targetMinutes = Math.max(totalMinutes + deficitMinutes, totalMinutes, 0);
@@ -216,7 +213,7 @@ export default async function DashboardPage() {
                   <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
                     <div className="h-2 rounded-full bg-primary" style={{ width: `${Math.round(totalProgress * 100)}%` }} />
                   </div>
-                  <div className="text-xs text-foreground/60">In office: {formatHours(inOfficeMinutes)}</div>
+                  <div className="text-xs text-foreground/60">Logged so far (this week)</div>
                 </div>
 
                 {openSession?.checkin_at ? (

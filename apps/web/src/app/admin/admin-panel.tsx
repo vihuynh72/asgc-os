@@ -139,9 +139,7 @@ type AdminWeeklyHoursPreviewRow = {
   display_name: string;
   email: string;
   total_minutes: number | string;
-  in_office_minutes: number | string;
   deficit_minutes: number | string;
-  deficit_in_office_minutes: number | string;
 };
 
 type AdminMeetingRow = {
@@ -732,9 +730,8 @@ export function AdminPanel({
   const [exportPreviewRows, setExportPreviewRows] = useState<AdminWeeklyHoursPreviewRow[] | null>(null);
   const [exportPreviewSearch, setExportPreviewSearch] = useState<string>("");
   const [exportPreviewDeficitOnly, setExportPreviewDeficitOnly] = useState<boolean>(false);
-  const [exportPreviewInOfficeDeficitOnly, setExportPreviewInOfficeDeficitOnly] = useState<boolean>(false);
   const [exportPreviewSortKey, setExportPreviewSortKey] = useState<
-    "name" | "total" | "deficit" | "deficit_in_office"
+    "name" | "total" | "deficit"
   >("name");
   const [exportPreviewActionStatus, setExportPreviewActionStatus] = useState<string>("");
   const exportPreviewActionTimerRef = useRef<number | null>(null);
@@ -803,7 +800,7 @@ export function AdminPanel({
       return {
         roleKey,
         weeklyTotalHours: row?.weekly_total_hours ?? 0,
-        weeklyInOfficeHours: row?.weekly_in_office_hours ?? 0,
+        weeklyInOfficeHours: 0,
       };
     });
 
@@ -827,7 +824,7 @@ export function AdminPanel({
     }
   }
 
-  function updateRequirement(roleKey: RoleKey, patch: Partial<Pick<OfficeHourRequirementRow, "weekly_total_hours" | "weekly_in_office_hours">>) {
+  function updateRequirement(roleKey: RoleKey, patch: Partial<Pick<OfficeHourRequirementRow, "weekly_total_hours">>) {
     if (!selectedTermId) return;
     setOfficeHourRequirements((prev) => {
       const next = [...prev];
@@ -845,7 +842,7 @@ export function AdminPanel({
         role_key: roleKey,
         term_id: selectedTermId,
         weekly_total_hours: patch.weekly_total_hours ?? 0,
-        weekly_in_office_hours: patch.weekly_in_office_hours ?? 0,
+        weekly_in_office_hours: 0,
         effective_start: null,
         effective_end: null,
       });
@@ -1165,10 +1162,6 @@ export function AdminPanel({
         const deficit = parseMinutesValue(row.deficit_minutes) ?? 0;
         if (deficit <= 0) return false;
       }
-      if (exportPreviewInOfficeDeficitOnly) {
-        const deficit = parseMinutesValue(row.deficit_in_office_minutes) ?? 0;
-        if (deficit <= 0) return false;
-      }
       if (!query) return true;
       const hay = `${row.display_name ?? ""} ${row.email ?? ""}`.toLowerCase();
       return hay.includes(query);
@@ -1187,9 +1180,6 @@ export function AdminPanel({
       if (exportPreviewSortKey === "total") {
         return toMinutes(b.total_minutes) - toMinutes(a.total_minutes);
       }
-      if (exportPreviewSortKey === "deficit_in_office") {
-        return toMinutes(b.deficit_in_office_minutes) - toMinutes(a.deficit_in_office_minutes);
-      }
       return toMinutes(b.deficit_minutes) - toMinutes(a.deficit_minutes);
     });
 
@@ -1198,38 +1188,29 @@ export function AdminPanel({
     exportPreviewRows,
     exportPreviewSearch,
     exportPreviewDeficitOnly,
-    exportPreviewInOfficeDeficitOnly,
     exportPreviewSortKey,
   ]);
 
   const exportPreviewFiltersActive =
     exportPreviewSearch.trim().length > 0 ||
     exportPreviewDeficitOnly ||
-    exportPreviewInOfficeDeficitOnly ||
     exportPreviewSortKey !== "name";
 
   const exportPreviewSummary = useMemo(() => {
     const list = exportPreviewFilteredRows;
     let deficitCount = 0;
-    let inOfficeDeficitCount = 0;
     let totalDeficit = 0;
-    let totalInOfficeDeficit = 0;
 
     for (const row of list) {
       const deficit = parseMinutesValue(row.deficit_minutes) ?? 0;
-      const inOfficeDeficit = parseMinutesValue(row.deficit_in_office_minutes) ?? 0;
       if (deficit > 0) deficitCount += 1;
-      if (inOfficeDeficit > 0) inOfficeDeficitCount += 1;
       totalDeficit += Math.max(0, deficit);
-      totalInOfficeDeficit += Math.max(0, inOfficeDeficit);
     }
 
     return {
       totalRows: list.length,
       deficitCount,
-      inOfficeDeficitCount,
       totalDeficit,
-      totalInOfficeDeficit,
     };
   }, [exportPreviewFilteredRows]);
 
@@ -1262,14 +1243,10 @@ export function AdminPanel({
     }, 2500);
   }
 
-  async function copyExportPreviewEmails(kind: "all" | "deficit" | "in_office_deficit") {
+  async function copyExportPreviewEmails(kind: "all" | "deficit") {
     const list = exportPreviewFilteredRows.filter((row) => {
       if (kind === "deficit") {
         const deficit = parseMinutesValue(row.deficit_minutes) ?? 0;
-        return deficit > 0;
-      }
-      if (kind === "in_office_deficit") {
-        const deficit = parseMinutesValue(row.deficit_in_office_minutes) ?? 0;
         return deficit > 0;
       }
       return true;
@@ -1298,9 +1275,7 @@ export function AdminPanel({
       "display_name",
       "email",
       "total_minutes",
-      "in_office_minutes",
       "deficit_minutes",
-      "deficit_in_office_minutes",
     ];
     const lines = [
       header.map(toCsvValue).join(","),
@@ -1310,9 +1285,7 @@ export function AdminPanel({
           row.display_name ?? "",
           row.email ?? "",
           parseMinutesValue(row.total_minutes) ?? "",
-          parseMinutesValue(row.in_office_minutes) ?? "",
           parseMinutesValue(row.deficit_minutes) ?? "",
-          parseMinutesValue(row.deficit_in_office_minutes) ?? "",
         ];
         return values.map(toCsvValue).join(",");
       }),
@@ -1332,7 +1305,6 @@ export function AdminPanel({
   function resetExportPreviewFilters() {
     setExportPreviewSearch("");
     setExportPreviewDeficitOnly(false);
-    setExportPreviewInOfficeDeficitOnly(false);
     setExportPreviewSortKey("name");
   }
 
@@ -4466,27 +4438,18 @@ export function AdminPanel({
                   />
                   <span className="text-foreground/70">Deficit only</span>
                 </label>
-                <label className="flex items-center gap-2 text-xs">
-                  <input
-                    type="checkbox"
-                    checked={exportPreviewInOfficeDeficitOnly}
-                    onChange={(e: ChangeEvent<HTMLInputElement>) => setExportPreviewInOfficeDeficitOnly(e.target.checked)}
-                  />
-                  <span className="text-foreground/70">In-office deficit only</span>
-                </label>
                 <label className="space-y-1 text-xs">
                   <div className="text-foreground/70">Sort</div>
                   <select
                     className="h-8 w-full rounded-md border bg-transparent px-2 text-xs sm:w-44"
                     value={exportPreviewSortKey}
                     onChange={(e: ChangeEvent<HTMLSelectElement>) =>
-                      setExportPreviewSortKey(e.target.value as "name" | "total" | "deficit" | "deficit_in_office")
+                      setExportPreviewSortKey(e.target.value as "name" | "total" | "deficit")
                     }
                   >
                     <option value="name">Name (A-Z)</option>
                     <option value="total">Total (high to low)</option>
                     <option value="deficit">Deficit (high to low)</option>
-                    <option value="deficit_in_office">In-office deficit (high to low)</option>
                   </select>
                 </label>
                 <Button
@@ -4502,8 +4465,6 @@ export function AdminPanel({
             <div className="flex flex-wrap items-center gap-3 border-t px-3 py-2 text-xs text-foreground/70">
               <span>Deficit: {exportPreviewSummary.deficitCount}</span>
               <span>Total deficit: {formatMinutes(exportPreviewSummary.totalDeficit)}</span>
-              <span>In-office deficit: {exportPreviewSummary.inOfficeDeficitCount}</span>
-              <span>In-office total: {formatMinutes(exportPreviewSummary.totalInOfficeDeficit)}</span>
               <Button
                 variant="outline"
                 size="sm"
@@ -4523,14 +4484,6 @@ export function AdminPanel({
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => void copyExportPreviewEmails("in_office_deficit")}
-                disabled={exportPreviewSummary.totalRows === 0}
-              >
-                Copy in-office deficit emails
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
                 onClick={downloadExportPreviewCsv}
                 disabled={exportPreviewSummary.totalRows === 0}
               >
@@ -4538,38 +4491,31 @@ export function AdminPanel({
               </Button>
             </div>
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[920px] text-sm">
+              <table className="w-full min-w-[760px] text-sm">
                 <thead className="border-t bg-foreground/5 text-left text-xs text-foreground/70">
                   <tr>
                     <th className="px-3 py-2">Name</th>
                     <th className="px-3 py-2">Email</th>
                     <th className="px-3 py-2 text-right">Total</th>
-                    <th className="px-3 py-2 text-right">In office</th>
                     <th className="px-3 py-2 text-right">Deficit</th>
-                    <th className="px-3 py-2 text-right">Deficit in-office</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">
                   {exportPreviewFilteredRows.map((r) => {
                     const deficit = parseMinutesValue(r.deficit_minutes) ?? 0;
-                    const inOfficeDeficit = parseMinutesValue(r.deficit_in_office_minutes) ?? 0;
-                    const highlight = deficit > 0 || inOfficeDeficit > 0;
+                    const highlight = deficit > 0;
                     return (
                       <tr key={`${r.user_id}:${r.week_start}`} className={highlight ? "bg-red-500/5" : undefined}>
                         <td className="px-3 py-2">{r.display_name || "—"}</td>
                         <td className="px-3 py-2">{r.email || "—"}</td>
                         <td className="px-3 py-2 text-right font-mono">{formatMinutesValue(r.total_minutes)}</td>
-                        <td className="px-3 py-2 text-right font-mono">{formatMinutesValue(r.in_office_minutes)}</td>
                         <td className="px-3 py-2 text-right font-mono">{formatMinutesValue(r.deficit_minutes)}</td>
-                        <td className="px-3 py-2 text-right font-mono">
-                          {formatMinutesValue(r.deficit_in_office_minutes)}
-                        </td>
                       </tr>
                     );
                   })}
                   {exportPreviewFilteredRows.length === 0 ? (
                     <tr>
-                      <td className="px-3 py-3 text-sm text-foreground/60" colSpan={6}>
+                      <td className="px-3 py-3 text-sm text-foreground/60" colSpan={4}>
                         {exportPreviewFiltersActive ? "No rows match the current filters." : "No rows returned."}
                       </td>
                     </tr>
@@ -4667,7 +4613,7 @@ export function AdminPanel({
         <div className="space-y-1">
           <h2 className="text-lg font-semibold">Office Hour Requirements</h2>
           <p className="text-sm text-foreground/70">
-            Configure weekly required hours for the selected term. In-office hours cannot exceed total hours.
+            Configure weekly required hours for the selected term.
           </p>
         </div>
 
@@ -4676,7 +4622,6 @@ export function AdminPanel({
             {(["president", "executive", "director", "board_member", "volunteer"] as RoleKey[]).map((roleKey) => {
               const row = reqRows.get(roleKey);
               const total = row?.weekly_total_hours ?? 0;
-              const inOffice = row?.weekly_in_office_hours ?? 0;
 
               return (
                 <div key={roleKey} className="space-y-2">
@@ -4693,24 +4638,6 @@ export function AdminPanel({
                       onChange={(e) => {
                         const next = Math.max(0, Math.floor(Number(e.target.value || 0)));
                         updateRequirement(roleKey, { weekly_total_hours: next });
-                        if (inOffice > next) {
-                          updateRequirement(roleKey, { weekly_in_office_hours: next });
-                        }
-                      }}
-                    />
-                  </label>
-
-                  <label className="block text-sm">
-                    <div className="text-foreground/70">Weekly in-office hours</div>
-                    <input
-                      className="mt-1 h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-                      type="number"
-                      min={0}
-                      step={1}
-                      value={inOffice}
-                      onChange={(e) => {
-                        const next = Math.max(0, Math.floor(Number(e.target.value || 0)));
-                        updateRequirement(roleKey, { weekly_in_office_hours: Math.min(next, total) });
                       }}
                     />
                   </label>
