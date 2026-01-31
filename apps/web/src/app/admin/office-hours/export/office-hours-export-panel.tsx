@@ -12,9 +12,7 @@ type AdminWeeklyHoursPreviewRow = {
   display_name: string;
   email: string;
   total_minutes: number | string;
-  in_office_minutes: number | string;
   deficit_minutes: number | string;
-  deficit_in_office_minutes: number | string;
 };
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -79,10 +77,8 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
   const actionTimerRef = useRef<number | null>(null);
   const [rowSearch, setRowSearch] = useState<string>("");
   const [deficitOnly, setDeficitOnly] = useState<boolean>(false);
-  const [inOfficeDeficitOnly, setInOfficeDeficitOnly] = useState<boolean>(false);
   const [minDeficitMinutes, setMinDeficitMinutes] = useState<string>("");
-  const [minInOfficeDeficitMinutes, setMinInOfficeDeficitMinutes] = useState<string>("");
-  const [sortKey, setSortKey] = useState<"name" | "total" | "deficit" | "deficit_in_office">("name");
+  const [sortKey, setSortKey] = useState<"name" | "total" | "deficit">("name");
 
   const weekStartResolved = useMemo(
     () => startOfWeekMondayDateOnly(anchorDate) ?? startOfWeekMondayDateOnly(todayDateString()),
@@ -110,28 +106,15 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
     const base = rows ?? [];
     const query = rowSearch.trim().toLowerCase();
     const minDeficitValue = Number(minDeficitMinutes);
-    const minInOfficeDeficitValue = Number(minInOfficeDeficitMinutes);
     const minDeficit = Number.isFinite(minDeficitValue) && minDeficitValue > 0 ? minDeficitValue : null;
-    const minInOfficeDeficit =
-      Number.isFinite(minInOfficeDeficitValue) && minInOfficeDeficitValue > 0
-        ? minInOfficeDeficitValue
-        : null;
     const filtered = base.filter((r) => {
       if (deficitOnly) {
         const deficit = parseMinutesValue(r.deficit_minutes) ?? 0;
         if (deficit <= 0) return false;
       }
-      if (inOfficeDeficitOnly) {
-        const deficit = parseMinutesValue(r.deficit_in_office_minutes) ?? 0;
-        if (deficit <= 0) return false;
-      }
       if (minDeficit !== null) {
         const deficit = parseMinutesValue(r.deficit_minutes) ?? 0;
         if (deficit < minDeficit) return false;
-      }
-      if (minInOfficeDeficit !== null) {
-        const deficit = parseMinutesValue(r.deficit_in_office_minutes) ?? 0;
-        if (deficit < minInOfficeDeficit) return false;
       }
       if (!query) return true;
       const hay = `${r.display_name ?? ""} ${r.email ?? ""}`.toLowerCase();
@@ -151,45 +134,33 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
       if (sortKey === "total") {
         return toMinutes(b.total_minutes) - toMinutes(a.total_minutes);
       }
-      if (sortKey === "deficit_in_office") {
-        return toMinutes(b.deficit_in_office_minutes) - toMinutes(a.deficit_in_office_minutes);
-      }
       return toMinutes(b.deficit_minutes) - toMinutes(a.deficit_minutes);
     });
 
     return sorted;
-  }, [rows, rowSearch, deficitOnly, inOfficeDeficitOnly, minDeficitMinutes, minInOfficeDeficitMinutes, sortKey]);
+  }, [rows, rowSearch, deficitOnly, minDeficitMinutes, sortKey]);
 
   const filtersActive =
     rowSearch.trim().length > 0 ||
     deficitOnly ||
-    inOfficeDeficitOnly ||
     sortKey !== "name" ||
-    Number(minDeficitMinutes) > 0 ||
-    Number(minInOfficeDeficitMinutes) > 0;
+    Number(minDeficitMinutes) > 0;
 
   const summary = useMemo(() => {
     const list = filteredRows;
     let deficitCount = 0;
-    let inOfficeDeficitCount = 0;
     let totalDeficit = 0;
-    let totalInOfficeDeficit = 0;
 
     for (const row of list) {
       const deficit = parseMinutesValue(row.deficit_minutes) ?? 0;
-      const inOfficeDeficit = parseMinutesValue(row.deficit_in_office_minutes) ?? 0;
       if (deficit > 0) deficitCount += 1;
-      if (inOfficeDeficit > 0) inOfficeDeficitCount += 1;
       totalDeficit += Math.max(0, deficit);
-      totalInOfficeDeficit += Math.max(0, inOfficeDeficit);
     }
 
     return {
       totalRows: list.length,
       deficitCount,
-      inOfficeDeficitCount,
       totalDeficit,
-      totalInOfficeDeficit,
     };
   }, [filteredRows]);
 
@@ -204,14 +175,10 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
     }, 2500);
   }
 
-  async function handleCopyEmails(kind: "all" | "deficit" | "in_office_deficit") {
+  async function handleCopyEmails(kind: "all" | "deficit") {
     const list = filteredRows.filter((row) => {
       if (kind === "deficit") {
         const deficit = parseMinutesValue(row.deficit_minutes) ?? 0;
-        return deficit > 0;
-      }
-      if (kind === "in_office_deficit") {
-        const deficit = parseMinutesValue(row.deficit_in_office_minutes) ?? 0;
         return deficit > 0;
       }
       return true;
@@ -240,9 +207,7 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
       "name",
       "email",
       "total_minutes",
-      "in_office_minutes",
       "deficit_minutes",
-      "deficit_in_office_minutes",
     ];
     const lines = [
       header.map(toCsvValue).join(","),
@@ -252,9 +217,7 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
           row.display_name ?? "",
           row.email ?? "",
           parseMinutesValue(row.total_minutes) ?? "",
-          parseMinutesValue(row.in_office_minutes) ?? "",
           parseMinutesValue(row.deficit_minutes) ?? "",
-          parseMinutesValue(row.deficit_in_office_minutes) ?? "",
         ];
         return values.map(toCsvValue).join(",");
       }),
@@ -274,9 +237,7 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
   function resetFilters() {
     setRowSearch("");
     setDeficitOnly(false);
-    setInOfficeDeficitOnly(false);
     setMinDeficitMinutes("");
-    setMinInOfficeDeficitMinutes("");
     setSortKey("name");
   }
 
@@ -429,14 +390,6 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
                 />
                 <span className="text-foreground/70">Deficit only</span>
               </label>
-              <label className="flex items-center gap-2 text-xs">
-                <input
-                  type="checkbox"
-                  checked={inOfficeDeficitOnly}
-                  onChange={(e: ChangeEvent<HTMLInputElement>) => setInOfficeDeficitOnly(e.target.checked)}
-                />
-                <span className="text-foreground/70">In-office deficit only</span>
-              </label>
               <label className="space-y-1 text-xs">
                 <div className="text-foreground/70">Min deficit (mins)</div>
                 <input
@@ -450,30 +403,17 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
                 />
               </label>
               <label className="space-y-1 text-xs">
-                <div className="text-foreground/70">Min in-office (mins)</div>
-                <input
-                  type="number"
-                  min={0}
-                  step={1}
-                  className="h-8 w-full rounded-md border bg-transparent px-2 text-xs sm:w-28"
-                  value={minInOfficeDeficitMinutes}
-                  onChange={(e: ChangeEvent<HTMLInputElement>) => setMinInOfficeDeficitMinutes(e.target.value)}
-                  placeholder="0"
-                />
-              </label>
-              <label className="space-y-1 text-xs">
                 <div className="text-foreground/70">Sort</div>
                 <select
                   className="h-8 w-full rounded-md border bg-transparent px-2 text-xs sm:w-44"
                   value={sortKey}
                   onChange={(e: ChangeEvent<HTMLSelectElement>) =>
-                    setSortKey(e.target.value as "name" | "total" | "deficit" | "deficit_in_office")
+                    setSortKey(e.target.value as "name" | "total" | "deficit")
                   }
                 >
                   <option value="name">Name (A-Z)</option>
                   <option value="total">Total (high to low)</option>
                   <option value="deficit">Deficit (high to low)</option>
-                  <option value="deficit_in_office">In-office deficit (high to low)</option>
                 </select>
               </label>
               <Button variant="ghost" size="sm" onClick={resetFilters} disabled={!filtersActive}>
@@ -484,8 +424,6 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
           <div className="flex flex-wrap items-center gap-3 border-t px-3 py-2 text-xs text-foreground/70">
             <span>Deficit: {summary.deficitCount}</span>
             <span>Total deficit: {formatMinutes(summary.totalDeficit)}</span>
-            <span>In-office deficit: {summary.inOfficeDeficitCount}</span>
-            <span>In-office total: {formatMinutes(summary.totalInOfficeDeficit)}</span>
             <Button
               variant="outline"
               size="sm"
@@ -505,14 +443,6 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
             <Button
               variant="outline"
               size="sm"
-              onClick={() => void handleCopyEmails("in_office_deficit")}
-              disabled={summary.totalRows === 0}
-            >
-              Copy in-office deficit emails
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
               onClick={downloadFilteredCsv}
               disabled={summary.totalRows === 0}
             >
@@ -520,36 +450,31 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
             </Button>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[920px] text-sm">
+            <table className="w-full min-w-[760px] text-sm">
               <thead className="border-t bg-foreground/5 text-left text-xs text-foreground/70">
                 <tr>
                   <th className="px-3 py-2">Name</th>
                   <th className="px-3 py-2">Email</th>
                   <th className="px-3 py-2 text-right">Total</th>
-                  <th className="px-3 py-2 text-right">In office</th>
                   <th className="px-3 py-2 text-right">Deficit</th>
-                  <th className="px-3 py-2 text-right">Deficit in-office</th>
                 </tr>
               </thead>
               <tbody className="divide-y">
                 {filteredRows.map((r) => {
                   const deficit = parseMinutesValue(r.deficit_minutes) ?? 0;
-                  const inOfficeDeficit = parseMinutesValue(r.deficit_in_office_minutes) ?? 0;
-                  const highlight = deficit > 0 || inOfficeDeficit > 0;
+                  const highlight = deficit > 0;
                   return (
                     <tr key={`${r.user_id}:${r.week_start}`} className={highlight ? "bg-red-500/5" : undefined}>
                     <td className="px-3 py-2">{r.display_name || "—"}</td>
                     <td className="px-3 py-2">{r.email || "—"}</td>
                     <td className="px-3 py-2 text-right font-mono">{formatMinutesValue(r.total_minutes)}</td>
-                    <td className="px-3 py-2 text-right font-mono">{formatMinutesValue(r.in_office_minutes)}</td>
                     <td className="px-3 py-2 text-right font-mono">{formatMinutesValue(r.deficit_minutes)}</td>
-                    <td className="px-3 py-2 text-right font-mono">{formatMinutesValue(r.deficit_in_office_minutes)}</td>
                   </tr>
                   );
                 })}
                 {filteredRows.length === 0 ? (
                   <tr>
-                    <td className="px-3 py-3 text-sm text-foreground/60" colSpan={6}>
+                    <td className="px-3 py-3 text-sm text-foreground/60" colSpan={4}>
                       {filtersActive ? "No rows match the current filters." : "No rows returned."}
                     </td>
                   </tr>

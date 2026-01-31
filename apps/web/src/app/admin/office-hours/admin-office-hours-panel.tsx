@@ -448,7 +448,7 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
                   <th className="px-3 py-2">Duration</th>
                   <th className="px-3 py-2">Status</th>
                   <th className="px-3 py-2">Location</th>
-                  <th className="px-3 py-2">In-office</th>
+                  <th className="px-3 py-2">In radius</th>
                 </tr>
               </thead>
               <tbody className="divide-y">

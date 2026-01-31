@@ -23,7 +23,7 @@ const PutSchema = z.object({
       z.object({
         roleKey: z.string().min(1),
         weeklyTotalHours: z.number().int().min(0),
-        weeklyInOfficeHours: z.number().int().min(0),
+        weeklyInOfficeHours: z.number().int().min(0).optional(),
       }),
     )
     .min(1),
@@ -77,13 +77,6 @@ export async function PUT(request: NextRequest) {
 
   const { termId, requirements } = parsed.data;
 
-  // Enforce invariant early for friendlier errors.
-  for (const r of requirements) {
-    if (r.weeklyInOfficeHours > r.weeklyTotalHours) {
-      return NextResponse.json({ error: "in-office hours cannot exceed total hours" }, { status: 400 });
-    }
-  }
-
   const admin = getSupabaseAdminClient();
 
   // Upsert the "default" row for each role_key for this term (effective_* = NULL).
@@ -92,7 +85,7 @@ export async function PUT(request: NextRequest) {
   for (const r of requirements) {
     const patch = {
       weekly_total_hours: r.weeklyTotalHours,
-      weekly_in_office_hours: r.weeklyInOfficeHours,
+      weekly_in_office_hours: 0,
     };
 
     const { data: updatedRows, error: updateErr } = await admin
@@ -114,7 +107,7 @@ export async function PUT(request: NextRequest) {
           role_key: r.roleKey,
           term_id: termId,
           weekly_total_hours: r.weeklyTotalHours,
-          weekly_in_office_hours: r.weeklyInOfficeHours,
+          weekly_in_office_hours: 0,
           effective_start: null,
           effective_end: null,
         });
@@ -131,7 +124,7 @@ export async function PUT(request: NextRequest) {
         term_id: termId,
         role_key: r.roleKey,
         weekly_total_hours: r.weeklyTotalHours,
-        weekly_in_office_hours: r.weeklyInOfficeHours,
+        weekly_in_office_hours: 0,
       },
     });
   }

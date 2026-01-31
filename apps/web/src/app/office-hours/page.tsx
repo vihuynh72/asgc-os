@@ -11,9 +11,7 @@ import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 type WeeklyHours = {
   week_start: string;
   total_minutes: number;
-  in_office_minutes: number;
   deficit_minutes: number;
-  deficit_in_office_minutes: number;
 };
 
 type TimesheetSession = {
@@ -30,7 +28,7 @@ type TimesheetSession = {
 
 type TimesheetException = {
   id: string;
-  kind: "total" | "in_office";
+  kind: "total";
   minutes: number;
   reason: string | null;
   created_at: string;
@@ -279,17 +277,10 @@ export default function OfficeHoursPage() {
   const weeklySummary = useMemo(() => {
     if (!weekly) return null;
     const requiredTotalMinutes = Math.max(weekly.total_minutes + weekly.deficit_minutes, 0);
-    const requiredInOfficeMinutes = Math.max(weekly.in_office_minutes + weekly.deficit_in_office_minutes, 0);
-    const nonInOfficeMinutes = Math.max(weekly.total_minutes - weekly.in_office_minutes, 0);
     const totalProgress = requiredTotalMinutes > 0 ? Math.min(weekly.total_minutes / requiredTotalMinutes, 1) : 0;
-    const inOfficeProgress =
-      requiredInOfficeMinutes > 0 ? Math.min(weekly.in_office_minutes / requiredInOfficeMinutes, 1) : 0;
     return {
       requiredTotalMinutes,
-      requiredInOfficeMinutes,
-      nonInOfficeMinutes,
       totalProgress,
-      inOfficeProgress,
     };
   }, [weekly]);
 
@@ -750,21 +741,11 @@ export default function OfficeHoursPage() {
                 <div className="text-sm text-foreground/80">
                   Total: {formatMinutes(weekly.total_minutes)}
                 </div>
-                <div className="text-sm text-foreground/80">
-                  In-office: {formatMinutes(weekly.in_office_minutes)}
-                </div>
-                <div className="text-sm text-foreground/80">
-                  On-behalf: {formatMinutes(weeklySummary?.nonInOfficeMinutes ?? 0)}
-                </div>
+                <div className="text-sm text-foreground/80">Logged: {formatMinutes(weekly.total_minutes)}</div>
                 <div className="text-sm text-foreground/80">
                   Requirement total: {formatMinutes(weeklySummary?.requiredTotalMinutes ?? 0)}
                 </div>
-                <div className="text-sm text-foreground/80">
-                  Requirement in-office: {formatMinutes(weeklySummary?.requiredInOfficeMinutes ?? 0)}
-                </div>
-                <div className="text-sm text-foreground/80">
-                  Remaining: {formatMinutes(weekly.deficit_minutes)} total, {formatMinutes(weekly.deficit_in_office_minutes)} in-office
-                </div>
+                <div className="text-sm text-foreground/80">Remaining: {formatMinutes(weekly.deficit_minutes)}</div>
               </div>
               {weeklySummary ? (
                 <div className="mt-3 space-y-2">
@@ -775,15 +756,6 @@ export default function OfficeHoursPage() {
                     <div
                       className="h-2 rounded-full bg-foreground/60"
                       style={{ width: `${Math.round(weeklySummary.totalProgress * 100)}%` }}
-                    />
-                  </div>
-                  <div className="text-xs text-foreground/60">
-                    In-office progress: {Math.round(weeklySummary.inOfficeProgress * 100)}%
-                  </div>
-                  <div className="h-2 rounded-full bg-foreground/10">
-                    <div
-                      className="h-2 rounded-full bg-foreground/60"
-                      style={{ width: `${Math.round(weeklySummary.inOfficeProgress * 100)}%` }}
                     />
                   </div>
                   <div className="text-xs text-foreground/60">

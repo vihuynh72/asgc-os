@@ -51,11 +51,9 @@ function renderEmailText(type: string, metadata: unknown, origin: string): { sub
   const weekStart = safeString(m.week_start);
   const weekEnd = safeString(m.week_end);
   const totalMinutes = safeNumber(m.total_minutes);
-  const inOfficeMinutes = safeNumber(m.in_office_minutes);
   const deficitMinutes = safeNumber(m.deficit_minutes);
-  const deficitInOfficeMinutes = safeNumber(m.deficit_in_office_minutes);
   const requiredTotalMinutes = safeNumber(m.required_total_minutes);
-  const requiredInOfficeMinutes = safeNumber(m.required_in_office_minutes);
+  // Backwards compatibility: older queued notifications may include in-office fields, but we ignore them now.
 
   const link = `${origin}/office-hours`;
 
@@ -89,10 +87,7 @@ function renderEmailText(type: string, metadata: unknown, origin: string): { sub
         `Office hours reminder.\n\n${weekRange}\n` +
         `Required total: ${formatMinutes(requiredTotalMinutes)}\n` +
         `Completed total: ${formatMinutes(totalMinutes)}\n` +
-        `Remaining total: ${formatMinutes(deficitMinutes)}\n` +
-        `Required in-office: ${formatMinutes(requiredInOfficeMinutes)}\n` +
-        `Completed in-office: ${formatMinutes(inOfficeMinutes)}\n` +
-        `Remaining in-office: ${formatMinutes(deficitInOfficeMinutes)}\n\n` +
+        `Remaining total: ${formatMinutes(deficitMinutes)}\n\n` +
         `Open Office Hours: ${link}\n`,
     };
   }
