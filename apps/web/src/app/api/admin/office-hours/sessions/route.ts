@@ -129,15 +129,30 @@ export async function GET(request: NextRequest) {
     new Set(sessions.map((s) => s.office_location_id).filter((id): id is string => typeof id === "string" && id.length > 0)),
   );
 
+  const { data: allowlistedIdsRaw, error: allowlistErr } = await admin.rpc("allowlisted_user_ids", {
+    _user_ids: userIds.length > 0 ? userIds : null,
+  });
+  if (allowlistErr) return NextResponse.json({ error: allowlistErr.message }, { status: 500 });
+
+  const allowlistedIds = new Set(
+    ((allowlistedIdsRaw ?? []) as unknown[])
+      .map((r: unknown) =>
+        typeof r === "string" ? r : (r as { allowlisted_user_ids?: unknown } | null)?.allowlisted_user_ids,
+      )
+      .filter((id: unknown): id is string => typeof id === "string" && id.length > 0),
+  );
+
+  const sessionsAllowlisted = sessions.filter((s) => allowlistedIds.has(s.user_id));
+
   const [{ data: profiles }, { data: privates }, { data: locations }] = await Promise.all([
     admin
       .from("profiles")
       .select("id,display_name")
-      .in("id", userIds.length > 0 ? userIds : ["00000000-0000-0000-0000-000000000000"]),
+      .in("id", allowlistedIds.size > 0 ? Array.from(allowlistedIds) : ["00000000-0000-0000-0000-000000000000"]),
     admin
       .from("profile_private")
       .select("id,email")
-      .in("id", userIds.length > 0 ? userIds : ["00000000-0000-0000-0000-000000000000"]),
+      .in("id", allowlistedIds.size > 0 ? Array.from(allowlistedIds) : ["00000000-0000-0000-0000-000000000000"]),
     admin
       .from("office_locations")
       .select("id,name,timezone")
@@ -162,7 +177,7 @@ export async function GET(request: NextRequest) {
     locationById.set(row.id, { name: row.name, timezone: row.timezone ?? "" });
   }
 
-  const enriched = sessions.map((s) => ({
+  const enriched = sessionsAllowlisted.map((s) => ({
     ...s,
     duration_minutes: computeDurationMinutes(s.checkin_at, s.checkout_at),
     user_display_name: displayNameById.get(s.user_id) ?? "",

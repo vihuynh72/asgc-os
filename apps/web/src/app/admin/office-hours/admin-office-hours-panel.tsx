@@ -167,6 +167,8 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
     return { startDate: m, endDate: startOfNextMonth(anchorDate) };
   }, [anchorDate, view]);
 
+  const weekStartForExport = useMemo(() => startOfWeekMonday(anchorDate), [anchorDate]);
+
   const enabledStatuses = useMemo(
     () => Object.entries(statusFilter).filter(([, on]) => on).map(([k]) => k),
     [statusFilter],
@@ -421,6 +423,34 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
               <span className="font-mono">{k}</span>
             </label>
           ))}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() =>
+              window.open(
+                weekStartForExport ? `/admin/office-hours/export?weekStart=${encodeURIComponent(weekStartForExport)}` : "/admin/office-hours/export",
+                "_blank",
+                "noopener,noreferrer",
+              )
+            }
+          >
+            Weekly report
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() =>
+              window.open(
+                weekStartForExport
+                  ? `/admin/office-hours/export/csv?weekStart=${encodeURIComponent(weekStartForExport)}`
+                  : "/admin/office-hours/export/csv",
+                "_blank",
+                "noopener,noreferrer",
+              )
+            }
+          >
+            CSV
+          </Button>
           <span className="ml-auto">
             {loading ? "Loading…" : `${filteredSessions.length} session${filteredSessions.length === 1 ? "" : "s"} • ${formatMinutes(totalMinutes)}`}
           </span>

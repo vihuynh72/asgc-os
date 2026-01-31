@@ -38,21 +38,16 @@ export default async function AdminOfficeHoursPage() {
   }
 
   const admin = getSupabaseAdminClient();
-  const { data: usersRaw } = await admin
-    .from("profiles")
-    .select("id,display_name,status,created_at,profile_private(email)")
-    .order("created_at", { ascending: false })
-    .limit(500);
-
+  const { data: usersRaw } = await admin.rpc("admin_list_allowlisted_users", { _limit: 500 });
   const users =
-    usersRaw?.map((row) => {
-      const maybePrivate = (row as unknown as { profile_private?: { email?: string | null } | null }).profile_private;
+    ((usersRaw ?? []) as unknown[]).map((row: unknown) => {
+      const r = row as unknown as UserRow;
       return {
-        id: (row as unknown as { id: string }).id,
-        email: maybePrivate?.email ?? null,
-        display_name: (row as unknown as { display_name: string | null }).display_name ?? null,
-        status: (row as unknown as { status: string }).status,
-        created_at: (row as unknown as { created_at: string }).created_at,
+        id: r.id,
+        email: r.email ?? null,
+        display_name: r.display_name ?? null,
+        status: r.status,
+        created_at: r.created_at,
       };
     }) ?? [];
 
