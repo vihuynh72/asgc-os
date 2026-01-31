@@ -5,7 +5,6 @@ import { z } from "zod";
 
 import { PageShell } from "@/components/page-shell";
 import { Button } from "@/components/ui/button";
-import { QrCode } from "@/components/qr-code";
 
 type KioskOpenSession = {
   id: string;
@@ -73,10 +72,6 @@ export default function OfficeHoursKioskPage() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [geoPermission, setGeoPermission] = useState<"granted" | "denied" | "prompt" | "unsupported">("prompt");
-  const [kioskLatLon, setKioskLatLon] = useState<{ lat: number; lon: number } | null>(null);
-  const [qrStatus, setQrStatus] = useState<string>("");
-  const [checkInUrl, setCheckInUrl] = useState<string | null>(null);
-  const [checkOutUrl, setCheckOutUrl] = useState<string | null>(null);
 
   const emailNormalized = useMemo(() => normalizeEmail(email), [email]);
   const emailValid = useMemo(() => EmailSchema.safeParse(emailNormalized).success, [emailNormalized]);
@@ -110,66 +105,6 @@ export default function OfficeHoursKioskPage() {
       cancelled = true;
     };
   }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function ensureLocation() {
-      try {
-        const { lat, lon } = await getCurrentPosition();
-        if (!cancelled) setKioskLatLon({ lat, lon });
-      } catch {
-        if (!cancelled) setKioskLatLon(null);
-      }
-    }
-    void ensureLocation();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!kioskLatLon) {
-      setCheckInUrl(null);
-      setCheckOutUrl(null);
-      return;
-    }
-
-    const loc = kioskLatLon;
-    let cancelled = false;
-    async function issue(action: "check_in" | "check_out") {
-      const res = await fetch("/api/office-hours/kiosk/qr", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ action, lat: loc.lat, lon: loc.lon }),
-      });
-      const json = (await res.json().catch(() => null)) as { error?: string; url?: string } | null;
-      if (cancelled) return;
-
-      if (!res.ok || !json?.url) {
-        setQrStatus(friendlyError(json?.error ?? "Failed to issue QR token"));
-        if (action === "check_in") setCheckInUrl(null);
-        if (action === "check_out") setCheckOutUrl(null);
-        return;
-      }
-
-      setQrStatus("");
-      if (action === "check_in") setCheckInUrl(json.url);
-      if (action === "check_out") setCheckOutUrl(json.url);
-    }
-
-    void issue("check_in");
-    void issue("check_out");
-
-    const id = window.setInterval(() => {
-      void issue("check_in");
-      void issue("check_out");
-    }, 15_000);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(id);
-    };
-  }, [kioskLatLon]);
 
   const loadStatus = useCallback(async () => {
     if (!emailValid) {
@@ -302,52 +237,10 @@ export default function OfficeHoursKioskPage() {
   return (
     <PageShell
       title="Office Hours Form"
-      description="Kiosk QR for mobile check in/out. Email fallback is available below."
+      description="Quick check in/out by email. Check-in requires your current location."
     >
       <div className="space-y-4">
-        <div className="rounded-3xl bg-card p-5 shadow-sm ring-1 ring-border/70">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-            <div>
-              <div className="text-sm font-medium text-foreground">Kiosk QR</div>
-              <div className="mt-1 text-xs text-foreground/70">
-                Members: scan to check in/out. Works better on mobile than background location checks.
-              </div>
-              {geoPermission === "denied" ? (
-                <div className="mt-2 text-xs text-red-700">
-                  Location permission is denied on this kiosk device. Enable location so QR issuance can be validated.
-                </div>
-              ) : null}
-              {qrStatus ? <div className="mt-2 text-xs text-red-700">{qrStatus}</div> : null}
-            </div>
-          </div>
-
-          <div className="mt-4 grid gap-4 sm:grid-cols-2">
-            <div className="rounded-2xl bg-muted/30 p-4">
-              <div className="text-sm font-medium text-foreground">Scan to Check In</div>
-              <div className="mt-3 flex items-center justify-center">
-                {checkInUrl ? <QrCode value={checkInUrl} /> : <div className="h-[220px] w-[220px] rounded-2xl bg-muted/40" />}
-              </div>
-              <div className="mt-3 text-xs text-foreground/60">Refreshes automatically.</div>
-            </div>
-            <div className="rounded-2xl bg-muted/30 p-4">
-              <div className="text-sm font-medium text-foreground">Scan to Check Out</div>
-              <div className="mt-3 flex items-center justify-center">
-                {checkOutUrl ? <QrCode value={checkOutUrl} /> : <div className="h-[220px] w-[220px] rounded-2xl bg-muted/40" />}
-              </div>
-              <div className="mt-3 text-xs text-foreground/60">Refreshes automatically.</div>
-            </div>
-          </div>
-        </div>
-
-        <details className="rounded-3xl bg-card p-5 shadow-sm ring-1 ring-border/70">
-          <summary className="cursor-pointer select-none text-sm font-medium text-foreground">
-            Email fallback
-            <span className="ml-2 text-xs font-normal text-foreground/60">
-              (use if someone can’t sign in on mobile)
-            </span>
-          </summary>
-
-          <div className="mt-4 rounded-lg border border-foreground/10 p-4">
+        <div className="rounded-lg border border-foreground/10 p-4">
           <label className="space-y-1 text-sm">
             <div className="text-foreground/70">ASGC email</div>
             <input
@@ -424,8 +317,7 @@ export default function OfficeHoursKioskPage() {
           <div className="mt-1 text-xs text-foreground/70">
             Need access? Ask an admin to add your email to the allowlist.
           </div>
-          </div>
-        </details>
+        </div>
       </div>
     </PageShell>
   );
