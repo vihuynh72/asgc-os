@@ -638,107 +638,79 @@ export default function OfficeHoursPage() {
   const selectedWeekLabel = selectedWeekStart ? `Work week of ${selectedWeekStart}` : "Work week";
 
   return (
-    <PageShell title="Office Hours" description="Check in/out with location.">
+    <PageShell
+      title="Office Hours"
+      description="Check in when you arrive. We’ll keep your session accurate and check you out if you leave."
+      containerClassName="max-w-4xl"
+    >
       <div className="space-y-6">
-        <div className="rounded-lg border border-foreground/10 p-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <section className="rounded-3xl bg-card p-6 shadow-sm ring-1 ring-border/70">
+          <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
             <div className="space-y-1">
-              <div className="text-sm font-medium">Status</div>
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="text-lg font-semibold tracking-tight">Status</h2>
+                <span
+                  className={
+                    openSession
+                      ? "rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-700"
+                      : "rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-foreground/70"
+                  }
+                >
+                  {openSession ? "Checked in" : "Not checked in"}
+                </span>
+              </div>
+
               {openSession ? (
                 <div className="text-sm text-foreground/80">
-                  Checked in at {formatInOfficeTz(openSession.checkin_at)}
+                  Since <span className="font-medium text-foreground">{formatInOfficeTz(openSession.checkin_at)}</span>
+                  {elapsedMinutes !== null ? ` • ${formatMinutes(elapsedMinutes)}` : ""}
                 </div>
               ) : (
-                <div className="text-sm text-foreground/80">Not checked in</div>
+                <div className="text-sm text-foreground/70">
+                  When you’re at the office, tap <span className="font-medium text-foreground">Check In</span>.
+                </div>
               )}
-              {openSession && elapsedMinutes !== null ? (
-                <div className="text-xs text-foreground/70">Elapsed: {formatMinutes(elapsedMinutes)}</div>
-              ) : null}
-              {openSession ? (
-                <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-foreground/70">
-                  <label className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={autoPresenceEnabled}
-                      onChange={(e) => setAutoPresenceEnabled(e.target.checked)}
-                    />
-                    <span>Auto-check location (30m)</span>
-                  </label>
-                  <Button
-                    variant="ghost"
-                    onClick={() => void runPresenceCheck("manual")}
-                    disabled={loading}
-                    className="h-6 px-2 text-xs"
-                  >
-                    Check now
-                  </Button>
-                </div>
-              ) : null}
-              {openSession && lastPresenceCheckAt ? (
-                <div className="text-xs text-foreground/60">
-                  Last location check: {formatInOfficeTz(lastPresenceCheckAt)}
-                  {typeof lastDistanceM === "number"
-                    ? ` • ~${lastDistanceM}m`
-                    : officeGeo
-                      ? " • —"
-                      : " • (office not configured)"}
-                  {lastDistanceBand === "in_radius"
-                    ? " • in radius"
-                    : lastDistanceBand === "in_grace"
-                      ? " • in grace"
-                      : lastDistanceBand === "outside_grace"
-                        ? " • outside grace"
-                        : ""}
-                </div>
-              ) : null}
-              {officeConfig ? (
-                <div className="text-xs text-foreground/60">
-                  Quiet hours:{" "}
-                  {officeConfig.quiet_hours_enabled
-                    ? `${officeConfig.quiet_hours_start_local.slice(0, 5)}-${officeConfig.quiet_hours_end_local.slice(0, 5)}`
-                    : "disabled"}
-                  {officeTz ? ` (${officeTz})` : ""}
-                  {officeConfig.quiet_hours_enabled && quietHoursActive ? " • active now" : ""}
-                </div>
-              ) : null}
-              {officeGeo ? (
-                <div className="text-xs text-foreground/60">
-                  {officeLocationName ? `${officeLocationName} geofence` : "Office geofence"}: radius {officeGeo.radiusM}m,
-                  grace {officeGeo.graceRadiusM}m
-                </div>
-              ) : null}
-              {officeGeoStatus === "not_configured" ? (
-                <div className="mt-2 text-xs text-foreground/70">
-                  Office geofence isn’t configured yet. Ask an admin to set it in <span className="font-mono">/admin</span> → Office Hours Config.
-                </div>
-              ) : null}
+
+              <div className="mt-3 text-xs text-foreground/60">
+                If you close the tab, we try to check you out immediately; otherwise it auto-checks out within ~1 minute.
+              </div>
             </div>
 
+            <div className="flex flex-wrap gap-2">
+              <Button
+                onClick={() => router.push(openSession ? "/office-hours/check-out" : "/office-hours/check-in")}
+                disabled={loading}
+              >
+                {openSession ? "Check Out" : "Check In"}
+              </Button>
+              <Button variant="ghost" onClick={refresh} disabled={loading}>
+                Refresh
+              </Button>
+            </div>
           </div>
 
           {notice ? (
-            <div className="mt-3 text-sm text-foreground/80" role="status" aria-live="polite">
+            <div className="mt-4 rounded-2xl bg-muted/40 px-4 py-3 text-sm text-foreground/80" role="status" aria-live="polite">
               {notice}
             </div>
           ) : null}
           {error ? (
-            <div className="mt-3 text-sm text-red-600" role="alert">
+            <div className="mt-4 rounded-2xl bg-red-500/10 px-4 py-3 text-sm text-red-700" role="alert">
               {error}
             </div>
           ) : null}
 
-          <div className="mt-4 flex gap-2">
-            <Button onClick={() => router.push("/office-hours/check-in")} disabled={loading || !!openSession}>
-              Check In
-            </Button>
-            <Button variant="ghost" onClick={() => router.push("/office-hours/check-out")} disabled={loading || !openSession}>
-              Check Out
-            </Button>
-            <Button variant="ghost" onClick={refresh} disabled={loading}>
-              Refresh
-            </Button>
-          </div>
-        </div>
+          {!openSession ? (
+            <div className="mt-5 rounded-2xl bg-muted/40 px-4 py-4 text-sm text-foreground/75">
+              <div className="font-medium text-foreground">How it works</div>
+              <ol className="mt-2 list-decimal space-y-1 pl-5">
+                <li>Arrive at the office and tap Check In.</li>
+                <li>Do your work as usual.</li>
+                <li>Tap Check Out when you leave (or we auto-checkout if you forget).</li>
+              </ol>
+            </div>
+          ) : null}
+        </section>
 
         <div className="rounded-lg border border-foreground/10 p-4">
           <div className="flex flex-wrap items-end justify-between gap-3">
@@ -825,8 +797,84 @@ export default function OfficeHoursPage() {
           )}
 	        </div>
 
-        <div className="grid gap-6 lg:grid-cols-3">
-          <div className="space-y-6 lg:col-span-2">
+        <details className="rounded-3xl bg-card p-6 shadow-sm ring-1 ring-border/70">
+          <summary className="cursor-pointer select-none text-sm font-medium text-foreground">
+            Details{" "}
+            <span className="ml-2 text-xs font-normal text-foreground/60">
+              Sessions, shifts, exceptions, and location settings
+            </span>
+          </summary>
+
+          <div className="mt-5 space-y-6">
+            <div className="rounded-2xl border border-foreground/10 bg-muted/30 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="text-sm font-medium">Location & safety</div>
+                {openSession ? (
+                  <div className="flex flex-wrap items-center gap-3 text-sm text-foreground/80">
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={autoPresenceEnabled}
+                        onChange={(e) => setAutoPresenceEnabled(e.target.checked)}
+                      />
+                      <span>Keep session active (recommended)</span>
+                    </label>
+                    <Button
+                      variant="ghost"
+                      onClick={() => void runPresenceCheck("manual")}
+                      disabled={loading}
+                      className="h-8 px-3 text-xs"
+                    >
+                      Verify location
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="text-xs text-foreground/60">No active session.</div>
+                )}
+              </div>
+
+              {openSession && lastPresenceCheckAt ? (
+                <div className="mt-2 text-xs text-foreground/60">
+                  Last location check: {formatInOfficeTz(lastPresenceCheckAt)}
+                  {typeof lastDistanceM === "number"
+                    ? ` • ~${lastDistanceM}m`
+                    : officeGeo
+                      ? " • —"
+                      : " • (office not configured)"}
+                  {lastDistanceBand === "in_radius"
+                    ? " • in office"
+                    : lastDistanceBand === "in_grace"
+                      ? " • near office"
+                      : lastDistanceBand === "outside_grace"
+                        ? " • outside"
+                        : ""}
+                </div>
+              ) : null}
+              {officeConfig ? (
+                <div className="mt-1 text-xs text-foreground/60">
+                  Quiet hours:{" "}
+                  {officeConfig.quiet_hours_enabled
+                    ? `${officeConfig.quiet_hours_start_local.slice(0, 5)}–${officeConfig.quiet_hours_end_local.slice(0, 5)}`
+                    : "disabled"}
+                  {officeTz ? ` (${officeTz})` : ""}
+                  {officeConfig.quiet_hours_enabled && quietHoursActive ? " • active now" : ""}
+                </div>
+              ) : null}
+              {officeGeo ? (
+                <div className="mt-1 text-xs text-foreground/60">
+                  {officeLocationName ? `${officeLocationName} geofence` : "Office geofence"}: radius {officeGeo.radiusM}m, grace{" "}
+                  {officeGeo.graceRadiusM}m
+                </div>
+              ) : null}
+              {officeGeoStatus === "not_configured" ? (
+                <div className="mt-2 text-xs text-foreground/70">
+                  Office geofence isn’t configured yet. Ask an admin to set it in <span className="font-mono">/admin</span> → Office Hours Config.
+                </div>
+              ) : null}
+            </div>
+
+            <div className="grid gap-6 lg:grid-cols-3">
+              <div className="space-y-6 lg:col-span-2">
 	            <div className="rounded-lg border border-foreground/10 p-4">
 	              <div className="flex flex-wrap items-end justify-between gap-3">
 	                <div className="text-sm font-medium">Sessions</div>
@@ -925,7 +973,7 @@ export default function OfficeHoursPage() {
             </div>
           </div>
 
-          <div className="space-y-6">
+              <div className="space-y-6">
             <div className="rounded-lg border border-foreground/10 p-4">
               <div className="text-sm font-medium">Shifts</div>
               <div className="mt-1 text-xs text-foreground/60">
@@ -1039,8 +1087,10 @@ export default function OfficeHoursPage() {
                 </div>
               )}
             </div>
+              </div>
+            </div>
           </div>
-        </div>
+        </details>
       </div>
     </PageShell>
   );
