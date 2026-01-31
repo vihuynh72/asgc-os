@@ -43,6 +43,12 @@ function friendlyError(code: string): string {
       return "Location data is incomplete.";
     case "weekend_not_allowed":
       return "Office hours are only available Monday through Friday.";
+    case "photo_required":
+      return "A photo is required to check in.";
+    case "invalid_photo_type":
+      return "Unsupported photo type. Use JPG, PNG, or WebP.";
+    case "photo_too_large":
+      return "Photo is too large. Please retake a smaller photo.";
     default:
       return code || "Something went wrong.";
   }
@@ -65,6 +71,7 @@ async function getCurrentPosition(): Promise<{ lat: number; lon: number }> {
 
 export default function OfficeHoursKioskPage() {
   const [email, setEmail] = useState("");
+  const [photo, setPhoto] = useState<File | null>(null);
   const [status, setStatus] = useState<KioskStatus | null>(null);
   const [statusLoading, setStatusLoading] = useState(false);
 
@@ -147,28 +154,35 @@ export default function OfficeHoursKioskPage() {
   const openSession = status?.open_session ?? null;
 
   const onCheckIn = useCallback(async () => {
-     setLoading(true);
-     setError(null);
-     setNotice(null);
-     try {
-       if (!emailValid) {
-         setError("Enter a valid email.");
-         return;
-       }
- 
-       const { lat, lon } = await getCurrentPosition();
- 
-       const res = await fetch("/api/office-hours/kiosk/check-in", {
-         method: "POST",
-         headers: { "content-type": "application/json" },
-         body: JSON.stringify({ email: emailNormalized, lat, lon }),
-       });
- 
-       const json = (await res.json().catch(() => null)) as { error?: string } | { session?: { checkin_at?: string } } | null;
-       if (!res.ok) {
-         setError(friendlyError((json as { error?: string } | null)?.error ?? ""));
-         return;
-       }
+    setLoading(true);
+    setError(null);
+    setNotice(null);
+    try {
+      if (!emailValid) {
+        setError("Enter a valid email.");
+        return;
+      }
+
+      if (!photo) {
+        setError("Photo is required to check in.");
+        return;
+      }
+
+      const { lat, lon } = await getCurrentPosition();
+
+      const form = new FormData();
+      form.set("email", emailNormalized);
+      form.set("lat", String(lat));
+      form.set("lon", String(lon));
+      form.set("photo", photo);
+
+      const res = await fetch("/api/office-hours/kiosk/check-in", { method: "POST", body: form });
+
+      const json = (await res.json().catch(() => null)) as { error?: string } | { session?: { checkin_at?: string } } | null;
+      if (!res.ok) {
+        setError(friendlyError((json as { error?: string } | null)?.error ?? ""));
+        return;
+      }
  
        try {
          window.localStorage.setItem("officeHours.kioskEmail", emailNormalized);
@@ -176,43 +190,32 @@ export default function OfficeHoursKioskPage() {
          // Ignore
        }
  
-       const checkinAt = (json as { session?: { checkin_at?: string } } | null)?.session?.checkin_at;
-       setNotice(checkinAt ? `Checked in at ${new Date(checkinAt).toLocaleString()}.` : "Checked in.");
-       await loadStatus();
-     } catch {
-       setError("Location is required to check in. Enable location permissions and try again.");
-     } finally {
-       setLoading(false);
-     }
-  }, [emailNormalized, emailValid, loadStatus]);
+      const checkinAt = (json as { session?: { checkin_at?: string } } | null)?.session?.checkin_at;
+      setNotice(checkinAt ? `Checked in at ${new Date(checkinAt).toLocaleString()}.` : "Checked in.");
+      setPhoto(null);
+      await loadStatus();
+    } catch {
+      setError("Location is required to check in. Enable location permissions and try again.");
+    } finally {
+      setLoading(false);
+    }
+  }, [emailNormalized, emailValid, loadStatus, photo]);
 
   const onCheckOut = useCallback(async () => {
-     setLoading(true);
-     setError(null);
-     setNotice(null);
-     try {
-       if (!emailValid) {
-         setError("Enter a valid email.");
-         return;
-       }
- 
-       let lat: number | undefined;
-       let lon: number | undefined;
- 
-       try {
-         const pos = await getCurrentPosition();
-         lat = pos.lat;
-         lon = pos.lon;
-       } catch {
-         // Checkout is allowed without location, but will be flagged for review server-side.
-         setNotice("Location not available. Checking out anyway (this may be flagged for review).");
-       }
- 
-       const res = await fetch("/api/office-hours/kiosk/check-out", {
-         method: "POST",
-         headers: { "content-type": "application/json" },
-         body: JSON.stringify({ email: emailNormalized, lat, lon }),
-       });
+    setLoading(true);
+    setError(null);
+    setNotice(null);
+    try {
+      if (!emailValid) {
+        setError("Enter a valid email.");
+        return;
+      }
+
+      const res = await fetch("/api/office-hours/kiosk/check-out", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: emailNormalized }),
+      });
  
        const json = (await res.json().catch(() => null)) as { error?: string } | { session?: { duration_minutes?: number } } | null;
        if (!res.ok) {
@@ -237,7 +240,7 @@ export default function OfficeHoursKioskPage() {
   return (
     <PageShell
       title="Office Hours Form"
-      description="Quick check in/out by email. Check-in requires your current location."
+      description="Quick check in/out by email. Check-in requires your current location and a photo."
     >
       <div className="space-y-4">
         <div className="rounded-lg border border-foreground/10 p-4">
@@ -253,6 +256,20 @@ export default function OfficeHoursKioskPage() {
               onChange={(e) => setEmail(e.target.value)}
               placeholder="name@gcccd.edu"
             />
+          </label>
+
+          <label className="mt-4 block space-y-1 text-sm">
+            <div className="text-foreground/70">Check-in photo</div>
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/*"
+              capture="environment"
+              className="block w-full text-sm text-foreground/80 file:mr-3 file:rounded-md file:border file:border-foreground/20 file:bg-transparent file:px-3 file:py-2 file:text-sm file:font-medium file:text-foreground hover:file:bg-foreground/5"
+              onChange={(e) => setPhoto(e.target.files?.[0] ?? null)}
+            />
+            <div className="text-xs text-foreground/70">
+              Required for check-in. Photos are retained for 30 days.
+            </div>
           </label>
 
           <div className="mt-3 text-sm text-foreground/80">
@@ -279,7 +296,11 @@ export default function OfficeHoursKioskPage() {
           <div className="mt-2 text-xs text-foreground/70">Office hours are tracked Monday through Friday.</div>
 
           <div className="mt-4 grid grid-cols-2 gap-2">
-            <Button onClick={onCheckIn} disabled={loading || !emailValid || !!openSession} className="h-12 text-base">
+            <Button
+              onClick={onCheckIn}
+              disabled={loading || !emailValid || !photo || !!openSession}
+              className="h-12 text-base"
+            >
               Check In
             </Button>
             <Button

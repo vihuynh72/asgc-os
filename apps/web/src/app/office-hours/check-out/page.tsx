@@ -13,37 +13,13 @@ type OpenSession = {
   checkin_at: string;
 };
 
-type OfficeGeo = {
-  radiusM: number;
-  graceRadiusM: number;
-};
-
 function friendlyError(message: string): string {
   switch (message) {
-    case "location_required":
-      return "Location is required to check out.";
     case "no_open_session":
       return "No open session found to check out.";
-    case "office_location_not_configured":
-      return "Office location is not fully configured yet (lat/lon/radii missing).";
     default:
       return message || "Something went wrong.";
   }
-}
-
-async function getCurrentPosition(): Promise<{ lat: number; lon: number }> {
-  return new Promise((resolve, reject) => {
-    if (!navigator.geolocation) {
-      reject(new Error("Geolocation not supported"));
-      return;
-    }
-
-    navigator.geolocation.getCurrentPosition(
-      (pos) => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
-      (err) => reject(err),
-      { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 },
-    );
-  });
 }
 
 export default function OfficeHoursCheckOutPage() {
@@ -53,9 +29,6 @@ export default function OfficeHoursCheckOutPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [geoPermission, setGeoPermission] = useState<"granted" | "denied" | "prompt" | "unsupported">("prompt");
-  const [officeGeoStatus, setOfficeGeoStatus] = useState<"loading" | "ready" | "not_configured">("loading");
-  const [officeGeo, setOfficeGeo] = useState<OfficeGeo | null>(null);
 
   const refreshOpenSession = useCallback(async () => {
     setError(null);
@@ -75,85 +48,15 @@ export default function OfficeHoursCheckOutPage() {
     void refreshOpenSession();
   }, [refreshOpenSession]);
 
-  useEffect(() => {
-    let cancelled = false;
-    if (!navigator?.permissions?.query) {
-      setGeoPermission("unsupported");
-      return;
-    }
-
-    navigator.permissions
-      .query({ name: "geolocation" as PermissionName })
-      .then((status) => {
-        if (cancelled) return;
-        setGeoPermission(status.state);
-        status.onchange = () => setGeoPermission(status.state);
-      })
-      .catch(() => setGeoPermission("unsupported"));
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function loadOfficeGeo() {
-      setOfficeGeoStatus("loading");
-      const { data: config, error: cfgErr } = await supabase
-        .from("office_config")
-        .select("primary_office_location_id")
-        .eq("id", true)
-        .maybeSingle();
-
-      if (cancelled) return;
-      if (cfgErr || !config?.primary_office_location_id) {
-        setOfficeGeo(null);
-        setOfficeGeoStatus("not_configured");
-        return;
-      }
-
-      const { data: office, error: officeErr } = await supabase
-        .from("office_locations")
-        .select("lat,lon,radius_m,grace_radius_m,active")
-        .eq("id", config.primary_office_location_id)
-        .maybeSingle();
-
-      if (cancelled) return;
-      if (
-        officeErr ||
-        !office ||
-        !office.active ||
-        office.lat === null ||
-        office.lon === null ||
-        office.radius_m === null ||
-        office.grace_radius_m === null
-      ) {
-        setOfficeGeo(null);
-        setOfficeGeoStatus("not_configured");
-        return;
-      }
-
-      setOfficeGeo({ radiusM: office.radius_m, graceRadiusM: office.grace_radius_m });
-      setOfficeGeoStatus("ready");
-    }
-
-    void loadOfficeGeo();
-    return () => {
-      cancelled = true;
-    };
-  }, [supabase]);
-
   const onSubmit = useCallback(async () => {
     setLoading(true);
     setError(null);
     setNotice(null);
     try {
-      const { lat, lon } = await getCurrentPosition();
       const res = await fetch("/api/office-hours/check-out", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ lat, lon }),
+        body: JSON.stringify({}),
       });
 
       const json = (await res.json().catch(() => null)) as { error?: string } | null;
@@ -165,15 +68,16 @@ export default function OfficeHoursCheckOutPage() {
       setNotice("Checked out.");
       await refreshOpenSession();
       router.push("/office-hours");
-    } catch {
-      setError("Location permission denied or unavailable.");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Check-out failed.";
+      setError(msg);
     } finally {
       setLoading(false);
     }
   }, [refreshOpenSession, router]);
 
   return (
-    <PageShell title="Check Out" description="Office Hours check-out requires your current location.">
+    <PageShell title="Check Out" description="Check out to record your office hours.">
       <div className="space-y-4">
         <div className="rounded-lg border border-foreground/10 p-4">
           {openSession ? (
@@ -183,23 +87,6 @@ export default function OfficeHoursCheckOutPage() {
           ) : (
             <div className="text-sm text-foreground/80">No open session.</div>
           )}
-          {geoPermission === "denied" ? (
-            <div className="mt-2 text-xs text-red-600">
-              Location permission is blocked. Enable location access in your browser settings to check out.
-            </div>
-          ) : null}
-          {officeGeoStatus === "not_configured" ? (
-            <div className="mt-2 text-xs text-foreground/70">
-              Office geofence is not configured yet. Check-out may be unavailable until an admin sets it.
-            </div>
-          ) : officeGeo ? (
-            <div className="mt-2 text-xs text-foreground/70">
-              Geofence radius {officeGeo.radiusM}m, grace {officeGeo.graceRadiusM}m.
-            </div>
-          ) : null}
-          <div className="mt-2 text-xs text-foreground/70">
-            If you are offsite and cannot check out, contact an admin to review your session.
-          </div>
 
           <div className="mt-4 flex flex-wrap gap-2">
             <Button onClick={onSubmit} disabled={loading || !openSession}>

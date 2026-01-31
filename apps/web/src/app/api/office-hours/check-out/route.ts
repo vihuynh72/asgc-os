@@ -21,10 +21,14 @@ function getSupabaseForRequest(request: NextRequest) {
   });
 }
 
-const BodySchema = z.object({
-  lat: z.number().finite(),
-  lon: z.number().finite(),
-});
+const BodySchema = z
+  .object({
+    lat: z.number().finite().optional(),
+    lon: z.number().finite().optional(),
+  })
+  .refine((v) => (v.lat === undefined && v.lon === undefined) || (typeof v.lat === "number" && typeof v.lon === "number"), {
+    message: "location_incomplete",
+  });
 
 function mapErrorStatus(message: string): number {
   switch (message) {
@@ -32,7 +36,7 @@ function mapErrorStatus(message: string): number {
       return 401;
     case "no_open_session":
       return 409;
-    case "location_required":
+    case "location_incomplete":
     case "office_location_not_configured":
     case "office_location_missing":
     case "office_config_missing":
@@ -53,14 +57,18 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
-  const parsed = BodySchema.safeParse(await request.json().catch(() => null));
+  const parsed = BodySchema.safeParse(await request.json().catch(() => ({})));
   if (!parsed.success) {
-    return NextResponse.json({ error: "invalid request" }, { status: 400 });
+    const msg = parsed.error.issues[0]?.message || "invalid request";
+    return NextResponse.json({ error: msg }, { status: mapErrorStatus(msg) });
   }
 
   const { lat, lon } = parsed.data;
 
-  const { data, error } = await supabase.rpc("check_out_office_hours", { _lat: lat, _lon: lon });
+  const { data, error } = await supabase.rpc("check_out_office_hours", {
+    _lat: lat ?? null,
+    _lon: lon ?? null,
+  });
 
   if (error) {
     const msg = error.message || "unknown";
