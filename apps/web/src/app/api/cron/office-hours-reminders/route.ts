@@ -165,6 +165,44 @@ async function handle(request: NextRequest) {
   const presenceTimeoutMinutes = 15;
   const nowMs = Date.now();
   const staleBeforeMs = nowMs - presenceTimeoutMinutes * 60_000;
+  const { data: officeConfigForDebug } = await supabase
+    .from("office_config")
+    .select("primary_office_location_id")
+    .eq("id", true)
+    .maybeSingle();
+  const primaryOfficeLocationId =
+    (officeConfigForDebug as { primary_office_location_id?: unknown } | null)?.primary_office_location_id ?? null;
+
+  const { data: officeLocationForDebug } = primaryOfficeLocationId
+    ? await supabase
+        .from("office_locations")
+        .select("timezone")
+        .eq("id", String(primaryOfficeLocationId))
+        .maybeSingle()
+    : { data: null };
+
+  const officeTzRaw = (officeLocationForDebug as { timezone?: unknown } | null)?.timezone;
+  const officeTz = typeof officeTzRaw === "string" && officeTzRaw.trim() ? officeTzRaw : "America/Los_Angeles";
+
+  const isAfter5pmLocal = (() => {
+    try {
+      const parts = new Intl.DateTimeFormat("en-US", {
+        timeZone: officeTz,
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23",
+      }).formatToParts(new Date(nowMs));
+
+      const hourRaw = parts.find((p) => p.type === "hour")?.value ?? "";
+      const minuteRaw = parts.find((p) => p.type === "minute")?.value ?? "";
+      const hour = Number(hourRaw);
+      const minute = Number(minuteRaw);
+      if (!Number.isFinite(hour) || !Number.isFinite(minute)) return false;
+      return hour > 17 || (hour === 17 && minute >= 0);
+    } catch {
+      return false;
+    }
+  })();
   const { data: openSessionsForDebug } = await supabase
     .from("office_hour_sessions")
     .select("checkin_at,last_presence_at,requires_presence")
@@ -178,7 +216,8 @@ async function handle(request: NextRequest) {
       const lastPresenceAt = safeString((row as Record<string, unknown>).last_presence_at);
       const requiresPresence = (row as Record<string, unknown>).requires_presence !== false;
       const lastSeenMs = Date.parse(lastPresenceAt || checkinAt);
-      const isStale = requiresPresence && Number.isFinite(lastSeenMs) && lastSeenMs <= staleBeforeMs;
+      const isStale =
+        requiresPresence && isAfter5pmLocal && Number.isFinite(lastSeenMs) && lastSeenMs <= staleBeforeMs;
       return {
         checkin_at: checkinAt || null,
         last_presence_at: lastPresenceAt || null,
@@ -187,6 +226,8 @@ async function handle(request: NextRequest) {
       };
     });
     return {
+      office_tz: officeTz,
+      after_5pm_local: isAfter5pmLocal,
       timeout_minutes: presenceTimeoutMinutes,
       open_sessions_sample: sessions,
       open_sessions_total_in_sample: sessions.length,

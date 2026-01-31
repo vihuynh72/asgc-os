@@ -5,7 +5,6 @@ import { usePathname } from "next/navigation";
 
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 import { isProbablyNetworkError, swallowNetworkError } from "@/lib/network-errors.mjs";
-import { sendJsonBeacon } from "@/lib/unload-checkout.mjs";
 
 async function getCurrentPosition(): Promise<{ lat: number; lon: number }> {
   return new Promise((resolve, reject) => {
@@ -30,32 +29,6 @@ function isAutoPresenceEnabled(): boolean {
     return v !== "0";
   } catch {
     return true;
-  }
-}
-
-const LAST_LOCATION_KEY = "officeHours.lastKnownLocation";
-
-function saveLastLocation(pos: { lat: number; lon: number }) {
-  try {
-    window.localStorage.setItem(
-      LAST_LOCATION_KEY,
-      JSON.stringify({ lat: pos.lat, lon: pos.lon, at: Date.now() }),
-    );
-  } catch {
-    // ignore
-  }
-}
-
-function readLastLocation(): { lat: number; lon: number } | null {
-  try {
-    const raw = window.localStorage.getItem(LAST_LOCATION_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as { lat?: unknown; lon?: unknown };
-    if (typeof parsed.lat !== "number" || typeof parsed.lon !== "number") return null;
-    if (!Number.isFinite(parsed.lat) || !Number.isFinite(parsed.lon)) return null;
-    return { lat: parsed.lat, lon: parsed.lon };
-  } catch {
-    return null;
   }
 }
 
@@ -125,7 +98,6 @@ export function OfficeHoursPresenceMonitor() {
       lockRef.current = true;
       try {
         const { lat, lon } = await getCurrentPosition();
-        saveLastLocation({ lat, lon });
 
         const res = await fetch("/api/office-hours/presence", {
           method: "POST",
@@ -190,24 +162,11 @@ export function OfficeHoursPresenceMonitor() {
     };
     document.addEventListener("visibilitychange", onVisibility);
 
-    const onPageHide = () => {
-      const last = readLastLocation();
-      if (!last) return;
-      void sendJsonBeacon({
-        url: "/api/office-hours/check-out",
-        body: last,
-        sendBeacon: navigator.sendBeacon?.bind(navigator),
-        fetchFn: (url: string, init: RequestInit) => fetch(url, init),
-      });
-    };
-    window.addEventListener("pagehide", onPageHide);
-
     return () => {
       cancelled = true;
       window.clearInterval(pingId);
       window.clearInterval(geoId);
       document.removeEventListener("visibilitychange", onVisibility);
-      window.removeEventListener("pagehide", onPageHide);
     };
   }, [openSessionId, pathname]);
 
