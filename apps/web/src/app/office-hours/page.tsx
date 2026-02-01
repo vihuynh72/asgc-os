@@ -87,7 +87,7 @@ function friendlyError(message: string): string {
     case "office_location_not_configured":
       return "Office location is not fully configured yet (lat/lon/radii missing).";
     case "weekend_not_allowed":
-      return "Office hours are only available Monday through Friday.";
+      return "Office hours aren’t enabled today.";
     default:
       return message || "Something went wrong.";
   }

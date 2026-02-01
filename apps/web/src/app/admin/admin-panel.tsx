@@ -10,6 +10,7 @@ import { copyTextWithFallback } from "@/lib/clipboard";
 import { addDaysDateOnly, normalizeDateOnlyString, startOfWeekMondayDateOnly, todayDateString } from "@/lib/dateOnly";
 import { allowlistKeysForNormalizedEmail } from "@/lib/invitesAllowlist";
 import { TEST_EMAIL_TEMPLATE } from "@/lib/testEmailTemplate";
+import { cn } from "@/lib/utils";
 
 type TermRow = {
   id: string;
@@ -59,6 +60,9 @@ type OfficeConfigRow = {
   weekly_hours_reminder_enabled: boolean;
   weekly_hours_reminder_weekday: number;
   weekly_hours_reminder_time_local: string;
+  office_hours_allow_weekends: boolean;
+  office_hours_allowed_weekdays: number[];
+  office_hours_extra_allowed_dates: string[];
 };
 
 type OfficeConfigBaseline = {
@@ -211,6 +215,8 @@ const WEEKDAY_LABELS: Record<number, string> = {
   3: "Wednesday",
   4: "Thursday",
   5: "Friday",
+  6: "Saturday",
+  7: "Sunday",
 };
 const COMMITTEE_KEY_PATTERN = /^[a-z0-9][a-z0-9_-]*$/i;
 
@@ -465,6 +471,13 @@ function buildOfficeConfigSnapshot(
     weekly_hours_reminder_enabled: config.weekly_hours_reminder_enabled,
     weekly_hours_reminder_weekday: config.weekly_hours_reminder_weekday,
     weekly_hours_reminder_time_local: config.weekly_hours_reminder_time_local.slice(0, 5),
+    office_hours_allow_weekends: !!config.office_hours_allow_weekends,
+    office_hours_allowed_weekdays: Array.isArray(config.office_hours_allowed_weekdays)
+      ? [...config.office_hours_allowed_weekdays].sort((a, b) => a - b)
+      : [],
+    office_hours_extra_allowed_dates: Array.isArray(config.office_hours_extra_allowed_dates)
+      ? [...config.office_hours_extra_allowed_dates].slice().sort()
+      : [],
   });
 }
 
@@ -718,6 +731,7 @@ export function AdminPanel({
   const initialOfficeLonText = typeof initialOfficeLocation?.lon === "number" ? String(initialOfficeLocation.lon) : "";
   const [officeLatText, setOfficeLatText] = useState<string>(initialOfficeLatText);
   const [officeLonText, setOfficeLonText] = useState<string>(initialOfficeLonText);
+  const [officeHoursExtraDate, setOfficeHoursExtraDate] = useState<string>("");
   const officeConfigBaselineRef = useRef<OfficeConfigBaseline | null>(
     buildOfficeConfigBaseline(initialOfficeLocation, initialOfficeConfig, initialOfficeLatText, initialOfficeLonText),
   );
@@ -863,6 +877,7 @@ export function AdminPanel({
       setOfficeLocation(data.officeLocation);
       setOfficeLatText(nextLatText);
       setOfficeLonText(nextLonText);
+      setOfficeHoursExtraDate("");
       officeConfigBaselineRef.current = buildOfficeConfigBaseline(
         data.officeLocation,
         data.officeConfig,
@@ -882,6 +897,7 @@ export function AdminPanel({
     setOfficeLocation({ ...baseline.officeLocation });
     setOfficeLatText(baseline.officeLatText);
     setOfficeLonText(baseline.officeLonText);
+    setOfficeHoursExtraDate("");
     setStatus("Office config changes reverted.");
     toast.success("Office config reverted");
   }
@@ -1369,7 +1385,7 @@ export function AdminPanel({
       setShiftOfficeLocationId("");
     } catch (e) {
       const message = e instanceof Error ? e.message : "Failed to create shift";
-      setShiftStatus(message === "weekend_not_allowed" ? "Shifts can only be scheduled Monday through Friday." : message);
+      setShiftStatus(message === "weekend_not_allowed" ? "Shifts can only be scheduled on enabled office-hours days." : message);
     }
   }
 
@@ -3058,7 +3074,24 @@ export function AdminPanel({
     officeLatError ||
     officeLonError ||
     officeRadiusError ||
-    officeGraceRadiusError;
+    officeGraceRadiusError ||
+    (() => {
+      const weekdays = officeConfig?.office_hours_allowed_weekdays;
+      if (!officeConfig) return "";
+      if (!Array.isArray(weekdays) || weekdays.length === 0) return "Select at least one allowed office-hours weekday.";
+      if (weekdays.some((d) => typeof d !== "number" || !Number.isFinite(d) || d < 1 || d > 7)) return "Invalid office-hours weekday selection.";
+      if (new Set(weekdays).size !== weekdays.length) return "Duplicate office-hours weekday selection.";
+      return "";
+    })() ||
+    (() => {
+      const dates = officeConfig?.office_hours_extra_allowed_dates;
+      if (!officeConfig) return "";
+      if (!Array.isArray(dates)) return "Invalid extra allowed dates.";
+      const isValid = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s);
+      if (dates.some((d) => typeof d !== "string" || !isValid(d))) return "Extra allowed dates must be YYYY-MM-DD.";
+      if (new Set(dates).size !== dates.length) return "Duplicate extra allowed dates.";
+      return "";
+    })();
   const officeMapUrl =
     officeLatValue !== null && officeLonValue !== null
       ? `https://maps.google.com/?q=${officeLatValue},${officeLonValue}`
@@ -4890,6 +4923,134 @@ export function AdminPanel({
             ) : null}
 
             <div className="md:col-span-4 border-t border-foreground/10 pt-3">
+              <div className="text-sm font-medium">Office hours availability</div>
+              <div className="text-xs text-foreground/60">
+                Controls which days members can check in. Default is Monday–Friday. For testing, allow weekends or add specific dates.
+              </div>
+            </div>
+
+            <label className="flex items-center gap-2 text-sm md:col-span-2">
+              <input
+                type="checkbox"
+                checked={officeConfig.office_hours_allow_weekends}
+                onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                  setOfficeConfig({ ...officeConfig, office_hours_allow_weekends: e.target.checked })
+                }
+                disabled={isReadOnly}
+              />
+              <span>Allow weekends (testing)</span>
+            </label>
+
+            <div className="text-xs text-foreground/60 md:col-span-2">
+              Shortcut to enable Saturday/Sunday without adding extra dates.
+            </div>
+
+            <div className="md:col-span-4">
+              <div className="text-sm font-medium">Allowed weekdays</div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {[
+                  { d: 1, short: "Mon" },
+                  { d: 2, short: "Tue" },
+                  { d: 3, short: "Wed" },
+                  { d: 4, short: "Thu" },
+                  { d: 5, short: "Fri" },
+                  { d: 6, short: "Sat" },
+                  { d: 7, short: "Sun" },
+                ].map(({ d, short }) => {
+                  const enabled = officeConfig.office_hours_allowed_weekdays?.includes(d) ?? false;
+                  return (
+                    <button
+                      key={d}
+                      type="button"
+                      className={cn(
+                        "h-8 rounded-full border px-3 text-xs transition-colors",
+                        enabled ? "border-primary/30 bg-primary/10 text-primary" : "border-foreground/10 bg-background hover:bg-foreground/5",
+                        isReadOnly && "opacity-50 pointer-events-none",
+                      )}
+                      aria-pressed={enabled}
+                      title={WEEKDAY_LABELS[d] ?? short}
+                      onClick={() => {
+                        const prev = Array.isArray(officeConfig.office_hours_allowed_weekdays)
+                          ? officeConfig.office_hours_allowed_weekdays
+                          : [1, 2, 3, 4, 5];
+                        const set = new Set(prev.filter((n) => typeof n === "number" && Number.isFinite(n)));
+                        if (set.has(d)) {
+                          if (set.size <= 1) return;
+                          set.delete(d);
+                        } else {
+                          set.add(d);
+                        }
+                        setOfficeConfig({
+                          ...officeConfig,
+                          office_hours_allowed_weekdays: Array.from(set).sort((a, b) => a - b),
+                        });
+                      }}
+                    >
+                      {short}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="mt-1 text-xs text-foreground/60">
+                Members can check in on these weekdays (unless disabled by policy). Use extra dates for one-off exceptions.
+              </div>
+            </div>
+
+            <div className="md:col-span-4">
+              <div className="text-sm font-medium">Extra allowed dates</div>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <input
+                  type="date"
+                  className="h-9 rounded-md border bg-transparent px-2 text-sm"
+                  value={officeHoursExtraDate}
+                  onChange={(e: ChangeEvent<HTMLInputElement>) => setOfficeHoursExtraDate(e.target.value)}
+                  disabled={isReadOnly}
+                />
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    const raw = officeHoursExtraDate.trim();
+                    if (!raw) return;
+                    if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return;
+                    const prev = Array.isArray(officeConfig.office_hours_extra_allowed_dates)
+                      ? officeConfig.office_hours_extra_allowed_dates
+                      : [];
+                    const next = Array.from(new Set([...prev, raw])).sort();
+                    setOfficeConfig({ ...officeConfig, office_hours_extra_allowed_dates: next });
+                    setOfficeHoursExtraDate("");
+                  }}
+                  disabled={isReadOnly || !officeHoursExtraDate.trim()}
+                >
+                  Add date
+                </Button>
+              </div>
+              {officeConfig.office_hours_extra_allowed_dates?.length ? (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {officeConfig.office_hours_extra_allowed_dates.slice().sort().map((d) => (
+                    <div key={d} className="inline-flex items-center gap-2 rounded-full border border-foreground/10 bg-background px-3 py-1 text-xs">
+                      <span className="font-mono">{d}</span>
+                      <button
+                        type="button"
+                        className={cn("text-foreground/60 hover:text-foreground", isReadOnly && "pointer-events-none opacity-50")}
+                        onClick={() => {
+                          const prev = officeConfig.office_hours_extra_allowed_dates ?? [];
+                          setOfficeConfig({ ...officeConfig, office_hours_extra_allowed_dates: prev.filter((x) => x !== d) });
+                        }}
+                        aria-label={`Remove ${d}`}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="mt-1 text-xs text-foreground/60">No extra dates. Add one to temporarily enable a specific day (ex: weekend testing).</div>
+              )}
+            </div>
+
+            <div className="md:col-span-4 border-t border-foreground/10 pt-3">
               <div className="text-sm font-medium">Weekly hours reminder</div>
               <div className="text-xs text-foreground/60">
                 Sends a reminder to members with remaining hours. Uses current term dates.
@@ -4972,6 +5133,9 @@ export function AdminPanel({
                       quiet_hours_enabled: officeConfig.quiet_hours_enabled,
                       quiet_hours_start_local: officeConfig.quiet_hours_start_local.slice(0, 5),
                       quiet_hours_end_local: officeConfig.quiet_hours_end_local.slice(0, 5),
+                      office_hours_allow_weekends: officeConfig.office_hours_allow_weekends,
+                      office_hours_allowed_weekdays: officeConfig.office_hours_allowed_weekdays,
+                      office_hours_extra_allowed_dates: officeConfig.office_hours_extra_allowed_dates,
                       weekly_hours_reminder_enabled: officeConfig.weekly_hours_reminder_enabled,
                       weekly_hours_reminder_weekday: officeConfig.weekly_hours_reminder_weekday,
                       weekly_hours_reminder_time_local: officeConfig.weekly_hours_reminder_time_local.slice(0, 5),
