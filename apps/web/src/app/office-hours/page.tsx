@@ -197,6 +197,7 @@ export default function OfficeHoursPage() {
   const [quietHoursActive, setQuietHoursActive] = useState<boolean | null>(null);
   const [officeLocationName, setOfficeLocationName] = useState<string | null>(null);
   const [coverageNotesByShiftId, setCoverageNotesByShiftId] = useState<Record<string, string>>({});
+  const [canViewKioskSelfies, setCanViewKioskSelfies] = useState<boolean>(false);
 
   const [officeGeo, setOfficeGeo] = useState<{
     lat: number;
@@ -299,6 +300,11 @@ export default function OfficeHoursPage() {
     const quietRes = await supabase.rpc("is_quiet_hours");
     if (!quietRes.error && typeof quietRes.data === "boolean") {
       setQuietHoursActive(quietRes.data);
+    }
+
+    const canViewRes = await supabase.rpc("can_view_office_hours_photos");
+    if (!canViewRes.error) {
+      setCanViewKioskSelfies(!!canViewRes.data);
     }
 
     const weekStart = selectedWeekStart || undefined;
@@ -674,6 +680,11 @@ export default function OfficeHoursPage() {
               >
                 {openSession ? "Check Out" : "Check In"}
               </Button>
+              {canViewKioskSelfies ? (
+                <Button variant="outline" onClick={() => window.open("/office-hours/kiosk/review", "_blank", "noopener,noreferrer")} disabled={loading}>
+                  Selfies
+                </Button>
+              ) : null}
               <Button variant="ghost" onClick={refresh} disabled={loading}>
                 Refresh
               </Button>
