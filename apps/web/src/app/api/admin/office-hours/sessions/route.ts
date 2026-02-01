@@ -40,6 +40,8 @@ type OfficeHourSessionRow = {
   within_grace: boolean | null;
   distance_m_at_checkin: number | null;
   distance_m_at_checkout: number | null;
+  kiosk_checkin_photo_path: string | null;
+  kiosk_checkin_photo_deleted_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -109,7 +111,7 @@ export async function GET(request: NextRequest) {
   let query = admin
     .from("office_hour_sessions")
     .select(
-      "id,user_id,office_location_id,checkin_at,checkout_at,status,within_radius,within_grace,distance_m_at_checkin,distance_m_at_checkout,created_at,updated_at",
+      "id,user_id,office_location_id,checkin_at,checkout_at,status,within_radius,within_grace,distance_m_at_checkin,distance_m_at_checkout,kiosk_checkin_photo_path,kiosk_checkin_photo_deleted_at,created_at,updated_at",
     )
     .gte("checkin_at", boundsRow.start_ts)
     .lt("checkin_at", boundsRow.end_ts)
@@ -180,6 +182,7 @@ export async function GET(request: NextRequest) {
   const enriched = sessionsAllowlisted.map((s) => ({
     ...s,
     duration_minutes: computeDurationMinutes(s.checkin_at, s.checkout_at),
+    has_kiosk_selfie: !!s.kiosk_checkin_photo_path && !s.kiosk_checkin_photo_deleted_at,
     user_display_name: displayNameById.get(s.user_id) ?? "",
     user_email: emailById.get(s.user_id) ?? "",
     office_location_name: s.office_location_id ? (locationById.get(s.office_location_id)?.name ?? "") : "",
