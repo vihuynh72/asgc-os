@@ -15,17 +15,22 @@ function mitigateCsvFormulaInjection(raw: string): string {
 type AdminWeeklyHoursRow = {
   user_id: string;
   week_start: string;
-  total_minutes: number;
-  deficit_minutes: number;
+  role_key: string | null;
+  required_total_minutes: number | string;
+  total_minutes: number | string;
+  deficit_minutes: number | string;
 };
 
 type AdminWeeklyHoursPreviewRow = {
   user_id: string;
   week_start: string;
-  display_name: string;
+  role: string;
+  name: string;
+  total_hours: number;
+  required_hours: number;
+  missing_hours: number;
+  // Kept for admin actions (copy emails), but not displayed in the UI by default.
   email: string;
-  total_minutes: number;
-  deficit_minutes: number;
 };
 
 function csvEscape(value: unknown): string {
@@ -35,6 +40,48 @@ function csvEscape(value: unknown): string {
     return `"${s.replace(/"/g, '""')}"`;
   }
   return s;
+}
+
+function roundHours(minutes: number | string | null | undefined): number {
+  const n = typeof minutes === "number" ? minutes : typeof minutes === "string" ? Number(minutes) : NaN;
+  const m = Number.isFinite(n) ? n : 0;
+  return Math.round((m / 60) * 100) / 100;
+}
+
+function inferRoleLabel(email: string, roleKey: string | null): string {
+  const local = (email.split("@")[0] ?? "").toLowerCase();
+
+  if (roleKey === "president" || local.includes("president")) return "President";
+
+  if (roleKey === "executive") {
+    if (local.includes("vpfinance")) return "Vice President of Finance";
+    if (local.includes("vp")) return "Vice President";
+    return "Executive";
+  }
+
+  if (roleKey === "director") return "Director";
+
+  if (roleKey === "board_member") {
+    const m = local.match(/boardmember(\d{1,2})/);
+    if (m?.[1]) return `Board Member ${m[1]}`;
+    return "Board Member";
+  }
+
+  return roleKey ? roleKey.replace(/_/g, " ") : "Member";
+}
+
+function roleRank(role: string): number {
+  const r = role.toLowerCase();
+  if (r.includes("president")) return 0;
+  if (r.includes("vice president") || r.includes("executive")) return 1;
+  if (r.includes("director")) return 2;
+  if (r.includes("board member")) return 3;
+  return 9;
+}
+
+function boardNumber(role: string): number | null {
+  const m = role.match(/board member\s*(\d+)/i);
+  return m ? Number(m[1]) : null;
 }
 
 export async function GET(request: NextRequest) {
@@ -93,40 +140,61 @@ export async function GET(request: NextRequest) {
 
   const filenameWeek = (typedRows[0]?.week_start || weekStartParam || "week").replace(/[^0-9-]/g, "");
 
-  if (formatParam === "json") {
-    const previewRows: AdminWeeklyHoursPreviewRow[] = typedRows.map((r) => ({
+  const reportRows: AdminWeeklyHoursPreviewRow[] = typedRows.map((r) => {
+    const email = emailById.get(r.user_id) ?? "";
+    const requiredHours = roundHours(r.required_total_minutes ?? 0);
+    const totalHours = roundHours(r.total_minutes ?? 0);
+    const missingHours = roundHours(r.deficit_minutes ?? 0);
+    return {
       user_id: r.user_id,
       week_start: r.week_start,
-      display_name: displayNameById.get(r.user_id) ?? "",
-      email: emailById.get(r.user_id) ?? "",
-      total_minutes: r.total_minutes,
-      deficit_minutes: r.deficit_minutes,
-    }));
+      role: inferRoleLabel(email, r.role_key ?? null),
+      name: displayNameById.get(r.user_id) ?? "",
+      required_hours: requiredHours,
+      total_hours: totalHours,
+      missing_hours: missingHours,
+      email,
+    };
+  });
 
-    return NextResponse.json({ weekStart: filenameWeek, rows: previewRows }, { status: 200 });
+  reportRows.sort((a, b) => {
+    const ar = roleRank(a.role);
+    const br = roleRank(b.role);
+    if (ar !== br) return ar - br;
+    const ab = boardNumber(a.role);
+    const bb = boardNumber(b.role);
+    if (ab !== null && bb !== null && ab !== bb) return ab - bb;
+    if (ab !== null && bb === null) return -1;
+    if (ab === null && bb !== null) return 1;
+    if (a.missing_hours !== b.missing_hours) return b.missing_hours - a.missing_hours;
+    return (a.name || a.email).toLowerCase().localeCompare((b.name || b.email).toLowerCase());
+  });
+
+  if (formatParam === "json") {
+    return NextResponse.json({ weekStart: filenameWeek, rows: reportRows }, { status: 200 });
   }
 
   const header = [
     "week_start",
-    "user_id",
-    "display_name",
-    "email",
-    "total_minutes",
-    "deficit_minutes",
+    "role",
+    "name",
+    "required_hours",
+    "total_hours",
+    "missing_hours",
   ];
 
   const lines: string[] = [];
   lines.push(header.join(","));
 
-  for (const r of typedRows) {
+  for (const r of reportRows) {
     lines.push(
       [
         r.week_start,
-        r.user_id,
-        displayNameById.get(r.user_id) ?? "",
-        emailById.get(r.user_id) ?? "",
-        r.total_minutes,
-        r.deficit_minutes,
+        r.role,
+        r.name,
+        r.required_hours,
+        r.total_hours,
+        r.missing_hours,
       ]
         .map(csvEscape)
         .join(","),
