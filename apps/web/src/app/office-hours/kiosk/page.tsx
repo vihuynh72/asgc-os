@@ -389,6 +389,13 @@ export default function OfficeHoursKioskPage() {
 
   const openSession = status?.open_session ?? null;
 
+  const step = useMemo(() => {
+    if (openSession) return "checked_in";
+    if (!emailValid) return "email";
+    if (!photo) return "selfie";
+    return "ready";
+  }, [emailValid, openSession, photo]);
+
   const onCheckIn = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -476,114 +483,133 @@ export default function OfficeHoursKioskPage() {
   return (
     <PageShell
       title="Office Hours (Kiosk)"
-      containerClassName="max-w-md py-4"
+      containerClassName="max-w-5xl py-6"
       showHeader={false}
     >
-      <div className="space-y-4">
-        <div className="rounded-lg border border-foreground/10 p-4">
-          <div className="space-y-3">
-            <div>
-              <div className="text-xl font-semibold tracking-tight">Office Hours Kiosk</div>
-              <div className="text-xs text-foreground/70">Email → selfie → location → check in (about 5 seconds)</div>
+      <div className="relative flex min-h-[70vh] items-center justify-center">
+        <div className="pointer-events-none absolute inset-0 -z-10 bg-gradient-to-b from-emerald-500/10 via-transparent to-transparent" />
+
+        <div className="w-full max-w-lg">
+          <div className="rounded-2xl border bg-background/70 p-5 shadow-sm ring-1 ring-black/5 backdrop-blur supports-[backdrop-filter]:bg-background/60 sm:p-6">
+            <div className="flex items-start justify-between gap-4">
+              <div className="space-y-1">
+                <div className="text-2xl font-semibold tracking-tight">Office Hours Kiosk</div>
+                <div className="text-sm text-foreground/60">Fast check-in for the office (email → selfie → location)</div>
+              </div>
+              <div className="flex items-center gap-1.5 pt-1">
+                <span className={`h-2 w-2 rounded-full ${step !== "email" ? "bg-emerald-500" : "bg-foreground/20"}`} />
+                <span className={`h-2 w-2 rounded-full ${step === "ready" || step === "checked_in" ? "bg-emerald-500" : step === "selfie" ? "bg-emerald-400" : "bg-foreground/20"}`} />
+                <span className={`h-2 w-2 rounded-full ${step === "checked_in" ? "bg-emerald-500" : "bg-foreground/20"}`} />
+              </div>
             </div>
 
-            <label className="space-y-1 text-sm">
-              <div className="text-foreground/70">ASGC email</div>
-              <input
-                type="email"
-                inputMode="email"
-                autoCapitalize="none"
-                autoCorrect="off"
-                className="h-12 w-full rounded-md border bg-transparent px-3 text-base"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="name@gcccd.edu"
-              />
-            </label>
+            <div className="mt-5 space-y-5">
+              <div className="space-y-2">
+                <label className="space-y-1">
+                  <div className="text-sm font-medium text-foreground/80">ASGC email</div>
+                  <input
+                    type="email"
+                    inputMode="email"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    className="h-12 w-full rounded-xl border bg-transparent px-4 text-base shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="name@gcccd.edu"
+                    aria-label="ASGC email"
+                  />
+                </label>
 
-            <div className="rounded-md border bg-foreground/[0.02] p-3 text-sm">
-              {!emailValid ? (
-                <div className="text-foreground/80">Enter your email to continue.</div>
-              ) : statusLoading ? (
-                <div className="text-foreground/80">Checking your status…</div>
-              ) : openSession ? (
-                <div className="text-foreground/80">
-                  You’re currently <span className="font-medium">checked in</span> since{" "}
-                  <span className="font-mono">{new Date(openSession.checkin_at).toLocaleString()}</span>.
+                <div className="flex items-center justify-between text-xs text-foreground/60">
+                  <span>{emailValid ? "Looks good." : "Use your @gcccd.edu email."}</span>
+                  {statusLoading ? <span>Checking…</span> : null}
                 </div>
+              </div>
+
+              {emailValid ? (
+                openSession ? (
+                  <div className="space-y-3">
+                    <div className="rounded-xl border bg-emerald-500/5 p-4 text-sm text-foreground/80">
+                      <div className="font-medium">You’re checked in</div>
+                      <div className="mt-1 text-xs text-foreground/60">
+                        Since <span className="font-mono">{new Date(openSession.checkin_at).toLocaleString()}</span>
+                      </div>
+                    </div>
+
+                    <Button onClick={onCheckOut} disabled={loading} className="h-12 w-full rounded-xl text-base">
+                      {loading ? "Checking out…" : "Check out"}
+                    </Button>
+                    <div className="text-xs text-foreground/60">
+                      Office hour credit requires manual check out.
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="text-sm font-medium text-foreground/80">Step 2: Take a selfie</div>
+                        <div className="text-xs text-foreground/50">Required</div>
+                      </div>
+                      <SelfieCapture value={photo} disabled={loading} onChange={setPhoto} />
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="text-sm font-medium text-foreground/80">Step 3: Check in</div>
+                      {geoPermission === "denied" ? (
+                        <div className="rounded-xl border border-red-500/30 bg-red-500/5 p-3 text-xs text-red-700 dark:text-red-300">
+                          Location permission is blocked. Enable location to check in.
+                        </div>
+                      ) : (
+                        <div className="text-xs text-foreground/60">
+                          Location is verified at check-in to confirm you’re in the office.
+                        </div>
+                      )}
+
+                      <Button
+                        onClick={onCheckIn}
+                        disabled={loading || !photo || geoPermission === "denied"}
+                        className="h-12 w-full rounded-xl text-base"
+                      >
+                        {loading ? "Checking in…" : "Check in"}
+                      </Button>
+                      <div className="text-[11px] text-foreground/50">
+                        Selfies are retained for 30 days. Office hours are tracked Monday–Friday.
+                      </div>
+                    </div>
+                  </div>
+                )
               ) : (
-                <div className="text-foreground/80">
-                  You’re <span className="font-medium">not checked in</span>.
+                <div className="rounded-xl border bg-foreground/[0.02] p-4 text-sm text-foreground/70">
+                  Enter your email to start. You’ll then be prompted for a selfie + location.
                 </div>
               )}
-              {status?.user_exists === false ? (
-                <div className="mt-1 text-xs text-foreground/70">
+
+              {status?.user_exists === false && emailValid ? (
+                <div className="rounded-xl border bg-foreground/[0.02] p-3 text-xs text-foreground/60">
                   No account found yet — a kiosk check-in will create one.
                 </div>
               ) : null}
-            </div>
 
-            {openSession ? (
-              <div className="space-y-2">
-                <Button
-                  onClick={onCheckOut}
-                  disabled={loading || !emailValid}
-                  className="h-12 w-full text-base"
-                >
-                  {loading ? "Checking out…" : "Check out"}
+              <div className="flex items-center justify-between gap-2 pt-1">
+                <Button variant="ghost" onClick={loadStatus} disabled={!emailValid || loading} className="h-9 px-2 text-xs">
+                  Refresh
                 </Button>
-                <div className="text-xs text-foreground/70">
-                  Office hour credit requires manual check out.
+                <div className="text-[11px] text-foreground/50">
+                  Need access? Ask an admin to add you to the allowlist.
                 </div>
               </div>
-            ) : emailValid ? (
-              <div className="space-y-3">
-                <SelfieCapture value={photo} disabled={loading || !emailValid} onChange={setPhoto} />
 
-                {geoPermission === "denied" ? (
-                  <div className="rounded-md border border-red-500/30 bg-red-500/5 p-3 text-xs text-red-700 dark:text-red-300">
-                    Location permission is blocked. Check-in requires location access.
-                  </div>
-                ) : (
-                  <div className="text-xs text-foreground/70">
-                    Location is checked at check-in to confirm you’re in the office.
-                  </div>
-                )}
-
-                <Button
-                  onClick={onCheckIn}
-                  disabled={loading || !emailValid || !photo}
-                  className="h-12 w-full text-base"
-                >
-                  {loading ? "Checking in…" : "Check in"}
-                </Button>
-                <div className="text-xs text-foreground/70">
-                  Photos are retained for 30 days. Office hours are tracked Monday through Friday.
+              {notice ? (
+                <div className="rounded-xl border bg-foreground/[0.02] p-3 text-sm text-foreground/80" role="status" aria-live="polite">
+                  {notice}
                 </div>
-              </div>
-            ) : (
-              <div className="rounded-md border bg-foreground/[0.02] p-3 text-xs text-foreground/70">
-                After entering your email, you’ll be asked to take a selfie and allow location.
-              </div>
-            )}
-
-            <div className="flex items-center justify-between gap-2">
-              <Button variant="ghost" onClick={loadStatus} disabled={!emailValid || loading} className="h-9 px-2 text-xs">
-                Refresh status
-              </Button>
-              <div className="text-[11px] text-foreground/60">Need access? Ask an admin to add you to the allowlist.</div>
+              ) : null}
+              {error ? (
+                <div className="rounded-xl border border-red-500/30 bg-red-500/5 p-3 text-sm text-red-700 dark:text-red-300" role="alert">
+                  {error}
+                </div>
+              ) : null}
             </div>
-
-            {notice ? (
-              <div className="rounded-md border bg-foreground/[0.02] p-3 text-sm text-foreground/80" role="status" aria-live="polite">
-                {notice}
-              </div>
-            ) : null}
-            {error ? (
-              <div className="rounded-md border border-red-500/30 bg-red-500/5 p-3 text-sm text-red-700 dark:text-red-300" role="alert">
-                {error}
-              </div>
-            ) : null}
           </div>
         </div>
       </div>
