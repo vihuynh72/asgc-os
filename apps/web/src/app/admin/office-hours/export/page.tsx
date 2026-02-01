@@ -42,8 +42,8 @@ export default async function AdminOfficeHoursExportPage({
 
   return (
     <PageShell
-      title="Office Hours Export"
-      description="View weekly totals/deficits in the browser, with CSV download."
+      title="Office Hours Weekly Report"
+      description="HR-style weekly totals & deficits with CSV export."
       containerClassName="max-w-7xl"
       backHref="/admin/office-hours"
       backLabel="Back to Office Hours"

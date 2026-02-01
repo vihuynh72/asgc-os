@@ -6,6 +6,30 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { addDaysDateOnly, normalizeDateOnlyString, startOfWeekMondayDateOnly, todayDateString } from "@/lib/dateOnly";
+import { reportStatus, roleKeyRank, sortWeeklyReportRows } from "@/lib/office-hours-weekly-report.mjs";
+
+type AdminWeeklyHoursPreviewRow = {
+  user_id: string;
+  week_start: string;
+  email: string;
+  role_key: string | null;
+  role: string;
+  name: string;
+  required_hours: number | string;
+  total_hours: number | string;
+  missing_hours: number | string;
+  needs_review_sessions: number | string;
+};
+
+async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(url, init);
+  const data = (await res.json().catch(() => ({}))) as T;
+  if (!res.ok) {
+    const message = (data as { error?: string }).error || `Request failed: ${res.status}`;
+    throw new Error(message);
+  }
+  return data;
+}
 
 async function fetchText(url: string, init?: RequestInit): Promise<string> {
   const res = await fetch(url, init);
@@ -18,7 +42,6 @@ async function fetchText(url: string, init?: RequestInit): Promise<string> {
 }
 
 function parseCsvLinewise(input: string): string[][] {
-  // Minimal RFC 4180-ish parser: handles commas + quoted fields + escaped quotes.
   const rows: string[][] = [];
   let row: string[] = [];
   let field = "";
@@ -68,16 +91,25 @@ function parseCsvLinewise(input: string): string[][] {
       continue;
     }
 
-    if (ch === "\r") {
-      // Ignore CR (support CRLF).
-      continue;
-    }
+    if (ch === "\r") continue;
 
     field += ch;
   }
 
   pushRow();
   return rows;
+}
+
+function parseHoursValue(value: number | string | null | undefined): number {
+  if (value === null || value === undefined) return 0;
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function formatHours(value: number): string {
+  const v = Number.isFinite(value) ? Math.max(0, value) : 0;
+  const rounded = Math.round(v * 100) / 100;
+  return `${rounded.toFixed(2)}h`;
 }
 
 async function copyToClipboard(text: string): Promise<boolean> {
@@ -97,46 +129,37 @@ async function copyToClipboard(text: string): Promise<boolean> {
   return ok;
 }
 
+function groupLabel(key: string): string {
+  if (key === "president") return "President";
+  if (key === "executive") return "Executives";
+  if (key === "director") return "Directors";
+  if (key === "board_member") return "Board Members";
+  if (key === "volunteer") return "Volunteers";
+  return "Members";
+}
+
+function statusPill(statusKey: string): { label: string; className: string } {
+  if (statusKey === "complete") return { label: "Complete", className: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300" };
+  if (statusKey === "missing") return { label: "Missing", className: "bg-red-500/15 text-red-700 dark:text-red-300" };
+  if (statusKey === "behind") return { label: "Behind", className: "bg-amber-500/15 text-amber-700 dark:text-amber-300" };
+  return { label: "Not required", className: "bg-foreground/10 text-foreground/70" };
+}
+
 export function OfficeHoursCsvPanel({ initialWeekStart }: { initialWeekStart: string | null }) {
   const [anchorDate, setAnchorDate] = useState<string>(() => normalizeDateOnlyString(initialWeekStart) ?? todayDateString());
   const [csvText, setCsvText] = useState<string>("");
+  const [rows, setRows] = useState<AdminWeeklyHoursPreviewRow[] | null>(null);
   const [status, setStatus] = useState<string>("");
   const [actionStatus, setActionStatus] = useState<string>("");
   const actionTimerRef = useRef<number | null>(null);
-  const [viewMode, setViewMode] = useState<"table" | "raw">("table");
+  const [viewMode, setViewMode] = useState<"report" | "table" | "raw">("report");
   const [search, setSearch] = useState<string>("");
+  const [missingOnly, setMissingOnly] = useState<boolean>(false);
 
   const weekStartResolved = useMemo(
     () => startOfWeekMondayDateOnly(anchorDate) ?? startOfWeekMondayDateOnly(todayDateString()),
     [anchorDate],
   );
-
-  const parsed = useMemo(() => {
-    const text = csvText.trim();
-    if (!text) return { headers: [] as string[], rows: [] as string[][] };
-    const all = parseCsvLinewise(text);
-    const headers = all[0] ?? [];
-    const rows = all.slice(1);
-    return { headers, rows };
-  }, [csvText]);
-
-  const headerIndex = useMemo(() => {
-    const idx = new Map<string, number>();
-    parsed.headers.forEach((h, i) => idx.set(h, i));
-    return idx;
-  }, [parsed.headers]);
-
-  const displayHeaders = useMemo(() => {
-    // Hide noisy identifiers in the UI table, while keeping them in the actual CSV download.
-    const hidden = new Set(["user_id", "week_start"]);
-    return parsed.headers.filter((h) => !hidden.has(h));
-  }, [parsed.headers]);
-
-  const filteredRows = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return parsed.rows;
-    return parsed.rows.filter((r) => r.join(" ").toLowerCase().includes(q));
-  }, [parsed.rows, search]);
 
   const quickWeekOptions = useMemo(() => {
     const current = startOfWeekMondayDateOnly(todayDateString());
@@ -146,9 +169,7 @@ export function OfficeHoursCsvPanel({ initialWeekStart }: { initialWeekStart: st
       const next = addDaysDateOnly(current, -7 * i);
       if (next) values.push(next);
     }
-    if (weekStartResolved && !values.includes(weekStartResolved)) {
-      values.unshift(weekStartResolved);
-    }
+    if (weekStartResolved && !values.includes(weekStartResolved)) values.unshift(weekStartResolved);
     return values.map((value) => ({
       value,
       label: value === current ? `This week (${value})` : value === weekStartResolved ? `Selected (${value})` : value,
@@ -157,24 +178,36 @@ export function OfficeHoursCsvPanel({ initialWeekStart }: { initialWeekStart: st
 
   useEffect(() => {
     let cancelled = false;
-
     async function load() {
-      setStatus("Loading CSV…");
+      setStatus("Loading…");
       try {
-        const qs = weekStartResolved
-          ? `?weekStart=${encodeURIComponent(weekStartResolved)}&format=csv`
-          : "?format=csv";
-        const text = await fetchText(`/api/admin/office-hours/export-week${qs}`);
+        const baseParams = new URLSearchParams();
+        if (weekStartResolved) baseParams.set("weekStart", weekStartResolved);
+
+        const csvParams = new URLSearchParams(baseParams);
+        csvParams.set("format", "csv");
+
+        const jsonParams = new URLSearchParams(baseParams);
+        jsonParams.set("format", "json");
+
+        const csvUrl = `/api/admin/office-hours/export-week?${csvParams.toString()}`;
+        const jsonUrl = `/api/admin/office-hours/export-week?${jsonParams.toString()}`;
+
+        const [csv, json] = await Promise.all([
+          fetchText(csvUrl),
+          fetchJson<{ weekStart: string; rows: AdminWeeklyHoursPreviewRow[] }>(jsonUrl),
+        ]);
         if (cancelled) return;
-        setCsvText(text);
+        setCsvText(csv);
+        setRows(json.rows ?? []);
         setStatus("");
       } catch (e) {
         if (cancelled) return;
-        setStatus(e instanceof Error ? e.message : "Failed to load CSV");
         setCsvText("");
+        setRows(null);
+        setStatus(e instanceof Error ? e.message : "Failed to load");
       }
     }
-
     void load();
     return () => {
       cancelled = true;
@@ -183,17 +216,13 @@ export function OfficeHoursCsvPanel({ initialWeekStart }: { initialWeekStart: st
 
   useEffect(() => {
     return () => {
-      if (actionTimerRef.current) {
-        window.clearTimeout(actionTimerRef.current);
-      }
+      if (actionTimerRef.current) window.clearTimeout(actionTimerRef.current);
     };
   }, []);
 
   function setTransientActionStatus(message: string) {
     setActionStatus(message);
-    if (actionTimerRef.current) {
-      window.clearTimeout(actionTimerRef.current);
-    }
+    if (actionTimerRef.current) window.clearTimeout(actionTimerRef.current);
     actionTimerRef.current = window.setTimeout(() => {
       setActionStatus("");
       actionTimerRef.current = null;
@@ -218,10 +247,94 @@ export function OfficeHoursCsvPanel({ initialWeekStart }: { initialWeekStart: st
     window.location.href = `/api/admin/office-hours/export-week${qs}`;
   }
 
-  function openTableView() {
+  function openReport() {
     const qs = weekStartResolved ? `?weekStart=${encodeURIComponent(weekStartResolved)}` : "";
     window.open(`/admin/office-hours/export${qs}`, "_blank", "noopener,noreferrer");
   }
+
+  const parsed = useMemo(() => {
+    const text = csvText.trim();
+    if (!text) return { headers: [] as string[], rows: [] as string[][] };
+    const all = parseCsvLinewise(text);
+    const headers = all[0] ?? [];
+    const rowsOnly = all.slice(1);
+    return { headers, rows: rowsOnly };
+  }, [csvText]);
+
+  const displayHeaders = useMemo(() => {
+    const hidden = new Set(["Week Start"]);
+    return parsed.headers.filter((h) => !hidden.has(h));
+  }, [parsed.headers]);
+
+  const filteredTableRows = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return parsed.rows;
+    return parsed.rows.filter((r) => r.join(" ").toLowerCase().includes(q));
+  }, [parsed.rows, search]);
+
+  const orderedRows = useMemo(() => sortWeeklyReportRows(rows ?? []), [rows]);
+
+  const visibleRows = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return orderedRows.filter((r) => {
+      if (missingOnly && parseHoursValue(r.missing_hours) <= 0) return false;
+      if (!q) return true;
+      const hay = `${r.role ?? ""} ${r.name ?? ""}`.toLowerCase();
+      return hay.includes(q);
+    });
+  }, [orderedRows, search, missingOnly]);
+
+  const groups = useMemo(() => {
+    const map = new Map<string, AdminWeeklyHoursPreviewRow[]>();
+    for (const row of visibleRows) {
+      const key = row.role_key ?? "member";
+      map.set(key, [...(map.get(key) ?? []), row]);
+    }
+    const keys = [...map.keys()].sort((a, b) => roleKeyRank(a) - roleKeyRank(b));
+    return keys.map((key) => ({ key, rows: map.get(key) ?? [] }));
+  }, [visibleRows]);
+
+  const summary = useMemo(() => {
+    let complete = 0;
+    let behind = 0;
+    let missing = 0;
+    let notRequired = 0;
+    let requiredTotal = 0;
+    let completedTotal = 0;
+    let missingTotal = 0;
+
+    for (const row of visibleRows) {
+      const required = parseHoursValue(row.required_hours);
+      const completed = parseHoursValue(row.total_hours);
+      const rem = parseHoursValue(row.missing_hours);
+
+      requiredTotal += Math.max(0, required);
+      completedTotal += Math.max(0, completed);
+      missingTotal += Math.max(0, rem);
+
+      const statusKey = reportStatus({
+        required_hours: required,
+        total_hours: completed,
+        missing_hours: rem,
+      });
+
+      if (statusKey === "complete") complete += 1;
+      else if (statusKey === "behind") behind += 1;
+      else if (statusKey === "missing") missing += 1;
+      else notRequired += 1;
+    }
+
+    return {
+      total: visibleRows.length,
+      complete,
+      behind,
+      missing,
+      notRequired,
+      requiredTotal,
+      completedTotal,
+      missingTotal,
+    };
+  }, [visibleRows]);
 
   return (
     <div className="space-y-4">
@@ -229,9 +342,7 @@ export function OfficeHoursCsvPanel({ initialWeekStart }: { initialWeekStart: st
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div className="space-y-1">
             <div className="text-sm font-medium">Week starts {weekStartResolved ?? "—"}</div>
-            <div className="text-xs text-foreground/70">
-              Table view is for readability. Download CSV for spreadsheets.
-            </div>
+            <div className="text-xs text-foreground/70">Report view is recommended. Use table/raw for copy & spreadsheets.</div>
           </div>
 
           <div className="flex flex-wrap items-end gap-2">
@@ -274,101 +385,222 @@ export function OfficeHoursCsvPanel({ initialWeekStart }: { initialWeekStart: st
               />
             </label>
 
-            <label className="space-y-1 text-sm">
-              <div className="text-foreground/70">Search</div>
-              <input
-                className="h-9 w-56 rounded-md border bg-transparent px-2 text-sm"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Name or email…"
-              />
-            </label>
-
-            <Button variant="outline" onClick={openTableView}>
-              Open table view
-            </Button>
-            <Button variant="outline" onClick={() => window.location.assign("/admin/office-hours")}>
-              Calendar view
+            <Button variant="outline" onClick={openReport}>
+              Open report
             </Button>
             <Button variant="outline" onClick={copyCsv}>
               Copy CSV
             </Button>
-            <Button
-              variant="outline"
-              onClick={() => setViewMode((v) => (v === "table" ? "raw" : "table"))}
-            >
-              {viewMode === "table" ? "Raw" : "Table"}
-            </Button>
             <Button onClick={downloadCsv}>Download CSV</Button>
+          </div>
+        </div>
+
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t pt-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              className={cn(viewMode === "report" && "bg-foreground/5")}
+              onClick={() => setViewMode("report")}
+            >
+              Report
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className={cn(viewMode === "table" && "bg-foreground/5")}
+              onClick={() => setViewMode("table")}
+            >
+              Table
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className={cn(viewMode === "raw" && "bg-foreground/5")}
+              onClick={() => setViewMode("raw")}
+            >
+              Raw
+            </Button>
+          </div>
+
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="space-y-1 text-xs">
+              <div className="text-foreground/70">Search</div>
+              <input
+                type="text"
+                className="h-9 w-64 rounded-md border bg-transparent px-2 text-sm"
+                value={search}
+                onChange={(e: ChangeEvent<HTMLInputElement>) => setSearch(e.target.value)}
+                placeholder="Search name or role..."
+              />
+            </label>
+            <Button variant="ghost" size="sm" onClick={() => setSearch("")} disabled={!search.trim()}>
+              Clear
+            </Button>
+            <label className="flex items-center gap-2 text-xs">
+              <input
+                type="checkbox"
+                checked={missingOnly}
+                onChange={(e: ChangeEvent<HTMLInputElement>) => setMissingOnly(e.target.checked)}
+              />
+              <span className="text-foreground/70">Show missing only</span>
+            </label>
           </div>
         </div>
       </div>
 
-      {actionStatus ? (
-        <div className="rounded-md border px-3 py-2 text-sm text-foreground/80" role="status" aria-live="polite">
-          {actionStatus}
-        </div>
-      ) : null}
+      {actionStatus ? <div className="text-xs text-foreground/70">{actionStatus}</div> : null}
+      {status ? <div className="text-sm text-foreground/70">{status}</div> : null}
 
-      {status ? (
-        <div className="rounded-md border px-3 py-2 text-sm text-foreground/80" role="status" aria-live="polite">
-          {status}
-        </div>
-      ) : null}
+      {viewMode === "report" ? (
+        <div className="space-y-4">
+          <div className="rounded-md border p-3">
+            <div className="flex flex-wrap items-end justify-between gap-3">
+              <div className="space-y-1">
+                <div className="text-sm font-medium">Summary</div>
+                <div className="text-xs text-foreground/70">
+                  {summary.total} people • {summary.complete} complete • {summary.behind + summary.missing} behind • {summary.notRequired} not required
+                </div>
+              </div>
 
-      {viewMode === "raw" ? (
-        <div className="rounded-md border p-3">
-          <pre className="max-h-[70vh] overflow-auto whitespace-pre-wrap break-all text-xs">{csvText || "—"}</pre>
-        </div>
-      ) : (
-        <div className="rounded-md border">
-          <div className="flex items-center justify-between gap-3 border-b px-3 py-2 text-xs text-foreground/70">
-            <div>
-              {filteredRows.length} row{filteredRows.length === 1 ? "" : "s"}
-              {search.trim() ? ` (filtered)` : ""}
+              <div className="flex flex-wrap items-center gap-4 text-xs text-foreground/70">
+                <div>
+                  <div className="text-[11px] uppercase tracking-wide text-foreground/60">Required</div>
+                  <div className="font-mono text-sm text-foreground">{formatHours(summary.requiredTotal)}</div>
+                </div>
+                <div>
+                  <div className="text-[11px] uppercase tracking-wide text-foreground/60">Completed</div>
+                  <div className="font-mono text-sm text-foreground">{formatHours(summary.completedTotal)}</div>
+                </div>
+                <div>
+                  <div className="text-[11px] uppercase tracking-wide text-foreground/60">Missing</div>
+                  <div className="font-mono text-sm text-foreground">{formatHours(summary.missingTotal)}</div>
+                </div>
+              </div>
             </div>
-            <div className="font-mono">{parsed.headers.join(" • ")}</div>
           </div>
 
-          <div className="max-h-[70vh] overflow-auto">
-            <table className="w-full border-collapse text-sm">
-              <thead className="sticky top-0 bg-background">
-                <tr className="border-b">
+          <div className="space-y-4">
+            {groups.map((g) => (
+              <div key={g.key} className="rounded-md border">
+                <div className="flex items-center justify-between gap-3 border-b bg-foreground/5 px-3 py-2">
+                  <div className="text-sm font-medium">{groupLabel(g.key)}</div>
+                  <div className="text-xs text-foreground/60">{g.rows.length} people</div>
+                </div>
+
+                <div className="divide-y">
+                  {g.rows.map((r) => {
+                    const required = parseHoursValue(r.required_hours);
+                    const completed = parseHoursValue(r.total_hours);
+                    const missingH = parseHoursValue(r.missing_hours);
+                    const pct = required > 0 ? Math.max(0, Math.min(1, completed / required)) : 0;
+                    const statusKey = reportStatus({
+                      required_hours: required,
+                      total_hours: completed,
+                      missing_hours: missingH,
+                    });
+                    const pill = statusPill(statusKey);
+                    const needsReview = Number.parseInt(String(r.needs_review_sessions ?? 0), 10) || 0;
+
+                    return (
+                      <div
+                        key={`${r.user_id}:${r.week_start}`}
+                        className={statusKey === "complete" ? "bg-transparent" : "bg-red-500/5"}
+                      >
+                        <div className="grid gap-2 px-3 py-3 sm:grid-cols-[1.4fr_1fr_0.8fr] sm:items-center">
+                          <div className="space-y-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="text-sm font-medium">{r.role || "—"}</span>
+                              <span className="text-xs text-foreground/60">•</span>
+                              <span className="text-sm">{r.name || "—"}</span>
+                              <span className={`rounded-full px-2 py-0.5 text-xs ${pill.className}`}>{pill.label}</span>
+                              {needsReview > 0 ? (
+                                <span className="rounded-full bg-indigo-500/15 px-2 py-0.5 text-xs text-indigo-700 dark:text-indigo-300">
+                                  Needs review ({needsReview})
+                                </span>
+                              ) : null}
+                            </div>
+                            <div className="text-xs text-foreground/60">
+                              Required {formatHours(required)} • Completed {formatHours(completed)} • Missing {formatHours(missingH)}
+                            </div>
+                          </div>
+
+                          <div className="space-y-1">
+                            <div className="h-2 w-full overflow-hidden rounded-full bg-foreground/10">
+                              <div
+                                className={statusKey === "complete" ? "h-full bg-emerald-500" : "h-full bg-amber-500"}
+                                style={{ width: `${Math.round(pct * 100)}%` }}
+                              />
+                            </div>
+                            <div className="text-xs text-foreground/60">{Math.round(pct * 100)}% complete</div>
+                          </div>
+
+                          <div className="flex justify-between gap-3 text-xs sm:justify-end">
+                            <div className="text-right">
+                              <div className="text-[11px] uppercase tracking-wide text-foreground/60">Missing</div>
+                              <div className="font-mono text-sm">{formatHours(missingH)}</div>
+                            </div>
+                            <div className="text-right">
+                              <div className="text-[11px] uppercase tracking-wide text-foreground/60">Completed</div>
+                              <div className="font-mono text-sm">{formatHours(completed)}</div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {viewMode === "table" ? (
+        <div className="rounded-md border p-3">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[760px] text-sm">
+              <thead className="bg-foreground/5 text-left text-xs text-foreground/70">
+                <tr>
                   {displayHeaders.map((h) => (
-                    <th key={h} className="px-3 py-2 text-left text-xs font-medium text-foreground/70">
+                    <th key={h} className="px-3 py-2">
                       {h}
                     </th>
                   ))}
                 </tr>
               </thead>
-              <tbody>
-                {filteredRows.length === 0 ? (
+              <tbody className="divide-y">
+                {filteredTableRows.map((r, idx) => (
+                  <tr key={idx} className={idx % 2 === 1 ? "bg-foreground/[0.02]" : undefined}>
+                    {displayHeaders.map((h) => {
+                      const col = parsed.headers.indexOf(h);
+                      const value = col >= 0 ? (r[col] ?? "") : "";
+                      return (
+                        <td key={`${idx}:${h}`} className="px-3 py-2">
+                          {value}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+                {filteredTableRows.length === 0 ? (
                   <tr>
-                    <td className="px-3 py-8 text-center text-xs text-foreground/60" colSpan={Math.max(1, displayHeaders.length)}>
+                    <td className="px-3 py-3 text-sm text-foreground/60" colSpan={Math.max(1, displayHeaders.length)}>
                       No rows.
                     </td>
                   </tr>
-                ) : (
-                  filteredRows.map((r, idx) => (
-                    <tr key={idx} className={cn("border-b last:border-b-0", idx % 2 === 1 && "bg-muted/20")}>
-                      {displayHeaders.map((h) => {
-                        const i = headerIndex.get(h) ?? -1;
-                        const v = i >= 0 ? (r[i] ?? "") : "";
-                        const isNumber = h.endsWith("_hours") || h.endsWith("_minutes");
-                        return (
-                          <td key={h} className={cn("px-3 py-2 align-top", isNumber && "font-mono")}>
-                            {v}
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  ))
-                )}
+                ) : null}
               </tbody>
             </table>
           </div>
         </div>
-      )}
+      ) : null}
+
+      {viewMode === "raw" ? (
+        <div className="rounded-md border p-3">
+          <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap text-xs">{csvText}</pre>
+        </div>
+      ) : null}
     </div>
   );
 }

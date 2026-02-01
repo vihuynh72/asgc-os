@@ -46,11 +46,11 @@ export default async function OfficeHoursCsvPage({
 
   return (
     <PageShell
-      title="Office Hours CSV"
-      description="View CSV output in the browser."
+      title="Office Hours Export"
+      description="Weekly report + CSV (table/raw) views."
       containerClassName="max-w-7xl"
       backHref={backHref}
-      backLabel="Back to Table View"
+      backLabel="Back to Weekly Report"
     >
       <OfficeHoursCsvPanel initialWeekStart={weekStart} />
     </PageShell>
