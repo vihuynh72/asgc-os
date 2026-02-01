@@ -27,7 +27,11 @@ function friendlyError(code: string): string {
     case "invalid_email":
       return "Enter a valid email.";
     case "email_not_allowed":
-      return "This email isn’t allowed to use the Office Hours form. Ask an admin to add you to the allowlist.";
+      return "This email isn’t on the allowlist. Ask an admin to add you.";
+    case "email_disabled":
+      return "This email is disabled in the allowlist. Ask a full admin to re-enable it.";
+    case "email_blocked":
+      return "This email is blocked. Ask a full admin if you believe this is a mistake.";
     case "outside_geofence":
       return "You appear to be outside the allowed office area.";
     case "already_checked_in":
@@ -149,22 +153,41 @@ function SelfieCapture({
     setVideoReady(false);
     setCameraError(null);
     try {
+      if (!window.isSecureContext) {
+        throw new Error("insecure_context");
+      }
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
         video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } },
       });
       streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play().catch(() => null);
-        setCameraState("ready");
-      }
-    } catch {
-      setCameraError("Camera permission is blocked. Use upload instead.");
+      setCameraState("ready");
+      window.setTimeout(() => {
+        const video = videoRef.current;
+        const activeStream = streamRef.current;
+        if (!video || !activeStream) return;
+        video.srcObject = activeStream;
+        void video.play().catch(() => null);
+      }, 0);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "";
+      setCameraError(
+        msg === "insecure_context"
+          ? "Camera requires HTTPS. Use Upload instead."
+          : "Waiting for camera permission… If nothing happens, use Upload.",
+      );
       stop();
       setMode("file");
     }
   }, [stop]);
+
+  useEffect(() => {
+    if (cameraState !== "starting") return;
+    const id = window.setTimeout(() => {
+      setCameraError("Waiting for permission… Look for a camera prompt from your browser.");
+    }, 1800);
+    return () => window.clearTimeout(id);
+  }, [cameraState]);
 
   useEffect(() => {
     if (mode !== "camera" || value || disabled) stop();
@@ -264,21 +287,29 @@ function SelfieCapture({
               >
                 {capturing ? "Capturing…" : "Take selfie"}
               </Button>
+              <Button type="button" variant="outline" className="h-10 w-full" onClick={stop} disabled={disabled}>
+                Disable camera
+              </Button>
             </>
           ) : (
             <div className="space-y-2">
               <div className="rounded-md border bg-foreground/[0.02] p-3 text-sm text-foreground/80">
                 Tap below to enable the front camera and take a quick selfie.
               </div>
-              <Button
-                type="button"
-                variant="outline"
-                className="h-12 w-full text-base"
-                onClick={() => void start()}
-                disabled={disabled || !canUseCamera || cameraState === "starting"}
-              >
-                {cameraState === "starting" ? "Starting camera…" : "Enable camera"}
-              </Button>
+              <div className="grid grid-cols-2 gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-12 w-full text-base"
+                  onClick={() => void start()}
+                  disabled={disabled || !canUseCamera || cameraState === "starting"}
+                >
+                  {cameraState === "starting" ? "Requesting…" : "Enable camera"}
+                </Button>
+                <Button type="button" variant="outline" className="h-12 w-full text-base" onClick={stop} disabled={disabled}>
+                  Cancel
+                </Button>
+              </div>
               <div className="text-xs text-foreground/70">
                 If camera permission is blocked, switch to Upload.
               </div>
@@ -297,7 +328,7 @@ function SelfieCapture({
             disabled={disabled}
           />
           <div className="text-xs text-foreground/70">
-            If your phone saves photos as HEIC and it fails, try the Camera mode.
+            If upload fails, switch to Camera mode.
           </div>
         </div>
       )}
@@ -546,23 +577,18 @@ export default function OfficeHoursKioskPage() {
                 ) : (
                   <div className="space-y-4">
                     <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <div className="text-sm font-medium text-foreground/80">Step 2: Take a selfie</div>
-                        <div className="text-xs text-foreground/50">Required</div>
-                      </div>
+                      <div className="text-xs font-medium uppercase tracking-wide text-foreground/60">Selfie • required</div>
                       <SelfieCapture value={photo} disabled={loading} onChange={setPhoto} />
                     </div>
 
                     <div className="space-y-2">
-                      <div className="text-sm font-medium text-foreground/80">Step 3: Check in</div>
+                      <div className="text-xs font-medium uppercase tracking-wide text-foreground/60">Check in</div>
                       {geoPermission === "denied" ? (
                         <div className="rounded-xl border border-red-500/30 bg-red-500/5 p-3 text-xs text-red-700 dark:text-red-300">
                           Location permission is blocked. Enable location to check in.
                         </div>
                       ) : (
-                        <div className="text-xs text-foreground/60">
-                          Location is verified at check-in to confirm you’re in the office.
-                        </div>
+                        <div className="text-xs text-foreground/60">We’ll verify your location at check-in.</div>
                       )}
 
                       <Button

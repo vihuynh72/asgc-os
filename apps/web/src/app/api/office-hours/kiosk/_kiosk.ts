@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { normalizeEmail } from "@/lib/invitesAllowlist";
+import { allowlistKeysForNormalizedEmail, normalizeEmail } from "@/lib/invitesAllowlist";
 
 export type OfficeGeo = {
   officeLocationId: string;
@@ -44,6 +44,61 @@ export async function isEmailAllowlisted(admin: SupabaseClient, email: string): 
   const { data, error } = await admin.rpc("is_email_allowlisted", { _email: email });
   if (error) throw new Error(error.message || "allowlist_lookup_failed");
   return !!data;
+}
+
+export type AllowlistDecision =
+  | { allowed: true }
+  | { allowed: false; reason: "email_blocked" | "email_disabled" | "email_not_allowed" };
+
+export async function getAllowlistDecision(admin: SupabaseClient, email: string): Promise<AllowlistDecision> {
+  const normalized = normalizeKioskEmail(email);
+  const keys = allowlistKeysForNormalizedEmail(normalized);
+
+  const [
+    { data: blocked, error: blockedErr },
+    { data: exact, error: exactErr },
+    { data: domainAllowed, error: domainErr },
+  ] = await Promise.all([
+    admin
+      .from("invites_blocklist")
+      .select("pattern_normalized,is_active")
+      .in("pattern_normalized", keys)
+      .eq("is_active", true)
+      .limit(1),
+    admin
+      .from("invites_allowlist")
+      .select("email_normalized,is_active")
+      .eq("email_normalized", normalized)
+      .limit(1)
+      .maybeSingle(),
+    admin
+      .from("invites_allowlist")
+      .select("email_normalized,is_active")
+      .in(
+        "email_normalized",
+        keys.filter((k) => k.startsWith("@")),
+      )
+      .eq("is_active", true)
+      .limit(1),
+  ]);
+
+  if (blockedErr || exactErr || domainErr) {
+    throw new Error(blockedErr?.message || exactErr?.message || domainErr?.message || "allowlist_lookup_failed");
+  }
+
+  if (Array.isArray(blocked) && blocked.length > 0) {
+    return { allowed: false, reason: "email_blocked" };
+  }
+
+  if (exact && typeof (exact as { is_active?: unknown }).is_active === "boolean") {
+    return (exact as { is_active: boolean }).is_active ? { allowed: true } : { allowed: false, reason: "email_disabled" };
+  }
+
+  if (Array.isArray(domainAllowed) && domainAllowed.length > 0) {
+    return { allowed: true };
+  }
+
+  return { allowed: false, reason: "email_not_allowed" };
 }
 
 export async function getAllowlistNotesForExactEmail(admin: SupabaseClient, email: string): Promise<string | null> {

@@ -5,10 +5,10 @@ import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 
 import {
   getAllowlistNotesForExactEmail,
+  getAllowlistDecision,
   getOfficeGeo,
   getOrCreateUserIdByEmail,
   haversineMeters,
-  isEmailAllowlisted,
   normalizeKioskEmail,
   setProfileDisplayName,
 } from "../_kiosk";
@@ -60,9 +60,9 @@ export async function POST(request: NextRequest) {
   const admin = getSupabaseAdminClient();
 
   try {
-    const allowlisted = await isEmailAllowlisted(admin, email);
-    if (!allowlisted) {
-      return NextResponse.json({ error: "email_not_allowed" }, { status: 403 });
+    const decision = await getAllowlistDecision(admin, email);
+    if (!decision.allowed) {
+      return NextResponse.json({ error: decision.reason }, { status: 403 });
     }
 
     const userId = await getOrCreateUserIdByEmail(admin, email);
