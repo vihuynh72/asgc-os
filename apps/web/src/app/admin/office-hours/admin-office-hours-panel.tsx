@@ -451,6 +451,13 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
           >
             CSV
           </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => window.open("/office-hours/kiosk/review", "_blank", "noopener,noreferrer")}
+          >
+            Selfies
+          </Button>
           <span className="ml-auto">
             {loading ? "Loading…" : `${filteredSessions.length} session${filteredSessions.length === 1 ? "" : "s"} • ${formatMinutes(totalMinutes)}`}
           </span>
