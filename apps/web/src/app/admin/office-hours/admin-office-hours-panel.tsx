@@ -26,6 +26,7 @@ type OfficeHourAdminSession = {
   checkout_at: string | null;
   status: string;
   duration_minutes: number | null;
+  has_kiosk_selfie?: boolean;
   within_radius: boolean | null;
   within_grace: boolean | null;
   distance_m_at_checkin: number | null;
@@ -151,6 +152,10 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>("");
   const [sessions, setSessions] = useState<OfficeHourAdminSession[]>([]);
+  const [selfieSession, setSelfieSession] = useState<OfficeHourAdminSession | null>(null);
+  const [selfieUrl, setSelfieUrl] = useState<string>("");
+  const [selfieLoading, setSelfieLoading] = useState<boolean>(false);
+  const [selfieError, setSelfieError] = useState<string>("");
 
   const { startDate, endDate } = useMemo(() => {
     if (view === "day") {
@@ -212,6 +217,23 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
       cancelled = true;
     };
   }, [endDate, enabledStatuses, selectedUserId, startDate, view]);
+
+  async function openSelfie(session: OfficeHourAdminSession) {
+    if (!session.has_kiosk_selfie) return;
+    setSelfieSession(session);
+    setSelfieUrl("");
+    setSelfieError("");
+    setSelfieLoading(true);
+    try {
+      const params = new URLSearchParams({ sessionId: session.id });
+      const data = await fetchJson<{ url: string; expiresInSeconds: number }>(`/api/office-hours/kiosk/review/photo?${params.toString()}`);
+      setSelfieUrl(data.url);
+    } catch (e) {
+      setSelfieError(e instanceof Error ? e.message : "Failed to load selfie");
+    } finally {
+      setSelfieLoading(false);
+    }
+  }
 
   function onPrev() {
     if (view === "day") setAnchorDate((d) => addDays(d, -1));
@@ -483,6 +505,7 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
                   <th className="px-3 py-2">Check-in</th>
                   <th className="px-3 py-2">Check-out</th>
                   <th className="px-3 py-2">Duration</th>
+                  <th className="px-3 py-2">Selfie</th>
                   <th className="px-3 py-2">Status</th>
                   <th className="px-3 py-2">Location</th>
                   <th className="px-3 py-2">In radius</th>
@@ -499,6 +522,15 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
                     <td className="px-3 py-2 font-mono">{s.checkout_at ? formatTimeInTz(s.checkout_at, tz) : "—"}</td>
                     <td className="px-3 py-2">{typeof s.duration_minutes === "number" ? formatMinutes(s.duration_minutes) : "—"}</td>
                     <td className="px-3 py-2">
+                      {s.has_kiosk_selfie ? (
+                        <Button variant="outline" size="sm" className="h-8 px-3" onClick={() => void openSelfie(s)}>
+                          View
+                        </Button>
+                      ) : (
+                        <span className="text-xs text-foreground/50">—</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2">
                       <StatusBadge status={s.status} />
                     </td>
                     <td className="px-3 py-2">{s.office_location_name || "—"}</td>
@@ -507,7 +539,7 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
                 ))}
                 {filteredSessions.length === 0 ? (
                   <tr>
-                    <td className="px-3 py-3 text-sm text-foreground/60" colSpan={7}>
+                    <td className="px-3 py-3 text-sm text-foreground/60" colSpan={8}>
                       No sessions found for this day.
                     </td>
                   </tr>
@@ -578,13 +610,15 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
                           </summary>
                           <div className="border-t bg-muted/10 p-2 space-y-2">
                             {g.sessions.map((s) => (
-                              <SessionCard key={s.id} session={s} tz={tz} />
+                              <SessionCard key={s.id} session={s} tz={tz} onViewSelfie={(sess) => void openSelfie(sess)} />
                             ))}
                           </div>
                         </details>
                       ))
                     ) : (
-                      daySessions.map((s) => <SessionCard key={s.id} session={s} tz={tz} showUser />)
+                      daySessions.map((s) => (
+                        <SessionCard key={s.id} session={s} tz={tz} showUser onViewSelfie={(sess) => void openSelfie(sess)} />
+                      ))
                     )}
                   </div>
                 </div>
@@ -640,6 +674,24 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
           </div>
         </div>
       ) : null}
+
+      <SelfieLightbox
+        open={!!selfieSession}
+        session={selfieSession}
+        tz={tz}
+        url={selfieUrl}
+        loading={selfieLoading}
+        error={selfieError}
+        onClose={() => {
+          setSelfieSession(null);
+          setSelfieUrl("");
+          setSelfieError("");
+          setSelfieLoading(false);
+        }}
+        onRetry={() => {
+          if (selfieSession) void openSelfie(selfieSession);
+        }}
+      />
     </div>
   );
 }
@@ -648,10 +700,12 @@ function SessionCard({
   session,
   tz,
   showUser,
+  onViewSelfie,
 }: {
   session: OfficeHourAdminSession;
   tz: string | null;
   showUser?: boolean;
+  onViewSelfie?: (session: OfficeHourAdminSession) => void;
 }) {
   return (
     <div className="rounded border bg-background p-2 text-xs shadow-sm">
@@ -672,11 +726,119 @@ function SessionCard({
         <div className="font-medium">
           {typeof session.duration_minutes === "number" ? formatMinutes(session.duration_minutes) : "—"}
         </div>
-        {session.within_radius === false && (
-          <span className="flex items-center gap-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
-            Outside
-          </span>
-        )}
+        <div className="flex items-center gap-1.5">
+          {session.has_kiosk_selfie && onViewSelfie ? (
+            <button
+              type="button"
+              className="rounded-full bg-foreground/10 px-2 py-0.5 text-[10px] font-medium text-foreground/70 hover:bg-foreground/15"
+              onClick={() => onViewSelfie(session)}
+              title="View kiosk selfie"
+            >
+              Selfie
+            </button>
+          ) : null}
+          {session.within_radius === false ? (
+            <span className="flex items-center gap-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+              Outside
+            </span>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SelfieLightbox({
+  open,
+  session,
+  tz,
+  url,
+  loading,
+  error,
+  onClose,
+  onRetry,
+}: {
+  open: boolean;
+  session: OfficeHourAdminSession | null;
+  tz: string | null;
+  url: string;
+  loading: boolean;
+  error: string;
+  onClose: () => void;
+  onRetry: () => void;
+}) {
+  if (!open || !session) return null;
+
+  const title = session.user_display_name || session.user_email || "Kiosk selfie";
+  const subtitle = `${formatTimeInTz(session.checkin_at, tz)} • session ${session.id.slice(0, 8)}`;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Kiosk selfie"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+      <div className="relative w-full max-w-2xl overflow-hidden rounded-2xl border bg-background/90 shadow-2xl ring-1 ring-black/10 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+        <div className="flex items-start justify-between gap-3 border-b p-4">
+          <div className="min-w-0">
+            <div className="text-sm font-semibold truncate">{title}</div>
+            <div className="mt-0.5 text-xs text-foreground/60 truncate">{subtitle}</div>
+          </div>
+          <div className="flex items-center gap-2">
+            {url ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => window.open(url, "_blank", "noopener,noreferrer")}
+                className="h-8 px-3"
+              >
+                Open
+              </Button>
+            ) : null}
+            <Button type="button" variant="ghost" size="sm" onClick={onClose} className="h-8 px-2">
+              Close
+            </Button>
+          </div>
+        </div>
+
+        <div className="p-4">
+          {loading ? (
+            <div className="flex h-[420px] items-center justify-center rounded-xl border bg-foreground/[0.02] text-sm text-foreground/70">
+              Loading selfie…
+            </div>
+          ) : error ? (
+            <div className="space-y-3">
+              <div className="rounded-xl border border-red-500/30 bg-red-500/5 p-3 text-sm text-red-700 dark:text-red-300">
+                {error}
+              </div>
+              <div className="flex gap-2">
+                <Button type="button" variant="outline" onClick={onRetry} className="h-10 px-4">
+                  Retry
+                </Button>
+                <Button type="button" variant="ghost" onClick={onClose} className="h-10 px-4">
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          ) : url ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={url} alt="Kiosk check-in selfie" className="w-full rounded-xl border bg-black object-contain" />
+          ) : (
+            <div className="flex h-[420px] items-center justify-center rounded-xl border bg-foreground/[0.02] text-sm text-foreground/70">
+              No selfie found.
+            </div>
+          )}
+
+          <div className="mt-3 text-xs text-foreground/60">
+            Selfies are retained for 30 days. Links expire after a few minutes.
+          </div>
+        </div>
       </div>
     </div>
   );
