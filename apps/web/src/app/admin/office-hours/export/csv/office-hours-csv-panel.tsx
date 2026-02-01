@@ -354,9 +354,9 @@ export function OfficeHoursCsvPanel({ initialWeekStart }: { initialWeekStart: st
                       {displayHeaders.map((h) => {
                         const i = headerIndex.get(h) ?? -1;
                         const v = i >= 0 ? (r[i] ?? "") : "";
-                        const isMinutes = h.endsWith("_minutes");
+                        const isNumber = h.endsWith("_hours") || h.endsWith("_minutes");
                         return (
-                          <td key={h} className={cn("px-3 py-2 align-top", isMinutes && "font-mono")}>
+                          <td key={h} className={cn("px-3 py-2 align-top", isNumber && "font-mono")}>
                             {v}
                           </td>
                         );

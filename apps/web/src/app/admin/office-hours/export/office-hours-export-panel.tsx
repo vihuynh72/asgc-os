@@ -9,10 +9,12 @@ import { addDaysDateOnly, normalizeDateOnlyString, startOfWeekMondayDateOnly, to
 type AdminWeeklyHoursPreviewRow = {
   user_id: string;
   week_start: string;
-  display_name: string;
   email: string;
-  total_minutes: number | string;
-  deficit_minutes: number | string;
+  role: string;
+  name: string;
+  required_hours: number | string;
+  total_hours: number | string;
+  missing_hours: number | string;
 };
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -25,11 +27,9 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   return data;
 }
 
-function formatMinutes(totalMinutes: number): string {
-  const minutes = Math.max(0, Math.round(totalMinutes));
-  const hoursPart = Math.floor(minutes / 60);
-  const minutesPart = minutes % 60;
-  return `${hoursPart}h ${minutesPart}m`;
+function formatHours(totalHours: number): string {
+  const h = Number.isFinite(totalHours) ? Math.max(0, totalHours) : 0;
+  return `${h.toFixed(2)}h`;
 }
 
 function parseMinutesValue(value: number | string | null | undefined): number | null {
@@ -38,9 +38,9 @@ function parseMinutesValue(value: number | string | null | undefined): number | 
   return Number.isFinite(n) ? n : null;
 }
 
-function formatMinutesValue(value: number | string | null | undefined): string {
+function formatHoursValue(value: number | string | null | undefined): string {
   const n = parseMinutesValue(value);
-  return n === null ? "—" : formatMinutes(n);
+  return n === null ? "—" : formatHours(n);
 }
 
 async function copyToClipboard(text: string): Promise<boolean> {
@@ -109,15 +109,15 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
     const minDeficit = Number.isFinite(minDeficitValue) && minDeficitValue > 0 ? minDeficitValue : null;
     const filtered = base.filter((r) => {
       if (deficitOnly) {
-        const deficit = parseMinutesValue(r.deficit_minutes) ?? 0;
+        const deficit = parseMinutesValue(r.missing_hours) ?? 0;
         if (deficit <= 0) return false;
       }
       if (minDeficit !== null) {
-        const deficit = parseMinutesValue(r.deficit_minutes) ?? 0;
+        const deficit = parseMinutesValue(r.missing_hours) ?? 0;
         if (deficit < minDeficit) return false;
       }
       if (!query) return true;
-      const hay = `${r.display_name ?? ""} ${r.email ?? ""}`.toLowerCase();
+      const hay = `${r.role ?? ""} ${r.name ?? ""} ${r.email ?? ""}`.toLowerCase();
       return hay.includes(query);
     });
 
@@ -126,15 +126,34 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
       return parsed === null ? -1 : parsed;
     };
     const sorted = [...filtered].sort((a, b) => {
-      if (sortKey === "name") {
-        const aName = (a.display_name || a.email || "").toLowerCase();
-        const bName = (b.display_name || b.email || "").toLowerCase();
-        return aName.localeCompare(bName);
-      }
-      if (sortKey === "total") {
-        return toMinutes(b.total_minutes) - toMinutes(a.total_minutes);
-      }
-      return toMinutes(b.deficit_minutes) - toMinutes(a.deficit_minutes);
+      const rank = (role: string) => {
+        const r = role.toLowerCase();
+        if (r.includes("president")) return 0;
+        if (r.includes("vice president") || r.includes("executive")) return 1;
+        if (r.includes("director")) return 2;
+        if (r.includes("board member")) return 3;
+        return 9;
+      };
+      const aRank = rank(a.role ?? "");
+      const bRank = rank(b.role ?? "");
+      if (aRank !== bRank) return aRank - bRank;
+
+      const boardN = (role: string) => {
+        const m = role.match(/board member\s*(\d+)/i);
+        return m ? Number(m[1]) : null;
+      };
+      const aBoard = boardN(a.role ?? "");
+      const bBoard = boardN(b.role ?? "");
+      if (aBoard !== null && bBoard !== null && aBoard !== bBoard) return aBoard - bBoard;
+      if (aBoard !== null && bBoard === null) return -1;
+      if (aBoard === null && bBoard !== null) return 1;
+
+      if (sortKey === "total") return toMinutes(b.total_hours) - toMinutes(a.total_hours);
+      if (sortKey === "deficit") return toMinutes(b.missing_hours) - toMinutes(a.missing_hours);
+
+      const aName = (a.name || a.email || "").toLowerCase();
+      const bName = (b.name || b.email || "").toLowerCase();
+      return aName.localeCompare(bName);
     });
 
     return sorted;
@@ -152,7 +171,7 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
     let totalDeficit = 0;
 
     for (const row of list) {
-      const deficit = parseMinutesValue(row.deficit_minutes) ?? 0;
+      const deficit = parseMinutesValue(row.missing_hours) ?? 0;
       if (deficit > 0) deficitCount += 1;
       totalDeficit += Math.max(0, deficit);
     }
@@ -178,7 +197,7 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
   async function handleCopyEmails(kind: "all" | "deficit") {
     const list = filteredRows.filter((row) => {
       if (kind === "deficit") {
-        const deficit = parseMinutesValue(row.deficit_minutes) ?? 0;
+        const deficit = parseMinutesValue(row.missing_hours) ?? 0;
         return deficit > 0;
       }
       return true;
@@ -204,20 +223,22 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
   function downloadFilteredCsv() {
     const header = [
       "week_start",
+      "role",
       "name",
-      "email",
-      "total_minutes",
-      "deficit_minutes",
+      "required_hours",
+      "total_hours",
+      "missing_hours",
     ];
     const lines = [
       header.map(toCsvValue).join(","),
       ...filteredRows.map((row) => {
         const values = [
           row.week_start,
-          row.display_name ?? "",
-          row.email ?? "",
-          parseMinutesValue(row.total_minutes) ?? "",
-          parseMinutesValue(row.deficit_minutes) ?? "",
+          row.role ?? "",
+          row.name ?? "",
+          parseMinutesValue(row.required_hours) ?? "",
+          parseMinutesValue(row.total_hours) ?? "",
+          parseMinutesValue(row.missing_hours) ?? "",
         ];
         return values.map(toCsvValue).join(",");
       }),
@@ -291,7 +312,7 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div className="space-y-1">
             <div className="text-sm font-medium">Week starts {weekStartResolved ?? "—"}</div>
-            <div className="text-xs text-foreground/70">Durations are shown as hours + minutes (h m).</div>
+            <div className="text-xs text-foreground/70">Hours are shown as decimal hours. Rows are ordered by role hierarchy.</div>
           </div>
 
           <div className="flex flex-wrap items-end gap-2">
@@ -365,15 +386,15 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <label className="space-y-1 text-xs">
-                <div className="text-foreground/70">Search</div>
-                <input
-                  type="search"
-                  className="h-8 w-full rounded-md border bg-transparent px-2 text-xs sm:w-48"
-                  value={rowSearch}
-                  onChange={(e: ChangeEvent<HTMLInputElement>) => setRowSearch(e.target.value)}
-                  placeholder="Name or email..."
-                />
-              </label>
+              <div className="text-foreground/70">Search</div>
+              <input
+                type="search"
+                className="h-8 w-full rounded-md border bg-transparent px-2 text-xs sm:w-48"
+                value={rowSearch}
+                onChange={(e: ChangeEvent<HTMLInputElement>) => setRowSearch(e.target.value)}
+                placeholder="Role or name..."
+              />
+            </label>
               <Button
                 variant="ghost"
                 size="sm"
@@ -391,11 +412,11 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
                 <span className="text-foreground/70">Deficit only</span>
               </label>
               <label className="space-y-1 text-xs">
-                <div className="text-foreground/70">Min deficit (mins)</div>
+                <div className="text-foreground/70">Min missing (hours)</div>
                 <input
                   type="number"
                   min={0}
-                  step={1}
+                  step={0.25}
                   className="h-8 w-full rounded-md border bg-transparent px-2 text-xs sm:w-28"
                   value={minDeficitMinutes}
                   onChange={(e: ChangeEvent<HTMLInputElement>) => setMinDeficitMinutes(e.target.value)}
@@ -413,7 +434,7 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
                 >
                   <option value="name">Name (A-Z)</option>
                   <option value="total">Total (high to low)</option>
-                  <option value="deficit">Deficit (high to low)</option>
+                  <option value="deficit">Missing (high to low)</option>
                 </select>
               </label>
               <Button variant="ghost" size="sm" onClick={resetFilters} disabled={!filtersActive}>
@@ -423,7 +444,7 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
           </div>
           <div className="flex flex-wrap items-center gap-3 border-t px-3 py-2 text-xs text-foreground/70">
             <span>Deficit: {summary.deficitCount}</span>
-            <span>Total deficit: {formatMinutes(summary.totalDeficit)}</span>
+            <span>Total missing: {formatHours(summary.totalDeficit)}</span>
             <Button
               variant="outline"
               size="sm"
@@ -453,28 +474,30 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
             <table className="w-full min-w-[760px] text-sm">
               <thead className="border-t bg-foreground/5 text-left text-xs text-foreground/70">
                 <tr>
+                  <th className="px-3 py-2">Role</th>
                   <th className="px-3 py-2">Name</th>
-                  <th className="px-3 py-2">Email</th>
-                  <th className="px-3 py-2 text-right">Total</th>
-                  <th className="px-3 py-2 text-right">Deficit</th>
+                  <th className="px-3 py-2 text-right">Required</th>
+                  <th className="px-3 py-2 text-right">Completed</th>
+                  <th className="px-3 py-2 text-right">Missing</th>
                 </tr>
               </thead>
               <tbody className="divide-y">
                 {filteredRows.map((r) => {
-                  const deficit = parseMinutesValue(r.deficit_minutes) ?? 0;
+                  const deficit = parseMinutesValue(r.missing_hours) ?? 0;
                   const highlight = deficit > 0;
                   return (
                     <tr key={`${r.user_id}:${r.week_start}`} className={highlight ? "bg-red-500/5" : undefined}>
-                    <td className="px-3 py-2">{r.display_name || "—"}</td>
-                    <td className="px-3 py-2">{r.email || "—"}</td>
-                    <td className="px-3 py-2 text-right font-mono">{formatMinutesValue(r.total_minutes)}</td>
-                    <td className="px-3 py-2 text-right font-mono">{formatMinutesValue(r.deficit_minutes)}</td>
+                    <td className="px-3 py-2">{r.role || "—"}</td>
+                    <td className="px-3 py-2">{r.name || "—"}</td>
+                    <td className="px-3 py-2 text-right font-mono">{formatHoursValue(r.required_hours)}</td>
+                    <td className="px-3 py-2 text-right font-mono">{formatHoursValue(r.total_hours)}</td>
+                    <td className="px-3 py-2 text-right font-mono">{formatHoursValue(r.missing_hours)}</td>
                   </tr>
                   );
                 })}
                 {filteredRows.length === 0 ? (
                   <tr>
-                    <td className="px-3 py-3 text-sm text-foreground/60" colSpan={4}>
+                    <td className="px-3 py-3 text-sm text-foreground/60" colSpan={5}>
                       {filtersActive ? "No rows match the current filters." : "No rows returned."}
                     </td>
                   </tr>
