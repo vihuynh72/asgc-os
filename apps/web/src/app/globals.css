@@ -135,6 +135,27 @@ html {
   scroll-padding-top: 4rem;
 }
 
+html[data-kiosk="true"] {
+  scroll-padding-top: 0;
+}
+
+html[data-kiosk="true"] .skip-link {
+  display: none;
+}
+
+html[data-kiosk="true"] header,
+html[data-kiosk="true"] footer {
+  display: none;
+}
+
+html[data-kiosk="true"] body > .min-h-dvh {
+  min-height: 100dvh;
+}
+
+html[data-kiosk="true"] #main-content {
+  min-height: 100dvh;
+}
+
 :where(
     input[type="text"],
     input[type="email"],

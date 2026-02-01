@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod";
 
-import { PageShell } from "@/components/page-shell";
 import { Button } from "@/components/ui/button";
 
 type KioskOpenSession = {
@@ -140,6 +139,17 @@ function SelfieCapture({
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
+  const attachStreamToVideo = useCallback(() => {
+    const video = videoRef.current;
+    const stream = streamRef.current;
+    if (!video || !stream) return;
+    if (video.srcObject !== stream) {
+      video.srcObject = stream;
+    }
+    // Don't await: iOS Safari can treat awaited calls as losing the "gesture" context.
+    void video.play().catch(() => null);
+  }, []);
+
   const stop = useCallback(() => {
     const stream = streamRef.current;
     streamRef.current = null;
@@ -155,6 +165,7 @@ function SelfieCapture({
       setCameraError("Camera is not supported on this device.");
       return;
     }
+    stop();
     setCameraState("starting");
     setVideoReady(false);
     setWarmTooLong(false);
@@ -165,16 +176,10 @@ function SelfieCapture({
       }
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
-        video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } },
+        video: { facingMode: { ideal: "user" }, width: { ideal: 1280 }, height: { ideal: 720 } },
       });
       streamRef.current = stream;
       setCameraState("ready");
-      const video = videoRef.current;
-      if (video) {
-        video.srcObject = stream;
-        // Don't await: iOS Safari can treat awaited calls as losing the "gesture" context.
-        void video.play().catch(() => null);
-      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : "";
       setCameraError(
@@ -186,6 +191,11 @@ function SelfieCapture({
       setMode("file");
     }
   }, [stop]);
+
+  useEffect(() => {
+    if (mode !== "camera" || cameraState !== "ready") return;
+    attachStreamToVideo();
+  }, [attachStreamToVideo, cameraState, mode]);
 
   useEffect(() => {
     if (cameraState !== "starting") return;
@@ -200,6 +210,16 @@ function SelfieCapture({
     const id = window.setTimeout(() => setWarmTooLong(true), 2500);
     return () => window.clearTimeout(id);
   }, [cameraState, videoReady]);
+
+  useEffect(() => {
+    if (cameraState !== "ready" || videoReady) return;
+    const id = window.setTimeout(() => {
+      setCameraError("Camera couldn’t start. Switching to Upload.");
+      stop();
+      setMode("file");
+    }, 4500);
+    return () => window.clearTimeout(id);
+  }, [cameraState, stop, videoReady]);
 
   useEffect(() => {
     if (mode !== "camera" || value || disabled) stop();
@@ -226,15 +246,25 @@ function SelfieCapture({
   }
 
   const canUseCamera = supportsCameraCapture();
+  const markVideoReady = useCallback(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    if (video.videoWidth > 0 && video.videoHeight > 0) {
+      setVideoReady(true);
+    }
+  }, []);
 
   return (
     <div className="space-y-2">
-      <div className="flex items-center justify-between">
-        <div className="text-sm font-medium">Selfie</div>
-        <div className="inline-flex overflow-hidden rounded-md border">
+      <div className="flex items-center justify-end">
+        <div className="inline-flex overflow-hidden rounded-full border bg-background/40 shadow-sm ring-1 ring-black/5 backdrop-blur">
           <button
             type="button"
-            className={`px-3 py-1 text-xs ${mode === "camera" ? "bg-foreground/5 text-foreground" : "text-foreground/70 hover:text-foreground"} disabled:opacity-50`}
+            className={`px-3.5 py-1.5 text-xs font-medium ${
+              mode === "camera"
+                ? "bg-foreground/5 text-foreground"
+                : "text-foreground/70 hover:bg-foreground/5 hover:text-foreground"
+            } disabled:opacity-50`}
             onClick={() => {
               setCameraError(null);
               setMode("camera");
@@ -246,7 +276,11 @@ function SelfieCapture({
           </button>
           <button
             type="button"
-            className={`px-3 py-1 text-xs ${mode === "file" ? "bg-foreground/5 text-foreground" : "text-foreground/70 hover:text-foreground"} disabled:opacity-50`}
+            className={`px-3.5 py-1.5 text-xs font-medium ${
+              mode === "file"
+                ? "bg-foreground/5 text-foreground"
+                : "text-foreground/70 hover:bg-foreground/5 hover:text-foreground"
+            } disabled:opacity-50`}
             onClick={() => {
               setCameraError(null);
               setMode("file");
@@ -278,8 +312,14 @@ function SelfieCapture({
                   autoPlay
                   playsInline
                   muted
-                  onLoadedMetadata={() => setVideoReady(true)}
-                  onCanPlay={() => setVideoReady(true)}
+                  onLoadedMetadata={markVideoReady}
+                  onCanPlay={markVideoReady}
+                  onPlaying={markVideoReady}
+                  onError={() => {
+                    setCameraError("Camera failed to load. Switching to Upload.");
+                    stop();
+                    setMode("file");
+                  }}
                   className="aspect-[4/5] w-full max-h-[360px] object-cover"
                 />
                 {!videoReady ? (
@@ -377,6 +417,14 @@ export default function OfficeHoursKioskPage() {
   const emailDomainOk = useMemo(() => (emailValid ? isGcccdEmail(emailNormalized) : false), [emailNormalized, emailValid]);
 
   useEffect(() => {
+    const html = document.documentElement;
+    html.setAttribute("data-kiosk", "true");
+    return () => {
+      html.removeAttribute("data-kiosk");
+    };
+  }, []);
+
+  useEffect(() => {
     try {
       const saved = window.localStorage.getItem("officeHours.kioskEmail");
       if (saved) setEmail(saved);
@@ -452,6 +500,19 @@ export default function OfficeHoursKioskPage() {
     if (!photo) return "selfie";
     return "ready";
   }, [emailValid, openSession, photo]);
+
+  const headline = useMemo(() => (openSession ? "Check out" : "Check in"), [openSession]);
+  const subhead = useMemo(
+    () => (openSession ? "Finish your session to receive credit." : "Email → selfie → location (about 10 seconds)"),
+    [openSession],
+  );
+
+  const emailHint = useMemo(() => {
+    if (!email.length) return null;
+    if (!emailValid) return "Enter a valid email address.";
+    if (!emailDomainOk) return "Use your @gcccd.edu email.";
+    return null;
+  }, [email.length, emailDomainOk, emailValid]);
 
   const onCheckIn = useCallback(async () => {
     setLoading(true);
@@ -538,38 +599,53 @@ export default function OfficeHoursKioskPage() {
   }, [emailNormalized, emailValid, loadStatus]);
 
   return (
-    <PageShell
-      title="Office Hours (Kiosk)"
-      containerClassName="max-w-5xl py-6"
-      showHeader={false}
-    >
-      <div className="relative flex min-h-[70vh] items-center justify-center">
-        <div className="pointer-events-none absolute inset-0 -z-10 bg-gradient-to-b from-emerald-500/10 via-transparent to-transparent" />
+    <div className="relative overflow-hidden">
+      <h1 className="sr-only">Office Hours Kiosk</h1>
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(900px_circle_at_20%_10%,rgba(16,185,129,0.22),transparent_55%),radial-gradient(800px_circle_at_80%_20%,rgba(59,130,246,0.18),transparent_55%),radial-gradient(900px_circle_at_50%_85%,rgba(236,72,153,0.10),transparent_60%)]"
+      />
 
-        <div className="w-full max-w-lg">
-          <div className="rounded-2xl border bg-background/70 p-5 shadow-sm ring-1 ring-black/5 backdrop-blur supports-[backdrop-filter]:bg-background/60 sm:p-6">
+      <div className="mx-auto flex min-h-dvh w-full max-w-xl items-center px-4 py-10 sm:px-6">
+        <div className="w-full">
+          <div className="rounded-[28px] border bg-background/70 p-6 shadow-2xl ring-1 ring-black/5 backdrop-blur-xl supports-[backdrop-filter]:bg-background/60">
             <div className="flex items-start justify-between gap-4">
-              <div className="space-y-1">
-                <div className="text-2xl font-semibold tracking-tight">Office Hours Kiosk</div>
-                <div className="text-sm text-foreground/60">Fast check-in for the office (email → selfie → location)</div>
+              <div className="space-y-2">
+                <div className="text-[11px] font-medium uppercase tracking-[0.2em] text-foreground/60">
+                  Office Hours
+                </div>
+                <div className="text-3xl font-semibold tracking-tight">{headline}</div>
+                <div className="text-sm text-foreground/60">{subhead}</div>
               </div>
-              <div className="flex items-center gap-1.5 pt-1">
-                <span className={`h-2 w-2 rounded-full ${step !== "email" ? "bg-emerald-500" : "bg-foreground/20"}`} />
-                <span className={`h-2 w-2 rounded-full ${step === "ready" || step === "checked_in" ? "bg-emerald-500" : step === "selfie" ? "bg-emerald-400" : "bg-foreground/20"}`} />
-                <span className={`h-2 w-2 rounded-full ${step === "checked_in" ? "bg-emerald-500" : "bg-foreground/20"}`} />
+              <div className="flex items-center gap-1.5 pt-2">
+                <span
+                  className={`h-2 w-2 rounded-full ${step !== "email" ? "bg-emerald-500" : "bg-foreground/20"}`}
+                />
+                <span
+                  className={`h-2 w-2 rounded-full ${
+                    step === "ready" || step === "checked_in"
+                      ? "bg-emerald-500"
+                      : step === "selfie"
+                        ? "bg-emerald-400"
+                        : "bg-foreground/20"
+                  }`}
+                />
+                <span
+                  className={`h-2 w-2 rounded-full ${step === "checked_in" ? "bg-emerald-500" : "bg-foreground/20"}`}
+                />
               </div>
             </div>
 
-            <div className="mt-5 space-y-5">
-              <div className="space-y-2">
-                <label className="space-y-1">
+            <div className="mt-6 space-y-6">
+              <div className="space-y-3">
+                <label className="space-y-2">
                   <div className="text-sm font-medium text-foreground/80">ASGC email</div>
                   <input
                     type="email"
                     inputMode="email"
                     autoCapitalize="none"
                     autoCorrect="off"
-                    className="h-12 w-full rounded-xl border bg-transparent px-4 text-base shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                    className="h-14 w-full rounded-full border bg-background/40 px-5 text-base shadow-sm ring-1 ring-black/5 placeholder:text-foreground/40 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="name@gcccd.edu"
@@ -577,12 +653,12 @@ export default function OfficeHoursKioskPage() {
                   />
                 </label>
 
-                <div className="flex items-center justify-between text-xs text-foreground/60">
-                  <span>
-                    {!emailValid ? "Enter a valid email address." : !emailDomainOk ? "Use your @gcccd.edu email." : "Email looks good."}
-                  </span>
-                  {statusLoading ? <span>Checking…</span> : null}
-                </div>
+                {emailHint || statusLoading ? (
+                  <div className="flex items-center justify-between text-xs text-foreground/60">
+                    <span>{emailHint ?? ""}</span>
+                    {statusLoading ? <span>Checking…</span> : null}
+                  </div>
+                ) : null}
               </div>
 
               {emailValid ? (
@@ -633,8 +709,8 @@ export default function OfficeHoursKioskPage() {
                   </div>
                 )
               ) : (
-                <div className="rounded-xl border bg-foreground/[0.02] p-4 text-sm text-foreground/70">
-                  Enter your email to start. You’ll then be prompted for a selfie + location.
+                <div className="rounded-2xl border bg-foreground/[0.02] p-5 text-sm text-foreground/70">
+                  Enter your ASGC email to begin.
                 </div>
               )}
 
@@ -667,6 +743,6 @@ export default function OfficeHoursKioskPage() {
           </div>
         </div>
       </div>
-    </PageShell>
+    </div>
   );
 }
