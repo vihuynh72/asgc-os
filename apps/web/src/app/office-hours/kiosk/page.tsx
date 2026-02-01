@@ -22,6 +22,10 @@ function normalizeEmail(raw: string): string {
   return raw.trim().toLowerCase();
 }
 
+function isGcccdEmail(email: string): boolean {
+  return email.endsWith("@gcccd.edu");
+}
+
 function friendlyError(code: string): string {
   switch (code) {
     case "invalid_email":
@@ -132,6 +136,7 @@ function SelfieCapture({
   const [cameraState, setCameraState] = useState<"idle" | "starting" | "ready">("idle");
   const [capturing, setCapturing] = useState(false);
   const [videoReady, setVideoReady] = useState(false);
+  const [warmTooLong, setWarmTooLong] = useState(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
@@ -142,6 +147,7 @@ function SelfieCapture({
     if (videoRef.current) videoRef.current.srcObject = null;
     setVideoReady(false);
     setCameraState("idle");
+    setWarmTooLong(false);
   }, []);
 
   const start = useCallback(async () => {
@@ -151,6 +157,7 @@ function SelfieCapture({
     }
     setCameraState("starting");
     setVideoReady(false);
+    setWarmTooLong(false);
     setCameraError(null);
     try {
       if (!window.isSecureContext) {
@@ -162,13 +169,12 @@ function SelfieCapture({
       });
       streamRef.current = stream;
       setCameraState("ready");
-      window.setTimeout(() => {
-        const video = videoRef.current;
-        const activeStream = streamRef.current;
-        if (!video || !activeStream) return;
-        video.srcObject = activeStream;
+      const video = videoRef.current;
+      if (video) {
+        video.srcObject = stream;
+        // Don't await: iOS Safari can treat awaited calls as losing the "gesture" context.
         void video.play().catch(() => null);
-      }, 0);
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : "";
       setCameraError(
@@ -188,6 +194,12 @@ function SelfieCapture({
     }, 1800);
     return () => window.clearTimeout(id);
   }, [cameraState]);
+
+  useEffect(() => {
+    if (cameraState !== "ready" || videoReady) return;
+    const id = window.setTimeout(() => setWarmTooLong(true), 2500);
+    return () => window.clearTimeout(id);
+  }, [cameraState, videoReady]);
 
   useEffect(() => {
     if (mode !== "camera" || value || disabled) stop();
@@ -263,6 +275,7 @@ function SelfieCapture({
               <div className="relative overflow-hidden rounded-md border bg-black">
                 <video
                   ref={videoRef}
+                  autoPlay
                   playsInline
                   muted
                   onLoadedMetadata={() => setVideoReady(true)}
@@ -271,7 +284,14 @@ function SelfieCapture({
                 />
                 {!videoReady ? (
                   <div className="absolute inset-0 flex items-center justify-center bg-black/40 text-sm text-white">
-                    Warming up camera…
+                    <div className="space-y-2 text-center">
+                      <div>Warming up camera…</div>
+                      {warmTooLong ? (
+                        <div className="text-xs text-white/80">
+                          Still stuck? Tap Retry or switch to Upload.
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
                 ) : (
                   <div className="absolute bottom-2 left-2 rounded-full bg-black/50 px-2 py-1 text-[11px] text-white">
@@ -287,6 +307,11 @@ function SelfieCapture({
               >
                 {capturing ? "Capturing…" : "Take selfie"}
               </Button>
+              {warmTooLong ? (
+                <Button type="button" variant="outline" className="h-10 w-full" onClick={() => void start()} disabled={disabled}>
+                  Retry camera
+                </Button>
+              ) : null}
               <Button type="button" variant="outline" className="h-10 w-full" onClick={stop} disabled={disabled}>
                 Disable camera
               </Button>
@@ -349,6 +374,7 @@ export default function OfficeHoursKioskPage() {
 
   const emailNormalized = useMemo(() => normalizeEmail(email), [email]);
   const emailValid = useMemo(() => EmailSchema.safeParse(emailNormalized).success, [emailNormalized]);
+  const emailDomainOk = useMemo(() => (emailValid ? isGcccdEmail(emailNormalized) : false), [emailNormalized, emailValid]);
 
   useEffect(() => {
     try {
@@ -552,7 +578,9 @@ export default function OfficeHoursKioskPage() {
                 </label>
 
                 <div className="flex items-center justify-between text-xs text-foreground/60">
-                  <span>{emailValid ? "Looks good." : "Use your @gcccd.edu email."}</span>
+                  <span>
+                    {!emailValid ? "Enter a valid email address." : !emailDomainOk ? "Use your @gcccd.edu email." : "Email looks good."}
+                  </span>
                   {statusLoading ? <span>Checking…</span> : null}
                 </div>
               </div>
