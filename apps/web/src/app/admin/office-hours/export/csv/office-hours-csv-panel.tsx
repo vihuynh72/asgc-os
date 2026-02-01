@@ -4,6 +4,7 @@ import type { ChangeEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { addDaysDateOnly, normalizeDateOnlyString, startOfWeekMondayDateOnly, todayDateString } from "@/lib/dateOnly";
 
 async function fetchText(url: string, init?: RequestInit): Promise<string> {
@@ -14,6 +15,69 @@ async function fetchText(url: string, init?: RequestInit): Promise<string> {
     throw new Error(message);
   }
   return res.text();
+}
+
+function parseCsvLinewise(input: string): string[][] {
+  // Minimal RFC 4180-ish parser: handles commas + quoted fields + escaped quotes.
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = "";
+  let inQuotes = false;
+
+  const pushField = () => {
+    row.push(field);
+    field = "";
+  };
+  const pushRow = () => {
+    if (row.length === 0 && field.length === 0) return;
+    pushField();
+    rows.push(row);
+    row = [];
+  };
+
+  for (let i = 0; i < input.length; i += 1) {
+    const ch = input[i];
+
+    if (inQuotes) {
+      if (ch === "\"") {
+        const next = input[i + 1];
+        if (next === "\"") {
+          field += "\"";
+          i += 1;
+          continue;
+        }
+        inQuotes = false;
+        continue;
+      }
+      field += ch;
+      continue;
+    }
+
+    if (ch === "\"") {
+      inQuotes = true;
+      continue;
+    }
+
+    if (ch === ",") {
+      pushField();
+      continue;
+    }
+
+    if (ch === "\n") {
+      pushRow();
+      continue;
+    }
+
+    if (ch === "\r") {
+      // Ignore CR (support CRLF).
+      continue;
+    }
+
+    field += ch;
+  }
+
+  pushRow();
+  return rows;
 }
 
 async function copyToClipboard(text: string): Promise<boolean> {
@@ -39,11 +103,40 @@ export function OfficeHoursCsvPanel({ initialWeekStart }: { initialWeekStart: st
   const [status, setStatus] = useState<string>("");
   const [actionStatus, setActionStatus] = useState<string>("");
   const actionTimerRef = useRef<number | null>(null);
+  const [viewMode, setViewMode] = useState<"table" | "raw">("table");
+  const [search, setSearch] = useState<string>("");
 
   const weekStartResolved = useMemo(
     () => startOfWeekMondayDateOnly(anchorDate) ?? startOfWeekMondayDateOnly(todayDateString()),
     [anchorDate],
   );
+
+  const parsed = useMemo(() => {
+    const text = csvText.trim();
+    if (!text) return { headers: [] as string[], rows: [] as string[][] };
+    const all = parseCsvLinewise(text);
+    const headers = all[0] ?? [];
+    const rows = all.slice(1);
+    return { headers, rows };
+  }, [csvText]);
+
+  const headerIndex = useMemo(() => {
+    const idx = new Map<string, number>();
+    parsed.headers.forEach((h, i) => idx.set(h, i));
+    return idx;
+  }, [parsed.headers]);
+
+  const displayHeaders = useMemo(() => {
+    // Hide noisy identifiers in the UI table, while keeping them in the actual CSV download.
+    const hidden = new Set(["user_id", "week_start"]);
+    return parsed.headers.filter((h) => !hidden.has(h));
+  }, [parsed.headers]);
+
+  const filteredRows = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return parsed.rows;
+    return parsed.rows.filter((r) => r.join(" ").toLowerCase().includes(q));
+  }, [parsed.rows, search]);
 
   const quickWeekOptions = useMemo(() => {
     const current = startOfWeekMondayDateOnly(todayDateString());
@@ -136,7 +229,9 @@ export function OfficeHoursCsvPanel({ initialWeekStart }: { initialWeekStart: st
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div className="space-y-1">
             <div className="text-sm font-medium">Week starts {weekStartResolved ?? "—"}</div>
-            <div className="text-xs text-foreground/70">This view shows the raw CSV text.</div>
+            <div className="text-xs text-foreground/70">
+              Table view is for readability. Download CSV for spreadsheets.
+            </div>
           </div>
 
           <div className="flex flex-wrap items-end gap-2">
@@ -179,6 +274,16 @@ export function OfficeHoursCsvPanel({ initialWeekStart }: { initialWeekStart: st
               />
             </label>
 
+            <label className="space-y-1 text-sm">
+              <div className="text-foreground/70">Search</div>
+              <input
+                className="h-9 w-56 rounded-md border bg-transparent px-2 text-sm"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Name or email…"
+              />
+            </label>
+
             <Button variant="outline" onClick={openTableView}>
               Open table view
             </Button>
@@ -187,6 +292,12 @@ export function OfficeHoursCsvPanel({ initialWeekStart }: { initialWeekStart: st
             </Button>
             <Button variant="outline" onClick={copyCsv}>
               Copy CSV
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => setViewMode((v) => (v === "table" ? "raw" : "table"))}
+            >
+              {viewMode === "table" ? "Raw" : "Table"}
             </Button>
             <Button onClick={downloadCsv}>Download CSV</Button>
           </div>
@@ -205,9 +316,59 @@ export function OfficeHoursCsvPanel({ initialWeekStart }: { initialWeekStart: st
         </div>
       ) : null}
 
-      <div className="rounded-md border p-3">
-        <pre className="max-h-[70vh] overflow-auto whitespace-pre-wrap break-all text-xs">{csvText || "—"}</pre>
-      </div>
+      {viewMode === "raw" ? (
+        <div className="rounded-md border p-3">
+          <pre className="max-h-[70vh] overflow-auto whitespace-pre-wrap break-all text-xs">{csvText || "—"}</pre>
+        </div>
+      ) : (
+        <div className="rounded-md border">
+          <div className="flex items-center justify-between gap-3 border-b px-3 py-2 text-xs text-foreground/70">
+            <div>
+              {filteredRows.length} row{filteredRows.length === 1 ? "" : "s"}
+              {search.trim() ? ` (filtered)` : ""}
+            </div>
+            <div className="font-mono">{parsed.headers.join(" • ")}</div>
+          </div>
+
+          <div className="max-h-[70vh] overflow-auto">
+            <table className="w-full border-collapse text-sm">
+              <thead className="sticky top-0 bg-background">
+                <tr className="border-b">
+                  {displayHeaders.map((h) => (
+                    <th key={h} className="px-3 py-2 text-left text-xs font-medium text-foreground/70">
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {filteredRows.length === 0 ? (
+                  <tr>
+                    <td className="px-3 py-8 text-center text-xs text-foreground/60" colSpan={Math.max(1, displayHeaders.length)}>
+                      No rows.
+                    </td>
+                  </tr>
+                ) : (
+                  filteredRows.map((r, idx) => (
+                    <tr key={idx} className={cn("border-b last:border-b-0", idx % 2 === 1 && "bg-muted/20")}>
+                      {displayHeaders.map((h) => {
+                        const i = headerIndex.get(h) ?? -1;
+                        const v = i >= 0 ? (r[i] ?? "") : "";
+                        const isMinutes = h.endsWith("_minutes");
+                        return (
+                          <td key={h} className={cn("px-3 py-2 align-top", isMinutes && "font-mono")}>
+                            {v}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
