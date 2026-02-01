@@ -5,16 +5,19 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { addDaysDateOnly, normalizeDateOnlyString, startOfWeekMondayDateOnly, todayDateString } from "@/lib/dateOnly";
+import { reportStatus, roleKeyRank, sortWeeklyReportRows } from "@/lib/office-hours-weekly-report.mjs";
 
 type AdminWeeklyHoursPreviewRow = {
   user_id: string;
   week_start: string;
   email: string;
+  role_key: string | null;
   role: string;
   name: string;
   required_hours: number | string;
   total_hours: number | string;
   missing_hours: number | string;
+  needs_review_sessions: number | string;
 };
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -27,20 +30,16 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   return data;
 }
 
-function formatHours(totalHours: number): string {
-  const h = Number.isFinite(totalHours) ? Math.max(0, totalHours) : 0;
-  return `${h.toFixed(2)}h`;
-}
-
-function parseMinutesValue(value: number | string | null | undefined): number | null {
-  if (value === null || value === undefined) return null;
+function parseHoursValue(value: number | string | null | undefined): number {
+  if (value === null || value === undefined) return 0;
   const n = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(n) ? n : null;
+  return Number.isFinite(n) ? n : 0;
 }
 
-function formatHoursValue(value: number | string | null | undefined): string {
-  const n = parseMinutesValue(value);
-  return n === null ? "—" : formatHours(n);
+function formatHours(value: number): string {
+  const v = Number.isFinite(value) ? Math.max(0, value) : 0;
+  const rounded = Math.round(v * 100) / 100;
+  return `${rounded.toFixed(2)}h`;
 }
 
 async function copyToClipboard(text: string): Promise<boolean> {
@@ -60,13 +59,20 @@ async function copyToClipboard(text: string): Promise<boolean> {
   return ok;
 }
 
-function toCsvValue(value: string | number | null | undefined): string {
-  if (value === null || value === undefined) return "";
-  const raw = String(value);
-  if (raw.includes(",") || raw.includes("\"") || raw.includes("\n")) {
-    return `"${raw.replace(/\"/g, "\"\"")}"`;
-  }
-  return raw;
+function groupLabel(key: string): string {
+  if (key === "president") return "President";
+  if (key === "executive") return "Executives";
+  if (key === "director") return "Directors";
+  if (key === "board_member") return "Board Members";
+  if (key === "volunteer") return "Volunteers";
+  return "Members";
+}
+
+function statusPill(statusKey: string): { label: string; className: string } {
+  if (statusKey === "complete") return { label: "Complete", className: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300" };
+  if (statusKey === "missing") return { label: "Missing", className: "bg-red-500/15 text-red-700 dark:text-red-300" };
+  if (statusKey === "behind") return { label: "Behind", className: "bg-amber-500/15 text-amber-700 dark:text-amber-300" };
+  return { label: "Not required", className: "bg-foreground/10 text-foreground/70" };
 }
 
 export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart: string | null }) {
@@ -76,9 +82,7 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
   const [actionStatus, setActionStatus] = useState<string>("");
   const actionTimerRef = useRef<number | null>(null);
   const [rowSearch, setRowSearch] = useState<string>("");
-  const [deficitOnly, setDeficitOnly] = useState<boolean>(false);
-  const [minDeficitMinutes, setMinDeficitMinutes] = useState<string>("");
-  const [sortKey, setSortKey] = useState<"name" | "total" | "deficit">("name");
+  const [missingOnly, setMissingOnly] = useState<boolean>(false);
 
   const weekStartResolved = useMemo(
     () => startOfWeekMondayDateOnly(anchorDate) ?? startOfWeekMondayDateOnly(todayDateString()),
@@ -93,120 +97,71 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
       const next = addDaysDateOnly(current, -7 * i);
       if (next) values.push(next);
     }
-    if (weekStartResolved && !values.includes(weekStartResolved)) {
-      values.unshift(weekStartResolved);
-    }
+    if (weekStartResolved && !values.includes(weekStartResolved)) values.unshift(weekStartResolved);
     return values.map((value) => ({
       value,
       label: value === current ? `This week (${value})` : value === weekStartResolved ? `Selected (${value})` : value,
     }));
   }, [weekStartResolved]);
 
-  const filteredRows = useMemo(() => {
-    const base = rows ?? [];
-    const query = rowSearch.trim().toLowerCase();
-    const minDeficitValue = Number(minDeficitMinutes);
-    const minDeficit = Number.isFinite(minDeficitValue) && minDeficitValue > 0 ? minDeficitValue : null;
-    const filtered = base.filter((r) => {
-      if (deficitOnly) {
-        const deficit = parseMinutesValue(r.missing_hours) ?? 0;
-        if (deficit <= 0) return false;
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      setStatus("Loading report…");
+      try {
+        const qs = weekStartResolved ? `?weekStart=${encodeURIComponent(weekStartResolved)}&format=json` : "?format=json";
+        const data = await fetchJson<{ weekStart: string; rows: AdminWeeklyHoursPreviewRow[] }>(
+          `/api/admin/office-hours/export-week${qs}`,
+        );
+        if (cancelled) return;
+        setRows(data.rows ?? []);
+        setStatus("");
+      } catch (e) {
+        if (cancelled) return;
+        setRows(null);
+        setStatus(e instanceof Error ? e.message : "Failed to load report");
       }
-      if (minDeficit !== null) {
-        const deficit = parseMinutesValue(r.missing_hours) ?? 0;
-        if (deficit < minDeficit) return false;
-      }
-      if (!query) return true;
-      const hay = `${r.role ?? ""} ${r.name ?? ""} ${r.email ?? ""}`.toLowerCase();
-      return hay.includes(query);
-    });
-
-    const toMinutes = (value: number | string | null | undefined): number => {
-      const parsed = parseMinutesValue(value);
-      return parsed === null ? -1 : parsed;
-    };
-    const sorted = [...filtered].sort((a, b) => {
-      const rank = (role: string) => {
-        const r = role.toLowerCase();
-        if (r.includes("president")) return 0;
-        if (r.includes("vice president") || r.includes("executive")) return 1;
-        if (r.includes("director")) return 2;
-        if (r.includes("board member")) return 3;
-        return 9;
-      };
-      const aRank = rank(a.role ?? "");
-      const bRank = rank(b.role ?? "");
-      if (aRank !== bRank) return aRank - bRank;
-
-      const boardN = (role: string) => {
-        const m = role.match(/board member\s*(\d+)/i);
-        return m ? Number(m[1]) : null;
-      };
-      const aBoard = boardN(a.role ?? "");
-      const bBoard = boardN(b.role ?? "");
-      if (aBoard !== null && bBoard !== null && aBoard !== bBoard) return aBoard - bBoard;
-      if (aBoard !== null && bBoard === null) return -1;
-      if (aBoard === null && bBoard !== null) return 1;
-
-      if (sortKey === "total") return toMinutes(b.total_hours) - toMinutes(a.total_hours);
-      if (sortKey === "deficit") return toMinutes(b.missing_hours) - toMinutes(a.missing_hours);
-
-      const aName = (a.name || a.email || "").toLowerCase();
-      const bName = (b.name || b.email || "").toLowerCase();
-      return aName.localeCompare(bName);
-    });
-
-    return sorted;
-  }, [rows, rowSearch, deficitOnly, minDeficitMinutes, sortKey]);
-
-  const filtersActive =
-    rowSearch.trim().length > 0 ||
-    deficitOnly ||
-    sortKey !== "name" ||
-    Number(minDeficitMinutes) > 0;
-
-  const summary = useMemo(() => {
-    const list = filteredRows;
-    let deficitCount = 0;
-    let totalDeficit = 0;
-
-    for (const row of list) {
-      const deficit = parseMinutesValue(row.missing_hours) ?? 0;
-      if (deficit > 0) deficitCount += 1;
-      totalDeficit += Math.max(0, deficit);
     }
-
-    return {
-      totalRows: list.length,
-      deficitCount,
-      totalDeficit,
+    void load();
+    return () => {
+      cancelled = true;
     };
-  }, [filteredRows]);
+  }, [weekStartResolved]);
+
+  useEffect(() => {
+    return () => {
+      if (actionTimerRef.current) window.clearTimeout(actionTimerRef.current);
+    };
+  }, []);
 
   function setTransientActionStatus(message: string) {
     setActionStatus(message);
-    if (actionTimerRef.current) {
-      window.clearTimeout(actionTimerRef.current);
-    }
+    if (actionTimerRef.current) window.clearTimeout(actionTimerRef.current);
     actionTimerRef.current = window.setTimeout(() => {
       setActionStatus("");
       actionTimerRef.current = null;
     }, 2500);
   }
 
-  async function handleCopyEmails(kind: "all" | "deficit") {
-    const list = filteredRows.filter((row) => {
-      if (kind === "deficit") {
-        const deficit = parseMinutesValue(row.missing_hours) ?? 0;
-        return deficit > 0;
+  function downloadCsv() {
+    const qs = weekStartResolved ? `?weekStart=${encodeURIComponent(weekStartResolved)}` : "";
+    window.location.href = `/api/admin/office-hours/export-week${qs}`;
+  }
+
+  function openCsvView() {
+    const qs = weekStartResolved ? `?weekStart=${encodeURIComponent(weekStartResolved)}` : "";
+    window.open(`/admin/office-hours/export/csv${qs}`, "_blank", "noopener,noreferrer");
+  }
+
+  async function handleCopyEmails(kind: "all" | "missing") {
+    const list = (visibleRows ?? []).filter((row) => {
+      if (kind === "missing") {
+        return parseHoursValue(row.missing_hours) > 0;
       }
       return true;
     });
 
-    const emails = list
-      .map((row) => row.email)
-      .filter((email): email is string => Boolean(email && email.trim()));
-
+    const emails = list.map((row) => row.email).filter((email): email is string => Boolean(email && email.trim()));
     if (emails.length === 0) {
       setTransientActionStatus("No emails to copy.");
       return;
@@ -220,90 +175,75 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
     }
   }
 
-  function downloadFilteredCsv() {
-    const header = [
-      "week_start",
-      "role",
-      "name",
-      "required_hours",
-      "total_hours",
-      "missing_hours",
-    ];
-    const lines = [
-      header.map(toCsvValue).join(","),
-      ...filteredRows.map((row) => {
-        const values = [
-          row.week_start,
-          row.role ?? "",
-          row.name ?? "",
-          parseMinutesValue(row.required_hours) ?? "",
-          parseMinutesValue(row.total_hours) ?? "",
-          parseMinutesValue(row.missing_hours) ?? "",
-        ];
-        return values.map(toCsvValue).join(",");
-      }),
-    ];
+  const orderedRows = useMemo(() => sortWeeklyReportRows(rows ?? []), [rows]);
 
-    const csv = `${lines.join("\n")}\n`;
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-    const url = window.URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `office-hours-${weekStartResolved ?? "week"}-filtered.csv`;
-    link.click();
-    window.URL.revokeObjectURL(url);
-    setTransientActionStatus("Filtered CSV downloaded.");
-  }
+  const visibleRows = useMemo(() => {
+    const query = rowSearch.trim().toLowerCase();
+    return orderedRows.filter((r) => {
+      if (missingOnly && parseHoursValue(r.missing_hours) <= 0) return false;
+      if (!query) return true;
+      const hay = `${r.role ?? ""} ${r.name ?? ""}`.toLowerCase();
+      return hay.includes(query);
+    });
+  }, [orderedRows, rowSearch, missingOnly]);
+
+  const groups = useMemo(() => {
+    const map = new Map<string, AdminWeeklyHoursPreviewRow[]>();
+    for (const row of visibleRows) {
+      const key = row.role_key ?? "member";
+      map.set(key, [...(map.get(key) ?? []), row]);
+    }
+    const keys = [...map.keys()].sort((a, b) => roleKeyRank(a) - roleKeyRank(b));
+    return keys.map((key) => ({ key, rows: map.get(key) ?? [] }));
+  }, [visibleRows]);
+
+  const summary = useMemo(() => {
+    let complete = 0;
+    let behind = 0;
+    let missing = 0;
+    let notRequired = 0;
+    let requiredTotal = 0;
+    let completedTotal = 0;
+    let missingTotal = 0;
+
+    for (const row of visibleRows) {
+      const required = parseHoursValue(row.required_hours);
+      const completed = parseHoursValue(row.total_hours);
+      const rem = parseHoursValue(row.missing_hours);
+
+      requiredTotal += Math.max(0, required);
+      completedTotal += Math.max(0, completed);
+      missingTotal += Math.max(0, rem);
+
+      const statusKey = reportStatus({
+        required_hours: required,
+        total_hours: completed,
+        missing_hours: rem,
+      });
+
+      if (statusKey === "complete") complete += 1;
+      else if (statusKey === "behind") behind += 1;
+      else if (statusKey === "missing") missing += 1;
+      else notRequired += 1;
+    }
+
+    return {
+      total: visibleRows.length,
+      complete,
+      behind,
+      missing,
+      notRequired,
+      requiredTotal,
+      completedTotal,
+      missingTotal,
+    };
+  }, [visibleRows]);
+
+  const filtersActive = rowSearch.trim().length > 0 || missingOnly;
 
   function resetFilters() {
     setRowSearch("");
-    setDeficitOnly(false);
-    setMinDeficitMinutes("");
-    setSortKey("name");
-  }
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function load() {
-      setStatus("Loading preview…");
-      try {
-        const qs = weekStartResolved ? `?weekStart=${encodeURIComponent(weekStartResolved)}&format=json` : "?format=json";
-        const data = await fetchJson<{ weekStart: string; rows: AdminWeeklyHoursPreviewRow[] }>(
-          `/api/admin/office-hours/export-week${qs}`,
-        );
-        if (cancelled) return;
-        setRows(data.rows ?? []);
-        setStatus("");
-      } catch (e) {
-        if (cancelled) return;
-        setStatus(e instanceof Error ? e.message : "Failed to load preview");
-        setRows(null);
-      }
-    }
-
-    void load();
-    return () => {
-      cancelled = true;
-    };
-  }, [weekStartResolved]);
-
-  useEffect(() => {
-    return () => {
-      if (actionTimerRef.current) {
-        window.clearTimeout(actionTimerRef.current);
-      }
-    };
-  }, []);
-
-  function downloadCsv() {
-    const qs = weekStartResolved ? `?weekStart=${encodeURIComponent(weekStartResolved)}` : "";
-    window.location.href = `/api/admin/office-hours/export-week${qs}`;
-  }
-
-  function openCsvView() {
-    const qs = weekStartResolved ? `?weekStart=${encodeURIComponent(weekStartResolved)}` : "";
-    window.open(`/admin/office-hours/export/csv${qs}`, "_blank", "noopener,noreferrer");
+    setMissingOnly(false);
   }
 
   return (
@@ -312,7 +252,7 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div className="space-y-1">
             <div className="text-sm font-medium">Week starts {weekStartResolved ?? "—"}</div>
-            <div className="text-xs text-foreground/70">Hours are shown as decimal hours. Rows are ordered by role hierarchy.</div>
+            <div className="text-xs text-foreground/70">HR-style weekly office hour report (manual checkout credit only).</div>
           </div>
 
           <div className="flex flex-wrap items-end gap-2">
@@ -359,154 +299,157 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
               Calendar view
             </Button>
             <Button variant="outline" onClick={openCsvView}>
-              View CSV
+              Raw CSV
             </Button>
             <Button onClick={downloadCsv}>Download CSV</Button>
           </div>
         </div>
       </div>
 
-      {actionStatus ? (
-        <div className="rounded-md border px-3 py-2 text-sm text-foreground/80" role="status" aria-live="polite">
-          {actionStatus}
-        </div>
-      ) : null}
-
-      {status ? (
-        <div className="rounded-md border px-3 py-2 text-sm text-foreground/80" role="status" aria-live="polite">
-          {status}
-        </div>
-      ) : null}
-
-      {rows ? (
-        <div className="rounded-md border">
-          <div className="flex flex-wrap items-center justify-between gap-3 px-3 py-2 text-sm">
-            <div className="text-foreground/70">
-              Rows: {summary.totalRows} of {rows.length}
+      <div className="rounded-md border p-3">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div className="space-y-1">
+            <div className="text-sm font-medium">Summary</div>
+            <div className="text-xs text-foreground/70">
+              {summary.total} people • {summary.complete} complete • {summary.behind + summary.missing} behind • {summary.notRequired} not required
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <label className="space-y-1 text-xs">
+          </div>
+
+          <div className="flex flex-wrap items-center gap-4 text-xs text-foreground/70">
+            <div>
+              <div className="text-[11px] uppercase tracking-wide text-foreground/60">Required</div>
+              <div className="font-mono text-sm text-foreground">{formatHours(summary.requiredTotal)}</div>
+            </div>
+            <div>
+              <div className="text-[11px] uppercase tracking-wide text-foreground/60">Completed</div>
+              <div className="font-mono text-sm text-foreground">{formatHours(summary.completedTotal)}</div>
+            </div>
+            <div>
+              <div className="text-[11px] uppercase tracking-wide text-foreground/60">Missing</div>
+              <div className="font-mono text-sm text-foreground">{formatHours(summary.missingTotal)}</div>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-3 flex flex-wrap items-end justify-between gap-3 border-t pt-3">
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="space-y-1 text-xs">
               <div className="text-foreground/70">Search</div>
               <input
-                type="search"
-                className="h-8 w-full rounded-md border bg-transparent px-2 text-xs sm:w-48"
+                type="text"
+                className="h-9 w-72 rounded-md border bg-transparent px-2 text-sm"
                 value={rowSearch}
                 onChange={(e: ChangeEvent<HTMLInputElement>) => setRowSearch(e.target.value)}
-                placeholder="Role or name..."
+                placeholder="Search name or role..."
               />
             </label>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setRowSearch("")}
-                disabled={!rowSearch.trim()}
-              >
-                Clear search
-              </Button>
-              <label className="flex items-center gap-2 text-xs">
-                <input
-                  type="checkbox"
-                  checked={deficitOnly}
-                  onChange={(e: ChangeEvent<HTMLInputElement>) => setDeficitOnly(e.target.checked)}
-                />
-                <span className="text-foreground/70">Deficit only</span>
-              </label>
-              <label className="space-y-1 text-xs">
-                <div className="text-foreground/70">Min missing (hours)</div>
-                <input
-                  type="number"
-                  min={0}
-                  step={0.25}
-                  className="h-8 w-full rounded-md border bg-transparent px-2 text-xs sm:w-28"
-                  value={minDeficitMinutes}
-                  onChange={(e: ChangeEvent<HTMLInputElement>) => setMinDeficitMinutes(e.target.value)}
-                  placeholder="0"
-                />
-              </label>
-              <label className="space-y-1 text-xs">
-                <div className="text-foreground/70">Sort</div>
-                <select
-                  className="h-8 w-full rounded-md border bg-transparent px-2 text-xs sm:w-44"
-                  value={sortKey}
-                  onChange={(e: ChangeEvent<HTMLSelectElement>) =>
-                    setSortKey(e.target.value as "name" | "total" | "deficit")
-                  }
-                >
-                  <option value="name">Name (A-Z)</option>
-                  <option value="total">Total (high to low)</option>
-                  <option value="deficit">Missing (high to low)</option>
-                </select>
-              </label>
-              <Button variant="ghost" size="sm" onClick={resetFilters} disabled={!filtersActive}>
-                Reset filters
-              </Button>
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-3 border-t px-3 py-2 text-xs text-foreground/70">
-            <span>Deficit: {summary.deficitCount}</span>
-            <span>Total missing: {formatHours(summary.totalDeficit)}</span>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => void handleCopyEmails("all")}
-              disabled={summary.totalRows === 0}
-            >
-              Copy emails
+            <Button variant="ghost" size="sm" onClick={() => setRowSearch("")} disabled={!rowSearch.trim()}>
+              Clear
             </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => void handleCopyEmails("deficit")}
-              disabled={summary.totalRows === 0}
-            >
-              Copy deficit emails
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={downloadFilteredCsv}
-              disabled={summary.totalRows === 0}
-            >
-              Download filtered CSV
+            <label className="flex items-center gap-2 text-xs">
+              <input
+                type="checkbox"
+                checked={missingOnly}
+                onChange={(e: ChangeEvent<HTMLInputElement>) => setMissingOnly(e.target.checked)}
+              />
+              <span className="text-foreground/70">Show missing only</span>
+            </label>
+            <Button variant="ghost" size="sm" onClick={resetFilters} disabled={!filtersActive}>
+              Reset
             </Button>
           </div>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[760px] text-sm">
-              <thead className="border-t bg-foreground/5 text-left text-xs text-foreground/70">
-                <tr>
-                  <th className="px-3 py-2">Role</th>
-                  <th className="px-3 py-2">Name</th>
-                  <th className="px-3 py-2 text-right">Required</th>
-                  <th className="px-3 py-2 text-right">Completed</th>
-                  <th className="px-3 py-2 text-right">Missing</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {filteredRows.map((r) => {
-                  const deficit = parseMinutesValue(r.missing_hours) ?? 0;
-                  const highlight = deficit > 0;
-                  return (
-                    <tr key={`${r.user_id}:${r.week_start}`} className={highlight ? "bg-red-500/5" : undefined}>
-                    <td className="px-3 py-2">{r.role || "—"}</td>
-                    <td className="px-3 py-2">{r.name || "—"}</td>
-                    <td className="px-3 py-2 text-right font-mono">{formatHoursValue(r.required_hours)}</td>
-                    <td className="px-3 py-2 text-right font-mono">{formatHoursValue(r.total_hours)}</td>
-                    <td className="px-3 py-2 text-right font-mono">{formatHoursValue(r.missing_hours)}</td>
-                  </tr>
-                  );
-                })}
-                {filteredRows.length === 0 ? (
-                  <tr>
-                    <td className="px-3 py-3 text-sm text-foreground/60" colSpan={5}>
-                      {filtersActive ? "No rows match the current filters." : "No rows returned."}
-                    </td>
-                  </tr>
-                ) : null}
-              </tbody>
-            </table>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => void handleCopyEmails("missing")} disabled={summary.total === 0}>
+              Copy missing emails
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => void handleCopyEmails("all")} disabled={summary.total === 0}>
+              Copy all emails
+            </Button>
           </div>
         </div>
-      ) : null}
+      </div>
+
+      {actionStatus ? <div className="text-xs text-foreground/70">{actionStatus}</div> : null}
+      {status ? <div className="text-sm text-foreground/70">{status}</div> : null}
+
+      <div className="space-y-4">
+        {groups.map((g) => (
+          <div key={g.key} className="rounded-md border">
+            <div className="flex items-center justify-between gap-3 border-b bg-foreground/5 px-3 py-2">
+              <div className="text-sm font-medium">{groupLabel(g.key)}</div>
+              <div className="text-xs text-foreground/60">{g.rows.length} people</div>
+            </div>
+
+            <div className="divide-y">
+              {g.rows.map((r) => {
+                const required = parseHoursValue(r.required_hours);
+                const completed = parseHoursValue(r.total_hours);
+                const missingH = parseHoursValue(r.missing_hours);
+                const pct = required > 0 ? Math.max(0, Math.min(1, completed / required)) : 0;
+                const statusKey = reportStatus({
+                  required_hours: required,
+                  total_hours: completed,
+                  missing_hours: missingH,
+                });
+                const pill = statusPill(statusKey);
+                const needsReview = Number.parseInt(String(r.needs_review_sessions ?? 0), 10) || 0;
+
+                return (
+                  <div key={`${r.user_id}:${r.week_start}`} className={statusKey === "complete" ? "bg-transparent" : "bg-red-500/5"}>
+                    <div className="grid gap-2 px-3 py-3 sm:grid-cols-[1.4fr_1fr_0.8fr] sm:items-center">
+                      <div className="space-y-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-sm font-medium">{r.role || "—"}</span>
+                          <span className="text-xs text-foreground/60">•</span>
+                          <span className="text-sm">{r.name || "—"}</span>
+                          <span className={`rounded-full px-2 py-0.5 text-xs ${pill.className}`}>{pill.label}</span>
+                          {needsReview > 0 ? (
+                            <span className="rounded-full bg-indigo-500/15 px-2 py-0.5 text-xs text-indigo-700 dark:text-indigo-300">
+                              Needs review ({needsReview})
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="text-xs text-foreground/60">
+                          Required {formatHours(required)} • Completed {formatHours(completed)} • Missing {formatHours(missingH)}
+                        </div>
+                      </div>
+
+                      <div className="space-y-1">
+                        <div className="h-2 w-full overflow-hidden rounded-full bg-foreground/10">
+                          <div
+                            className={statusKey === "complete" ? "h-full bg-emerald-500" : "h-full bg-amber-500"}
+                            style={{ width: `${Math.round(pct * 100)}%` }}
+                          />
+                        </div>
+                        <div className="text-xs text-foreground/60">{Math.round(pct * 100)}% complete</div>
+                      </div>
+
+                      <div className="flex justify-between gap-3 text-xs sm:justify-end">
+                        <div className="text-right">
+                          <div className="text-[11px] uppercase tracking-wide text-foreground/60">Missing</div>
+                          <div className="font-mono text-sm">{formatHours(missingH)}</div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-[11px] uppercase tracking-wide text-foreground/60">Completed</div>
+                          <div className="font-mono text-sm">{formatHours(completed)}</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+
+              {g.rows.length === 0 ? (
+                <div className="px-3 py-3 text-sm text-foreground/60">
+                  {filtersActive ? "No rows match the current filters." : "No rows returned."}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
+
