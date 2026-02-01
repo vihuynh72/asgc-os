@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 
-import { getUserIdByEmail, isEmailAllowlisted, normalizeKioskEmail } from "../_kiosk";
+import { getAllowlistDecision, getUserIdByEmail, normalizeKioskEmail } from "../_kiosk";
 
 export const runtime = "nodejs";
 
@@ -20,9 +20,10 @@ export async function GET(request: NextRequest) {
   const admin = getSupabaseAdminClient();
 
   try {
-    const allowlisted = await isEmailAllowlisted(admin, email);
-    if (!allowlisted) {
-      return NextResponse.json({ error: "email_not_allowed" }, { status: 403 });
+    const decision = await getAllowlistDecision(admin, email);
+    if (!decision.allowed) {
+      const status = decision.reason === "email_blocked" ? 403 : 403;
+      return NextResponse.json({ error: decision.reason }, { status });
     }
 
     const userId = await getUserIdByEmail(admin, email);
