@@ -29,7 +29,7 @@ function friendlyError(message: string): string {
     case "office_location_not_configured":
       return "Office location is not fully configured yet (lat/lon/radii missing).";
     case "weekend_not_allowed":
-      return "Office hours are only available Monday through Friday.";
+      return "Office hours aren’t enabled today.";
     default:
       return message || "Something went wrong.";
   }
@@ -205,7 +205,7 @@ export default function OfficeHoursCheckInPage() {
             Check-in is only available inside the office geofence. If you are offsite, contact an admin for an exception.
           </div>
           <div className="mt-2 text-xs text-foreground/70">
-            Office hours are tracked Monday through Friday.
+            Office hours are tracked on enabled days.
           </div>
 
           <div className="mt-4 flex flex-wrap gap-2">

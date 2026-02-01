@@ -130,7 +130,10 @@ export async function POST(request: NextRequest) {
     }
 
     const geo = await getOfficeGeo(admin);
-    if (isWeekendInTimeZone(new Date(), geo.timezone)) {
+    const now = new Date();
+    const { data: allowedData, error: allowedErr } = await admin.rpc("is_office_hours_day_allowed", { _ts: now.toISOString() });
+    const allowed = !allowedErr ? !!allowedData : !isWeekendInTimeZone(now, geo.timezone);
+    if (!allowed) {
       return NextResponse.json({ error: "weekend_not_allowed" }, { status: 400 });
     }
     const dist = haversineMeters(latParsed, lonParsed, geo.lat, geo.lon);

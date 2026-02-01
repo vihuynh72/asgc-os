@@ -1,6 +1,10 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 import { requireFullAdminOrEvp, requireAnyAdminRead } from "@/lib/adminAuth";
+import {
+  normalizeOfficeHoursAllowedWeekdays,
+  normalizeOfficeHoursExtraAllowedDates,
+} from "@/lib/office-hours-availability.mjs";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
@@ -24,6 +28,9 @@ type OfficeConfigRow = {
   weekly_hours_reminder_enabled: boolean;
   weekly_hours_reminder_weekday: number;
   weekly_hours_reminder_time_local: string;
+  office_hours_allow_weekends: boolean;
+  office_hours_allowed_weekdays: number[];
+  office_hours_extra_allowed_dates: string[];
 };
 
 function isTimeString(value: unknown): value is string {
@@ -34,7 +41,7 @@ async function ensureOfficeConfigRow(admin: ReturnType<typeof getSupabaseAdminCl
   const { data: existing, error: existingErr } = await admin
     .from("office_config")
     .select(
-      "primary_office_location_id,quiet_hours_enabled,quiet_hours_start_local,quiet_hours_end_local,weekly_hours_reminder_enabled,weekly_hours_reminder_weekday,weekly_hours_reminder_time_local",
+      "primary_office_location_id,quiet_hours_enabled,quiet_hours_start_local,quiet_hours_end_local,weekly_hours_reminder_enabled,weekly_hours_reminder_weekday,weekly_hours_reminder_time_local,office_hours_allow_weekends,office_hours_allowed_weekdays,office_hours_extra_allowed_dates",
     )
     .eq("id", true)
     .maybeSingle();
@@ -56,7 +63,7 @@ async function ensureOfficeConfigRow(admin: ReturnType<typeof getSupabaseAdminCl
     .from("office_config")
     .insert({ id: true, primary_office_location_id: office.id })
     .select(
-      "primary_office_location_id,quiet_hours_enabled,quiet_hours_start_local,quiet_hours_end_local,weekly_hours_reminder_enabled,weekly_hours_reminder_weekday,weekly_hours_reminder_time_local",
+      "primary_office_location_id,quiet_hours_enabled,quiet_hours_start_local,quiet_hours_end_local,weekly_hours_reminder_enabled,weekly_hours_reminder_weekday,weekly_hours_reminder_time_local,office_hours_allow_weekends,office_hours_allowed_weekdays,office_hours_extra_allowed_dates",
     )
     .single();
 
@@ -140,6 +147,30 @@ export async function PUT(request: NextRequest) {
     configPatch.weekly_hours_reminder_time_local = body.weekly_hours_reminder_time_local;
   }
 
+  if (typeof body.office_hours_allow_weekends === "boolean") {
+    configPatch.office_hours_allow_weekends = body.office_hours_allow_weekends;
+  }
+
+  if (Array.isArray(body.office_hours_allowed_weekdays)) {
+    try {
+      configPatch.office_hours_allowed_weekdays = normalizeOfficeHoursAllowedWeekdays(
+        body.office_hours_allowed_weekdays.map((v) => (typeof v === "number" ? v : Number.NaN)),
+      );
+    } catch {
+      return NextResponse.json({ error: "invalid_weekdays" }, { status: 400 });
+    }
+  }
+
+  if (Array.isArray(body.office_hours_extra_allowed_dates)) {
+    try {
+      configPatch.office_hours_extra_allowed_dates = normalizeOfficeHoursExtraAllowedDates(
+        body.office_hours_extra_allowed_dates.map((v) => (typeof v === "string" ? v : "")),
+      );
+    } catch {
+      return NextResponse.json({ error: "invalid_dates" }, { status: 400 });
+    }
+  }
+
   if (Object.keys(officePatch).length > 0) {
     const { error: patchErr } = await admin.from("office_locations").update(officePatch).eq("id", existing.primary_office_location_id);
     if (patchErr) return NextResponse.json({ error: patchErr.message }, { status: 500 });
@@ -169,7 +200,7 @@ export async function PUT(request: NextRequest) {
   const { data: config, error: configErr } = await admin
     .from("office_config")
     .select(
-      "primary_office_location_id,quiet_hours_enabled,quiet_hours_start_local,quiet_hours_end_local,weekly_hours_reminder_enabled,weekly_hours_reminder_weekday,weekly_hours_reminder_time_local",
+      "primary_office_location_id,quiet_hours_enabled,quiet_hours_start_local,quiet_hours_end_local,weekly_hours_reminder_enabled,weekly_hours_reminder_weekday,weekly_hours_reminder_time_local,office_hours_allow_weekends,office_hours_allowed_weekdays,office_hours_extra_allowed_dates",
     )
     .eq("id", true)
     .single();

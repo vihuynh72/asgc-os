@@ -49,7 +49,7 @@ function friendlyError(code: string): string {
     case "location_incomplete":
       return "Location data is incomplete.";
     case "weekend_not_allowed":
-      return "Office hours are only available Monday through Friday.";
+      return "Office hours aren’t enabled today.";
     case "photo_required":
       return "A selfie is required to check in.";
     case "invalid_photo_type":
@@ -703,7 +703,7 @@ export default function OfficeHoursKioskPage() {
                         {loading ? "Checking in…" : "Check in"}
                       </Button>
                       <div className="text-[11px] text-foreground/50">
-                        Selfies are retained for 30 days. Office hours are tracked Monday–Friday.
+                        Selfies are retained for 30 days. Office hours are tracked on enabled days.
                       </div>
                     </div>
                   </div>

@@ -25,6 +25,9 @@ type OfficeConfigRow = {
   weekly_hours_reminder_enabled: boolean;
   weekly_hours_reminder_weekday: number;
   weekly_hours_reminder_time_local: string;
+  office_hours_allow_weekends: boolean;
+  office_hours_allowed_weekdays: number[];
+  office_hours_extra_allowed_dates: string[];
 };
 
 type OfficeLocationRow = {
@@ -87,7 +90,7 @@ async function ensureOfficeConfigRow(admin: ReturnType<typeof getSupabaseAdminCl
   const { data: existing, error: existingErr } = await admin
     .from("office_config")
     .select(
-      "primary_office_location_id,quiet_hours_enabled,quiet_hours_start_local,quiet_hours_end_local,weekly_hours_reminder_enabled,weekly_hours_reminder_weekday,weekly_hours_reminder_time_local",
+      "primary_office_location_id,quiet_hours_enabled,quiet_hours_start_local,quiet_hours_end_local,weekly_hours_reminder_enabled,weekly_hours_reminder_weekday,weekly_hours_reminder_time_local,office_hours_allow_weekends,office_hours_allowed_weekdays,office_hours_extra_allowed_dates",
     )
     .eq("id", true)
     .maybeSingle();
@@ -109,7 +112,7 @@ async function ensureOfficeConfigRow(admin: ReturnType<typeof getSupabaseAdminCl
     .from("office_config")
     .insert({ id: true, primary_office_location_id: office.id })
     .select(
-      "primary_office_location_id,quiet_hours_enabled,quiet_hours_start_local,quiet_hours_end_local,weekly_hours_reminder_enabled,weekly_hours_reminder_weekday,weekly_hours_reminder_time_local",
+      "primary_office_location_id,quiet_hours_enabled,quiet_hours_start_local,quiet_hours_end_local,weekly_hours_reminder_enabled,weekly_hours_reminder_weekday,weekly_hours_reminder_time_local,office_hours_allow_weekends,office_hours_allowed_weekdays,office_hours_extra_allowed_dates",
     )
     .single();
 
