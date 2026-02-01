@@ -44,7 +44,7 @@ function friendlyError(code: string): string {
     case "weekend_not_allowed":
       return "Office hours are only available Monday through Friday.";
     case "photo_required":
-      return "A photo is required to check in.";
+      return "A selfie is required to check in.";
     case "invalid_photo_type":
       return "Unsupported photo type. Use JPG, PNG, or WebP.";
     case "photo_too_large":
@@ -125,8 +125,9 @@ function SelfieCapture({
 }) {
   const [mode, setMode] = useState<"camera" | "file">(() => (supportsCameraCapture() ? "camera" : "file"));
   const [cameraError, setCameraError] = useState<string | null>(null);
-  const [starting, setStarting] = useState(false);
+  const [cameraState, setCameraState] = useState<"idle" | "starting" | "ready">("idle");
   const [capturing, setCapturing] = useState(false);
+  const [videoReady, setVideoReady] = useState(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
@@ -135,6 +136,8 @@ function SelfieCapture({
     streamRef.current = null;
     if (stream) stream.getTracks().forEach((t) => t.stop());
     if (videoRef.current) videoRef.current.srcObject = null;
+    setVideoReady(false);
+    setCameraState("idle");
   }, []);
 
   const start = useCallback(async () => {
@@ -142,7 +145,8 @@ function SelfieCapture({
       setCameraError("Camera is not supported on this device.");
       return;
     }
-    setStarting(true);
+    setCameraState("starting");
+    setVideoReady(false);
     setCameraError(null);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -153,27 +157,26 @@ function SelfieCapture({
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         await videoRef.current.play().catch(() => null);
+        setCameraState("ready");
       }
     } catch {
       setCameraError("Camera permission is blocked. Use upload instead.");
       stop();
       setMode("file");
-    } finally {
-      setStarting(false);
     }
   }, [stop]);
 
   useEffect(() => {
-    if (mode !== "camera" || value || disabled) {
-      stop();
-      return;
-    }
-    void start();
+    if (mode !== "camera" || value || disabled) stop();
     return () => stop();
   }, [disabled, mode, start, stop, value]);
 
   async function capture() {
     if (!videoRef.current) return;
+    if (!videoReady || (videoRef.current.videoWidth ?? 0) <= 0) {
+      setCameraError("Camera is not ready yet. Please wait a moment.");
+      return;
+    }
     setCapturing(true);
     setCameraError(null);
     try {
@@ -187,24 +190,33 @@ function SelfieCapture({
     }
   }
 
+  const canUseCamera = supportsCameraCapture();
+
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
         <div className="text-sm font-medium">Selfie</div>
-        <div className="flex items-center gap-2">
+        <div className="inline-flex overflow-hidden rounded-md border">
           <button
             type="button"
-            className="text-xs text-foreground/70 hover:text-foreground disabled:opacity-50"
-            onClick={() => setMode("camera")}
-            disabled={!supportsCameraCapture() || disabled}
+            className={`px-3 py-1 text-xs ${mode === "camera" ? "bg-foreground/5 text-foreground" : "text-foreground/70 hover:text-foreground"} disabled:opacity-50`}
+            onClick={() => {
+              setCameraError(null);
+              setMode("camera");
+              stop();
+            }}
+            disabled={!canUseCamera || disabled}
           >
             Camera
           </button>
-          <span className="text-xs text-foreground/30">|</span>
           <button
             type="button"
-            className="text-xs text-foreground/70 hover:text-foreground disabled:opacity-50"
-            onClick={() => setMode("file")}
+            className={`px-3 py-1 text-xs ${mode === "file" ? "bg-foreground/5 text-foreground" : "text-foreground/70 hover:text-foreground"} disabled:opacity-50`}
+            onClick={() => {
+              setCameraError(null);
+              setMode("file");
+              stop();
+            }}
             disabled={disabled}
           >
             Upload
@@ -223,21 +235,56 @@ function SelfieCapture({
         </div>
       ) : mode === "camera" ? (
         <div className="space-y-2">
-          <div className="relative overflow-hidden rounded-md border bg-black">
-            <video ref={videoRef} playsInline muted className="aspect-[3/4] w-full object-cover" />
-            {starting ? (
-              <div className="absolute inset-0 flex items-center justify-center bg-black/40 text-sm text-white">
-                Starting camera…
+          {cameraState === "ready" ? (
+            <>
+              <div className="relative overflow-hidden rounded-md border bg-black">
+                <video
+                  ref={videoRef}
+                  playsInline
+                  muted
+                  onLoadedMetadata={() => setVideoReady(true)}
+                  onCanPlay={() => setVideoReady(true)}
+                  className="aspect-[4/5] w-full max-h-[360px] object-cover"
+                />
+                {!videoReady ? (
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/40 text-sm text-white">
+                    Warming up camera…
+                  </div>
+                ) : (
+                  <div className="absolute bottom-2 left-2 rounded-full bg-black/50 px-2 py-1 text-[11px] text-white">
+                    Center your face in the frame
+                  </div>
+                )}
               </div>
-            ) : null}
-          </div>
-          <Button type="button" className="h-12 w-full text-base" onClick={() => void capture()} disabled={disabled || starting || capturing}>
-            {capturing ? "Capturing…" : "Take selfie"}
-          </Button>
+              <Button
+                type="button"
+                className="h-12 w-full text-base"
+                onClick={() => void capture()}
+                disabled={disabled || capturing || !videoReady}
+              >
+                {capturing ? "Capturing…" : "Take selfie"}
+              </Button>
+            </>
+          ) : (
+            <div className="space-y-2">
+              <div className="rounded-md border bg-foreground/[0.02] p-3 text-sm text-foreground/80">
+                Tap below to enable the front camera and take a quick selfie.
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                className="h-12 w-full text-base"
+                onClick={() => void start()}
+                disabled={disabled || !canUseCamera || cameraState === "starting"}
+              >
+                {cameraState === "starting" ? "Starting camera…" : "Enable camera"}
+              </Button>
+              <div className="text-xs text-foreground/70">
+                If camera permission is blocked, switch to Upload.
+              </div>
+            </div>
+          )}
           {cameraError ? <div className="text-xs text-red-600">{cameraError}</div> : null}
-          <div className="text-xs text-foreground/70">
-            Tip: hold your phone at eye level and make sure your face is visible.
-          </div>
         </div>
       ) : (
         <div className="space-y-2">
@@ -429,12 +476,17 @@ export default function OfficeHoursKioskPage() {
   return (
     <PageShell
       title="Office Hours (Kiosk)"
-      description="Enter your ASGC email, take a selfie, allow location, then tap Check in."
-      containerClassName="max-w-md"
+      containerClassName="max-w-md py-4"
+      showHeader={false}
     >
       <div className="space-y-4">
         <div className="rounded-lg border border-foreground/10 p-4">
           <div className="space-y-3">
+            <div>
+              <div className="text-xl font-semibold tracking-tight">Office Hours Kiosk</div>
+              <div className="text-xs text-foreground/70">Email → selfie → location → check in (about 5 seconds)</div>
+            </div>
+
             <label className="space-y-1 text-sm">
               <div className="text-foreground/70">ASGC email</div>
               <input
@@ -484,7 +536,7 @@ export default function OfficeHoursKioskPage() {
                   Office hour credit requires manual check out.
                 </div>
               </div>
-            ) : (
+            ) : emailValid ? (
               <div className="space-y-3">
                 <SelfieCapture value={photo} disabled={loading || !emailValid} onChange={setPhoto} />
 
@@ -508,6 +560,10 @@ export default function OfficeHoursKioskPage() {
                 <div className="text-xs text-foreground/70">
                   Photos are retained for 30 days. Office hours are tracked Monday through Friday.
                 </div>
+              </div>
+            ) : (
+              <div className="rounded-md border bg-foreground/[0.02] p-3 text-xs text-foreground/70">
+                After entering your email, you’ll be asked to take a selfie and allow location.
               </div>
             )}
 
