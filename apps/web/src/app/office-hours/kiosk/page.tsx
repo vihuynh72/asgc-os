@@ -406,6 +406,7 @@ export default function OfficeHoursKioskPage() {
   const [photo, setPhoto] = useState<File | null>(null);
   const [status, setStatus] = useState<KioskStatus | null>(null);
   const [statusLoading, setStatusLoading] = useState(false);
+  const statusAbortRef = useRef<AbortController | null>(null);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -460,9 +461,15 @@ export default function OfficeHoursKioskPage() {
        return;
      }
  
+     setError(null);
      setStatusLoading(true);
+     statusAbortRef.current?.abort();
+     const controller = new AbortController();
+     statusAbortRef.current = controller;
      try {
-       const res = await fetch(`/api/office-hours/kiosk/status?email=${encodeURIComponent(emailNormalized)}`);
+       const res = await fetch(`/api/office-hours/kiosk/status?email=${encodeURIComponent(emailNormalized)}`, {
+         signal: controller.signal,
+       });
        const json = (await res.json().catch(() => null)) as { error?: string } | KioskStatus | null;
  
        if (!res.ok) {
@@ -472,8 +479,11 @@ export default function OfficeHoursKioskPage() {
        }
  
        setStatus(json as KioskStatus);
+       setError(null);
      } finally {
-       setStatusLoading(false);
+       if (statusAbortRef.current === controller) {
+         setStatusLoading(false);
+       }
      }
   }, [emailNormalized, emailValid]);
 
@@ -491,6 +501,13 @@ export default function OfficeHoursKioskPage() {
     }, 300);
     return () => window.clearTimeout(id);
   }, [emailValid, loadStatus]);
+
+  useEffect(() => {
+    return () => {
+      statusAbortRef.current?.abort();
+      statusAbortRef.current = null;
+    };
+  }, []);
 
   const openSession = status?.open_session ?? null;
 
