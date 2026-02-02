@@ -8,6 +8,7 @@ import { POST_AUTH_REDIRECT_COOKIE } from "@/lib/redirects";
 const PROTECTED_PREFIXES = [
   "/dashboard",
   "/account",
+  "/mfa",
   "/office-hours",
   "/tasks",
   "/meetings",
@@ -19,6 +20,7 @@ const PROTECTED_PREFIXES = [
 
 const UNPROTECTED_PREFIXES = ["/office-hours/kiosk"];
 const KIOSK_FALLBACK_PREFIXES = ["/office-hours/check-in", "/office-hours/check-out"];
+const MFA_EXEMPT_PREFIXES = ["/mfa", "/auth", "/login", "/unauthorized"];
 
 export async function middleware(request: NextRequest) {
   if (!hasPublicSupabaseEnv()) {
@@ -148,19 +150,50 @@ export async function middleware(request: NextRequest) {
       });
     }
   } else if (pathname.startsWith("/admin")) {
-    // Use get_admin_tier for tiered admin access (full, partial, read-only)
-    const { data: tierData, error: tierErr } = await supabase.rpc("get_admin_tier", { _uid: user.id });
+    // Require 2FA (AAL2) before allowing any admin access checks.
+    const isMfaExempt = MFA_EXEMPT_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
+    if (!isMfaExempt) {
+      const { data: aalData, error: aalErr } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+      const currentLevel = (aalData?.currentLevel as string | undefined) ?? null;
+      if (aalErr || currentLevel !== "aal2") {
+        const redirectUrl = request.nextUrl.clone();
+        redirectUrl.pathname = "/mfa";
+        redirectUrl.search = "";
+        redirectUrl.searchParams.set("redirectTo", requestedPath);
+        response = NextResponse.redirect(redirectUrl);
+      }
+    }
 
-    const tier = tierData?.tier as string | null;
+    if (response.headers.get("location")) {
+      // Already redirected to /mfa.
+    } else {
+      // Use get_admin_tier for tiered admin access (full, partial, read-only)
+      const { data: tierData, error: tierErr } = await supabase.rpc("get_admin_tier", { _uid: user.id });
 
-    // Allow access if user has any admin tier (full, partial, or read-only)
-    if (tierErr || !tier) {
-      const redirectUrl = request.nextUrl.clone();
-      redirectUrl.pathname = "/unauthorized";
-      redirectUrl.search = "";
-      redirectUrl.searchParams.set("reason", "admin");
-      redirectUrl.searchParams.set("redirectTo", requestedPath);
-      response = NextResponse.redirect(redirectUrl);
+      const tier = tierData?.tier as string | null;
+
+      // Allow access if user has any admin tier (full, partial, or read-only)
+      if (tierErr || !tier) {
+        const redirectUrl = request.nextUrl.clone();
+        redirectUrl.pathname = "/unauthorized";
+        redirectUrl.search = "";
+        redirectUrl.searchParams.set("reason", "admin");
+        redirectUrl.searchParams.set("redirectTo", requestedPath);
+        response = NextResponse.redirect(redirectUrl);
+      }
+    }
+  } else if (isProtected) {
+    const isMfaExempt = MFA_EXEMPT_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
+    if (!isMfaExempt) {
+      const { data: aalData, error: aalErr } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+      const currentLevel = (aalData?.currentLevel as string | undefined) ?? null;
+      if (aalErr || currentLevel !== "aal2") {
+        const redirectUrl = request.nextUrl.clone();
+        redirectUrl.pathname = "/mfa";
+        redirectUrl.search = "";
+        redirectUrl.searchParams.set("redirectTo", requestedPath);
+        response = NextResponse.redirect(redirectUrl);
+      }
     }
   }
 
