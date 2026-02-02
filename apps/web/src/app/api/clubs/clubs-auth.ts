@@ -23,6 +23,21 @@ async function getSupabaseForRequest(request: NextRequest) {
   });
 }
 
+async function requireMfaAal2(
+  supabase: ReturnType<typeof createServerClient>,
+): Promise<{ ok: true } | { ok: false; response: NextResponse }> {
+  try {
+    const { data, error } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+    const currentLevel = (data?.currentLevel as string | undefined) ?? null;
+    if (error || currentLevel !== "aal2") {
+      return { ok: false, response: NextResponse.json({ error: "mfa_required" }, { status: 401 }) };
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false, response: NextResponse.json({ error: "mfa_required" }, { status: 401 }) };
+  }
+}
+
 export async function requireClubsAuth(
   request: NextRequest,
 ): Promise<{ ok: true; auth: ClubsAuth } | { ok: false; response: NextResponse }> {
@@ -35,6 +50,9 @@ export async function requireClubsAuth(
   if (!user) {
     return { ok: false, response: NextResponse.json({ error: "unauthorized" }, { status: 401 }) };
   }
+
+  const mfa = await requireMfaAal2(supabase);
+  if (!mfa.ok) return mfa;
 
   const { data: isAdmin, error } = await supabase.rpc("is_admin", { _uid: user.id });
   if (error) {
