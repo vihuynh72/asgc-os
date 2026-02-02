@@ -766,7 +766,7 @@ export default function OfficeHoursKioskPage() {
                 </label>
 
                 {emailHint || statusLoading ? (
-                  <div className="flex items-center justify-between text-xs text-foreground/60">
+                  <div className="flex items-center justify-between pt-1 text-xs text-foreground/60">
                     <span>{emailHint ?? ""}</span>
                     {statusLoading ? <span>Checking…</span> : null}
                   </div>
