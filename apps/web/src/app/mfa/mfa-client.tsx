@@ -3,6 +3,7 @@
 import QRCode from "qrcode";
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import Image from "next/image";
 
 import { Button } from "@/components/ui/button";
 import { safePostAuthRedirectPath } from "@/lib/redirects";
@@ -16,6 +17,8 @@ type TotpFactor = {
   created_at: string | null;
 };
 
+type TotpList = TotpFactor[];
+
 type EnrollmentState = {
   factorId: string;
   uri: string;
@@ -27,24 +30,21 @@ function safeString(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
-function pickTotpFactor(raw: unknown): TotpFactor | null {
+function readTotpFactors(raw: unknown): TotpList {
   const obj = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : null;
-  if (!obj) return null;
+  if (!obj) return [];
 
   const totp = obj.totp;
-  if (!Array.isArray(totp) || totp.length === 0) return null;
+  if (!Array.isArray(totp) || totp.length === 0) return [];
 
-  const first = typeof totp[0] === "object" && totp[0] !== null ? (totp[0] as Record<string, unknown>) : null;
-  if (!first) return null;
-
-  const id = safeString(first.id);
-  if (!id) return null;
-
-  return {
-    id,
-    friendly_name: typeof first.friendly_name === "string" ? first.friendly_name : null,
-    created_at: typeof first.created_at === "string" ? first.created_at : null,
-  };
+  return totp
+    .map((row) => (typeof row === "object" && row !== null ? (row as Record<string, unknown>) : null))
+    .map((row) => ({
+      id: safeString(row?.id),
+      friendly_name: typeof row?.friendly_name === "string" ? row.friendly_name : null,
+      created_at: typeof row?.created_at === "string" ? row.created_at : null,
+    }))
+    .filter((row) => row.id);
 }
 
 export function MfaClient() {
@@ -54,7 +54,11 @@ export function MfaClient() {
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [message, setMessage] = useState<string | null>(null);
   const [currentLevel, setCurrentLevel] = useState<AssuranceLevel | null>(null);
-  const [totpFactor, setTotpFactor] = useState<TotpFactor | null>(null);
+  const [totpFactors, setTotpFactors] = useState<TotpList>([]);
+  const [selectedFactorId, setSelectedFactorId] = useState<string>("");
+  const [deviceName, setDeviceName] = useState("");
+  const [isRequestingRecovery, setIsRequestingRecovery] = useState(false);
+  const [recoveryRequested, setRecoveryRequested] = useState(false);
 
   const [enrollment, setEnrollment] = useState<EnrollmentState | null>(null);
   const [code, setCode] = useState("");
@@ -78,11 +82,17 @@ export function MfaClient() {
       if (aalError) throw aalError;
       if (factorsError) throw factorsError;
 
+      const factors = readTotpFactors(factorsData);
       setCurrentLevel((aalData?.currentLevel as AssuranceLevel | undefined) ?? null);
-      setTotpFactor(pickTotpFactor(factorsData));
+      setTotpFactors(factors);
+      setSelectedFactorId((prev) => {
+        if (prev && factors.some((f) => f.id === prev)) return prev;
+        return factors[0]?.id ?? "";
+      });
       setEnrollment(null);
       setChallengeId(null);
       setCode("");
+      setRecoveryRequested(false);
       setStatus("ready");
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Could not load authentication state.";
@@ -98,10 +108,12 @@ export function MfaClient() {
   async function onEnroll() {
     setIsEnrolling(true);
     setMessage(null);
+    setRecoveryRequested(false);
 
     try {
       const supabase = getSupabaseBrowserClient();
-      const { data, error } = await supabase.auth.mfa.enroll({ factorType: "totp" });
+      const friendlyName = deviceName.trim() || undefined;
+      const { data, error } = await supabase.auth.mfa.enroll({ factorType: "totp", friendlyName });
       if (error) throw error;
 
       const factorId = safeString((data as unknown as Record<string, unknown>)?.id);
@@ -144,11 +156,12 @@ export function MfaClient() {
   }
 
   async function onVerify() {
-    const factorId = enrollment?.factorId ?? totpFactor?.id ?? "";
+    const factorId = enrollment?.factorId ?? selectedFactorId;
     if (!factorId) return;
 
     setIsVerifying(true);
     setMessage(null);
+    setRecoveryRequested(false);
 
     try {
       const challenge = await ensureChallenge(factorId);
@@ -159,10 +172,34 @@ export function MfaClient() {
       await loadState();
       window.location.assign(redirectTo);
     } catch (e) {
+      setChallengeId(null);
       const msg = e instanceof Error ? e.message : "Could not verify the code.";
       setMessage(msg);
     } finally {
       setIsVerifying(false);
+    }
+  }
+
+  async function onRequestRecoveryEmail() {
+    setIsRequestingRecovery(true);
+    setMessage(null);
+    setRecoveryRequested(false);
+    try {
+      const res = await fetch(`/api/auth/mfa-recovery/request?redirectTo=${encodeURIComponent(redirectTo)}`, { method: "POST" });
+      if (!res.ok) {
+        const json = (await res.json().catch(() => null)) as { reason?: string } | null;
+        const reason =
+          json?.reason === "admin_recovery_requires_operator"
+            ? "Admin accounts must be recovered by an Advisor/President."
+            : "Could not send a recovery email. Please try again.";
+        setMessage(reason);
+        return;
+      }
+      setRecoveryRequested(true);
+    } catch {
+      setMessage("Could not send a recovery email. Please try again.");
+    } finally {
+      setIsRequestingRecovery(false);
     }
   }
 
@@ -188,98 +225,155 @@ export function MfaClient() {
 
   if (currentLevel === "aal2") {
     return (
-      <div className="space-y-3">
-        <p className="text-sm text-foreground/70">2FA is verified for this session.</p>
-        <Button type="button" onClick={() => window.location.assign(redirectTo)}>
-          Continue
-        </Button>
+      <div className="max-w-md">
+        <div className="rounded-xl border bg-background p-5 shadow-sm">
+          <p className="text-sm text-foreground/70">2FA verified.</p>
+          <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center">
+            <Button type="button" onClick={() => window.location.assign(redirectTo)}>
+              Continue
+            </Button>
+            <Button type="button" variant="outline" onClick={() => window.location.assign("/account")}>
+              Security settings
+            </Button>
+          </div>
+        </div>
       </div>
     );
   }
 
-  const hasEnrolledTotp = !!totpFactor || !!enrollment;
+  const hasEnrolledTotp = totpFactors.length > 0 || !!enrollment;
 
   return (
-    <div className="max-w-md space-y-4">
-      <p className="text-sm text-foreground/70">
-        Two-factor authentication is required to use ASGC OS.
-      </p>
-
-      {!hasEnrolledTotp ? (
-        <div className="space-y-3 rounded-md border p-4">
-          <div className="text-sm font-semibold">Step 1: Add an authenticator app</div>
+    <div className="max-w-md">
+      <div className="rounded-xl border bg-background p-5 shadow-sm">
+        <div className="space-y-1">
+          <div className="text-sm font-semibold">Verify your sign-in</div>
           <p className="text-sm text-foreground/70">
-            Use Google Authenticator, Microsoft Authenticator, 1Password, or any TOTP app.
+            Enter the 6‑digit code from your authenticator app.
           </p>
-          <Button type="button" disabled={isEnrolling} onClick={() => void onEnroll()}>
-            {isEnrolling ? "Starting…" : "Enable 2FA"}
-          </Button>
         </div>
-      ) : null}
 
-      {enrollment ? (
-        <div className="space-y-3 rounded-md border p-4">
-          <div className="text-sm font-semibold">Step 2: Scan the QR code</div>
-          <img
-            src={enrollment.qrDataUrl}
-            alt="Authenticator QR code"
-            className="h-48 w-48 rounded-md border bg-white p-2"
-          />
-          {enrollment.secret ? (
+        {!hasEnrolledTotp ? (
+          <div className="mt-5 space-y-4">
+            <div className="space-y-1">
+              <div className="text-sm font-medium">Device name (optional)</div>
+              <input
+                type="text"
+                value={deviceName}
+                onChange={(e) => setDeviceName(e.target.value)}
+                className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+                placeholder="iPhone, Android, Laptop…"
+              />
+            </div>
+
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <Button type="button" disabled={isEnrolling} onClick={() => void onEnroll()}>
+                {isEnrolling ? "Starting…" : "Set up 2FA"}
+              </Button>
+              <Button type="button" variant="outline" onClick={() => void onRequestRecoveryEmail()} disabled={isRequestingRecovery}>
+                {isRequestingRecovery ? "Sending…" : "Recover access"}
+              </Button>
+            </div>
+
             <p className="text-xs text-foreground/60">
-              Can’t scan? Enter this secret manually: <span className="font-mono">{enrollment.secret}</span>
+              Use Google Authenticator, Microsoft Authenticator, 1Password, or any TOTP app.
             </p>
-          ) : null}
-        </div>
-      ) : null}
-
-      {totpFactor && !enrollment ? (
-        <div className="space-y-2 rounded-md border p-4">
-          <div className="text-sm font-semibold">Verify 2FA</div>
-          <p className="text-sm text-foreground/70">
-            Enter the 6-digit code from your authenticator app.
-          </p>
-        </div>
-      ) : null}
-
-      {hasEnrolledTotp ? (
-        <div className="space-y-3 rounded-md border p-4">
-          <label className="space-y-1">
-            <div className="text-sm font-medium">Authenticator code</div>
-            <input
-              type="text"
-              inputMode="numeric"
-              autoComplete="one-time-code"
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
-              className="h-9 w-full rounded-md border bg-background px-3 text-sm"
-              placeholder="123456"
-            />
-          </label>
-
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-            <Button
-              type="button"
-              disabled={isChallenging || isVerifying || code.replace(/\s+/g, "").length < 6}
-              onClick={() => void onVerify()}
-            >
-              {isVerifying ? "Verifying…" : isChallenging ? "Preparing…" : "Verify & continue"}
-            </Button>
-            <Button type="button" variant="outline" onClick={() => void loadState()}>
-              Refresh
-            </Button>
           </div>
+        ) : null}
 
-          {message ? <p className="text-sm text-foreground/70">{message}</p> : null}
-        </div>
-      ) : null}
+        {enrollment ? (
+          <div className="mt-5 space-y-3">
+            <div className="text-sm font-medium">Scan the QR code</div>
+            <Image
+              src={enrollment.qrDataUrl}
+              alt="Authenticator QR code"
+              width={176}
+              height={176}
+              unoptimized
+              className="h-44 w-44 rounded-md border bg-white p-2"
+            />
+            {enrollment.secret ? (
+              <p className="text-xs text-foreground/60">
+                Can’t scan? Enter this secret: <span className="font-mono">{enrollment.secret}</span>
+              </p>
+            ) : null}
+          </div>
+        ) : null}
 
-      <form action="/auth/signout" method="post">
-        <Button type="submit" variant="ghost">
-          Sign out
-        </Button>
-      </form>
+        {hasEnrolledTotp ? (
+          <div className="mt-5 space-y-3">
+            {totpFactors.length > 1 && !enrollment ? (
+              <label className="space-y-1">
+                <div className="text-xs font-medium text-foreground/70">Authenticator device</div>
+                <select
+                  className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+                  value={selectedFactorId}
+                  onChange={(e) => setSelectedFactorId(e.target.value)}
+                >
+                  {totpFactors.map((f, idx) => (
+                    <option key={f.id} value={f.id}>
+                      {f.friendly_name?.trim() ? f.friendly_name : `Authenticator ${idx + 1}`}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+
+            <label className="space-y-1">
+              <div className="text-sm font-medium">Code</div>
+              <input
+                type="text"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                className="h-11 w-full rounded-md border bg-background px-3 text-base tracking-widest"
+                placeholder="123456"
+              />
+            </label>
+
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <Button
+                type="button"
+                disabled={isChallenging || isVerifying || code.replace(/\s+/g, "").length < 6}
+                onClick={() => void onVerify()}
+              >
+                {isVerifying ? "Verifying…" : isChallenging ? "Preparing…" : "Continue"}
+              </Button>
+              <Button type="button" variant="outline" onClick={() => void onRequestRecoveryEmail()} disabled={isRequestingRecovery}>
+                {isRequestingRecovery ? "Sending…" : "Recover access"}
+              </Button>
+              <Button type="button" variant="ghost" onClick={() => void loadState()}>
+                Refresh
+              </Button>
+            </div>
+
+            {recoveryRequested ? (
+              <p className="text-sm text-foreground/70">
+                Check your email for a recovery link. Open it to reset 2FA.
+              </p>
+            ) : null}
+
+            {message ? <p className="text-sm text-foreground/70">{message}</p> : null}
+
+            <p className="text-xs text-foreground/60">
+              Manage devices and add a backup authenticator in{" "}
+              <button type="button" className="underline" onClick={() => window.location.assign("/account")}>
+                Account settings
+              </button>
+              .
+            </p>
+          </div>
+        ) : null}
+      </div>
+
+      <div className="mt-3">
+        <form action="/auth/signout" method="post">
+          <Button type="submit" variant="ghost">
+            Sign out
+          </Button>
+        </form>
+      </div>
     </div>
   );
 }
-
