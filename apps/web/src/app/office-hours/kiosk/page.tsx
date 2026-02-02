@@ -623,15 +623,15 @@ export default function OfficeHoursKioskPage() {
         className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(900px_circle_at_20%_10%,rgba(16,185,129,0.22),transparent_55%),radial-gradient(800px_circle_at_80%_20%,rgba(59,130,246,0.18),transparent_55%),radial-gradient(900px_circle_at_50%_85%,rgba(236,72,153,0.10),transparent_60%)]"
       />
 
-      <div className="mx-auto flex min-h-dvh w-full max-w-xl items-center px-4 py-10 sm:px-6">
+      <div className="mx-auto flex min-h-dvh w-full max-w-xl items-start px-4 py-6 sm:items-center sm:px-6 sm:py-10">
         <div className="w-full">
-          <div className="rounded-[28px] border bg-background/70 p-6 shadow-2xl ring-1 ring-black/5 backdrop-blur-xl supports-[backdrop-filter]:bg-background/60">
+          <div className="rounded-[28px] border bg-background/70 p-5 shadow-2xl ring-1 ring-black/5 backdrop-blur-xl supports-[backdrop-filter]:bg-background/60 sm:p-6">
             <div className="flex items-start justify-between gap-4">
               <div className="space-y-2">
                 <div className="text-[11px] font-medium uppercase tracking-[0.2em] text-foreground/60">
                   Office Hours
                 </div>
-                <div className="text-3xl font-semibold tracking-tight">{headline}</div>
+                <div className="text-2xl font-semibold tracking-tight sm:text-3xl">{headline}</div>
                 <div className="text-sm text-foreground/60">{subhead}</div>
               </div>
               <div className="flex flex-col items-end gap-3 pt-2">
@@ -653,51 +653,97 @@ export default function OfficeHoursKioskPage() {
                   />
                 </div>
 
-                <div className="inline-flex overflow-hidden rounded-full border bg-background/50 shadow-sm ring-1 ring-black/5 backdrop-blur">
+                <div className="flex items-center gap-2">
                   <a
                     href="/"
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-foreground/80 hover:bg-foreground/5 hover:text-foreground"
-                    aria-label="Go to home page"
+                    className="inline-flex h-9 w-9 items-center justify-center rounded-full border bg-background/50 text-foreground/80 shadow-sm ring-1 ring-black/5 backdrop-blur hover:bg-foreground/5 hover:text-foreground sm:hidden"
+                    aria-label="Home"
+                    title="Home"
                   >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                       <path
                         d="M3 10.5L12 3l9 7.5V21a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1V10.5Z"
                         stroke="currentColor"
-                        strokeWidth="1.5"
+                        strokeWidth="1.6"
                         strokeLinejoin="round"
                       />
                     </svg>
-                    Home
                   </a>
-                  <span className="w-px bg-foreground/10" />
                   <a
                     href="/login"
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-foreground/80 hover:bg-foreground/5 hover:text-foreground"
-                    aria-label="Go to login"
+                    className="inline-flex h-9 w-9 items-center justify-center rounded-full border bg-background/50 text-foreground/80 shadow-sm ring-1 ring-black/5 backdrop-blur hover:bg-foreground/5 hover:text-foreground sm:hidden"
+                    aria-label="Sign in"
+                    title="Sign in"
                   >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                       <path
                         d="M15 3H19a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"
                         stroke="currentColor"
-                        strokeWidth="1.5"
+                        strokeWidth="1.6"
                         strokeLinecap="round"
                       />
                       <path
                         d="M10 17l5-5-5-5"
                         stroke="currentColor"
-                        strokeWidth="1.5"
+                        strokeWidth="1.6"
                         strokeLinecap="round"
                         strokeLinejoin="round"
                       />
                       <path
                         d="M15 12H3"
                         stroke="currentColor"
-                        strokeWidth="1.5"
+                        strokeWidth="1.6"
                         strokeLinecap="round"
                       />
                     </svg>
-                    Sign in
                   </a>
+
+                  <div className="hidden overflow-hidden rounded-full border bg-background/50 shadow-sm ring-1 ring-black/5 backdrop-blur sm:inline-flex">
+                    <a
+                      href="/"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-foreground/80 hover:bg-foreground/5 hover:text-foreground"
+                      aria-label="Go to home page"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                        <path
+                          d="M3 10.5L12 3l9 7.5V21a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1V10.5Z"
+                          stroke="currentColor"
+                          strokeWidth="1.5"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                      Home
+                    </a>
+                    <span className="w-px bg-foreground/10" />
+                    <a
+                      href="/login"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-foreground/80 hover:bg-foreground/5 hover:text-foreground"
+                      aria-label="Go to login"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                        <path
+                          d="M15 3H19a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"
+                          stroke="currentColor"
+                          strokeWidth="1.5"
+                          strokeLinecap="round"
+                        />
+                        <path
+                          d="M10 17l5-5-5-5"
+                          stroke="currentColor"
+                          strokeWidth="1.5"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                        <path
+                          d="M15 12H3"
+                          stroke="currentColor"
+                          strokeWidth="1.5"
+                          strokeLinecap="round"
+                        />
+                      </svg>
+                      Sign in
+                    </a>
+                  </div>
                 </div>
               </div>
             </div>
