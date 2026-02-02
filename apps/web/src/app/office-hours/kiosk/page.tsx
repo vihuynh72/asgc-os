@@ -634,22 +634,71 @@ export default function OfficeHoursKioskPage() {
                 <div className="text-3xl font-semibold tracking-tight">{headline}</div>
                 <div className="text-sm text-foreground/60">{subhead}</div>
               </div>
-              <div className="flex items-center gap-1.5 pt-2">
-                <span
-                  className={`h-2 w-2 rounded-full ${step !== "email" ? "bg-emerald-500" : "bg-foreground/20"}`}
-                />
-                <span
-                  className={`h-2 w-2 rounded-full ${
-                    step === "ready" || step === "checked_in"
-                      ? "bg-emerald-500"
-                      : step === "selfie"
-                        ? "bg-emerald-400"
-                        : "bg-foreground/20"
-                  }`}
-                />
-                <span
-                  className={`h-2 w-2 rounded-full ${step === "checked_in" ? "bg-emerald-500" : "bg-foreground/20"}`}
-                />
+              <div className="flex flex-col items-end gap-3 pt-2">
+                <div className="flex items-center gap-1.5">
+                  <span
+                    className={`h-2 w-2 rounded-full ${step !== "email" ? "bg-emerald-500" : "bg-foreground/20"}`}
+                  />
+                  <span
+                    className={`h-2 w-2 rounded-full ${
+                      step === "ready" || step === "checked_in"
+                        ? "bg-emerald-500"
+                        : step === "selfie"
+                          ? "bg-emerald-400"
+                          : "bg-foreground/20"
+                    }`}
+                  />
+                  <span
+                    className={`h-2 w-2 rounded-full ${step === "checked_in" ? "bg-emerald-500" : "bg-foreground/20"}`}
+                  />
+                </div>
+
+                <div className="inline-flex overflow-hidden rounded-full border bg-background/50 shadow-sm ring-1 ring-black/5 backdrop-blur">
+                  <a
+                    href="/"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-foreground/80 hover:bg-foreground/5 hover:text-foreground"
+                    aria-label="Go to home page"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                      <path
+                        d="M3 10.5L12 3l9 7.5V21a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1V10.5Z"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                    Home
+                  </a>
+                  <span className="w-px bg-foreground/10" />
+                  <a
+                    href="/login"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-foreground/80 hover:bg-foreground/5 hover:text-foreground"
+                    aria-label="Go to login"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                      <path
+                        d="M15 3H19a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                      />
+                      <path
+                        d="M10 17l5-5-5-5"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                      <path
+                        d="M15 12H3"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                      />
+                    </svg>
+                    Sign in
+                  </a>
+                </div>
               </div>
             </div>
 
