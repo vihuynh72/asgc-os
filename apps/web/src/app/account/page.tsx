@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { getSupabaseServerComponentClient } from "@/lib/supabaseServerComponent";
 
 import { ChangePasswordPanel } from "./change-password-panel";
+import { SecurityPanel } from "./security-panel";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -91,6 +92,8 @@ export default async function AccountPage() {
         </section>
 
         <ChangePasswordPanel />
+
+        <SecurityPanel />
 
         <div className="flex flex-wrap items-center gap-3">
           <Link className="text-sm underline" href="/dashboard">

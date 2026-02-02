@@ -8,6 +8,8 @@ import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
 
+const MFA_RECOVERY_COOKIE = "asgc.mfaRecovery";
+
 export async function GET(request: NextRequest) {
   const url = request.nextUrl;
   const code = url.searchParams.get("code");
@@ -132,5 +134,20 @@ export async function GET(request: NextRequest) {
     }
     response.cookies.set(POST_AUTH_REDIRECT_COOKIE, "", { path: "/", maxAge: 0 });
   }
+
+  // Special-case: password recovery links are used as an email-ownership proof step for MFA recovery.
+  // Route to /mfa/recover and set a short-lived cookie that authorizes the reset action.
+  if (type === "recovery") {
+    const next = redirectTo.startsWith("/mfa/recover") ? redirectTo : `/mfa/recover?redirectTo=${encodeURIComponent(redirectTo)}`;
+    response.headers.set("location", new URL(next, url.origin).toString());
+    response.cookies.set(MFA_RECOVERY_COOKIE, "1", {
+      path: "/",
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      maxAge: 60 * 10,
+    });
+  }
+
   return response;
 }
