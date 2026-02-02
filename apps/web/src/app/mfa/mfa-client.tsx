@@ -13,6 +13,7 @@ type AssuranceLevel = "aal1" | "aal2" | "aal3";
 
 type TotpFactor = {
   id: string;
+  status: "verified" | "unverified" | null;
   friendly_name: string | null;
   created_at: string | null;
 };
@@ -30,21 +31,47 @@ function safeString(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
+function safeStatus(value: unknown): "verified" | "unverified" | null {
+  if (value === "verified") return "verified";
+  if (value === "unverified") return "unverified";
+  return null;
+}
+
 function readTotpFactors(raw: unknown): TotpList {
   const obj = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : null;
   if (!obj) return [];
 
-  const totp = obj.totp;
-  if (!Array.isArray(totp) || totp.length === 0) return [];
+  // Supabase returns:
+  // - `all`: verified + unverified factors of all types
+  // - `totp`: verified totp factors only
+  // We must read `all` to avoid "hidden" unverified factors causing duplicates/lockouts.
+  const all = obj.all;
+  if (!Array.isArray(all) || all.length === 0) return [];
 
-  return totp
+  return all
     .map((row) => (typeof row === "object" && row !== null ? (row as Record<string, unknown>) : null))
     .map((row) => ({
       id: safeString(row?.id),
+      status: safeStatus(row?.status),
       friendly_name: typeof row?.friendly_name === "string" ? row.friendly_name : null,
       created_at: typeof row?.created_at === "string" ? row.created_at : null,
+      factor_type: safeString(row?.factor_type),
     }))
-    .filter((row) => row.id);
+    .filter((row) => row.id && row.factor_type === "totp")
+    .map(({ factor_type: _ignored, ...rest }) => rest);
+}
+
+function normalizeFriendlyName(value: string | null | undefined): string {
+  return (value ?? "").trim();
+}
+
+function generateDefaultFriendlyName(existing: TotpList): string {
+  const taken = new Set(existing.map((f) => normalizeFriendlyName(f.friendly_name)).filter(Boolean));
+  for (let i = 1; i <= 50; i += 1) {
+    const candidate = `Authenticator ${i}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+  return `Authenticator ${Date.now()}`;
 }
 
 export function MfaClient() {
@@ -112,7 +139,7 @@ export function MfaClient() {
 
     try {
       const supabase = getSupabaseBrowserClient();
-      const friendlyName = deviceName.trim() || undefined;
+      const friendlyName = deviceName.trim() || generateDefaultFriendlyName(totpFactors);
       const { data, error } = await supabase.auth.mfa.enroll({ factorType: "totp", friendlyName });
       if (error) throw error;
 
@@ -242,6 +269,7 @@ export function MfaClient() {
   }
 
   const hasEnrolledTotp = totpFactors.length > 0 || !!enrollment;
+  const hasVerifiedTotp = totpFactors.some((f) => f.status === "verified");
 
   return (
     <div className="max-w-md">
@@ -312,7 +340,8 @@ export function MfaClient() {
                 >
                   {totpFactors.map((f, idx) => (
                     <option key={f.id} value={f.id}>
-                      {f.friendly_name?.trim() ? f.friendly_name : `Authenticator ${idx + 1}`}
+                      {normalizeFriendlyName(f.friendly_name) ? normalizeFriendlyName(f.friendly_name) : `Authenticator ${idx + 1}`}
+                      {f.status === "unverified" ? " (pending)" : ""}
                     </option>
                   ))}
                 </select>
@@ -357,7 +386,7 @@ export function MfaClient() {
             {message ? <p className="text-sm text-foreground/70">{message}</p> : null}
 
             <p className="text-xs text-foreground/60">
-              Manage devices and add a backup authenticator in{" "}
+              {hasVerifiedTotp ? "Add a backup authenticator in " : "If you started setup earlier, verify the pending device here, or "}
               <button type="button" className="underline" onClick={() => window.location.assign("/account")}>
                 Account settings
               </button>
