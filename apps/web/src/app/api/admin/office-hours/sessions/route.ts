@@ -42,6 +42,11 @@ type OfficeHourSessionRow = {
   distance_m_at_checkout: number | null;
   kiosk_checkin_photo_path: string | null;
   kiosk_checkin_photo_deleted_at: string | null;
+  admin_closed_by: string | null;
+  admin_closed_at: string | null;
+  admin_closed_reason: string | null;
+  admin_adjusted_checkout_at: string | null;
+  admin_exclude_from_totals: boolean | null;
   created_at: string;
   updated_at: string;
 };
@@ -111,7 +116,7 @@ export async function GET(request: NextRequest) {
   let query = admin
     .from("office_hour_sessions")
     .select(
-      "id,user_id,office_location_id,checkin_at,checkout_at,status,within_radius,within_grace,distance_m_at_checkin,distance_m_at_checkout,kiosk_checkin_photo_path,kiosk_checkin_photo_deleted_at,created_at,updated_at",
+      "id,user_id,office_location_id,checkin_at,checkout_at,status,within_radius,within_grace,distance_m_at_checkin,distance_m_at_checkout,kiosk_checkin_photo_path,kiosk_checkin_photo_deleted_at,admin_closed_by,admin_closed_at,admin_closed_reason,admin_adjusted_checkout_at,admin_exclude_from_totals,created_at,updated_at",
     )
     .gte("checkin_at", boundsRow.start_ts)
     .lt("checkin_at", boundsRow.end_ts)
