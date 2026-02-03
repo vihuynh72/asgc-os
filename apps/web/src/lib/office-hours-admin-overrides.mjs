@@ -17,3 +17,14 @@ export function computeAdminOverrideMinutes(checkinAtIso, checkoutAtIso) {
   if (!Number.isFinite(checkinMs) || !Number.isFinite(checkoutMs)) return 0;
   return Math.max(Math.round((checkoutMs - checkinMs) / 60000), 0);
 }
+
+export function buildAdminOverrideNotification({ memberName, checkoutAtIso, excludeFromTotals, reason }) {
+  const labelName = memberName?.trim() ? `Hi ${memberName.trim()},` : "Hello,";
+  const checkoutLabel = checkoutAtIso ? new Date(checkoutAtIso).toISOString() : "the updated time";
+  const excludeLabel = excludeFromTotals ? "yes" : "no";
+
+  return {
+    subject: "Office hours updated",
+    text: `${labelName}\n\nAn admin updated your office hours session.\n\nCheckout time: ${checkoutLabel}\nExcluded from totals: ${excludeLabel}\nReason: ${reason}\n\nIf this looks incorrect, please contact an admin.\n`,
+  };
+}
