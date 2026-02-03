@@ -149,8 +149,6 @@ export async function GET(request: NextRequest) {
       .filter((id: unknown): id is string => typeof id === "string" && id.length > 0),
   );
 
-  const sessionsAllowlisted = sessions.filter((s) => allowlistedIds.has(s.user_id));
-
   const [{ data: profiles }, { data: privates }, { data: locations }] = await Promise.all([
     admin
       .from("profiles")
@@ -184,15 +182,22 @@ export async function GET(request: NextRequest) {
     locationById.set(row.id, { name: row.name, timezone: row.timezone ?? "" });
   }
 
-  const enriched = sessionsAllowlisted.map((s) => ({
-    ...s,
-    duration_minutes: computeDurationMinutes(s.checkin_at, s.checkout_at),
-    has_kiosk_selfie: !!s.kiosk_checkin_photo_path && !s.kiosk_checkin_photo_deleted_at,
-    user_display_name: displayNameById.get(s.user_id) ?? "",
-    user_email: emailById.get(s.user_id) ?? "",
-    office_location_name: s.office_location_id ? (locationById.get(s.office_location_id)?.name ?? "") : "",
-    office_location_timezone: s.office_location_id ? (locationById.get(s.office_location_id)?.timezone ?? "") : "",
-  }));
+  // We must not expose names/emails for users who are not invite-allowlisted, but we should still
+  // include their session records so totals and admin diagnostics remain accurate.
+  const enriched = sessions.map((s) => {
+    const userIsAllowlisted = allowlistedIds.has(s.user_id);
+    return {
+      ...s,
+      user_is_allowlisted: userIsAllowlisted,
+      duration_minutes: computeDurationMinutes(s.checkin_at, s.checkout_at),
+      has_kiosk_selfie:
+        userIsAllowlisted && !!s.kiosk_checkin_photo_path && !s.kiosk_checkin_photo_deleted_at,
+      user_display_name: userIsAllowlisted ? (displayNameById.get(s.user_id) ?? "") : "",
+      user_email: userIsAllowlisted ? (emailById.get(s.user_id) ?? "") : "",
+      office_location_name: s.office_location_id ? (locationById.get(s.office_location_id)?.name ?? "") : "",
+      office_location_timezone: s.office_location_id ? (locationById.get(s.office_location_id)?.timezone ?? "") : "",
+    };
+  });
 
   return NextResponse.json({
     tz: boundsRow.tz,
