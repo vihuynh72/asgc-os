@@ -42,11 +42,11 @@ type OfficeHourSessionRow = {
   distance_m_at_checkout: number | null;
   kiosk_checkin_photo_path: string | null;
   kiosk_checkin_photo_deleted_at: string | null;
-  admin_closed_by: string | null;
-  admin_closed_at: string | null;
-  admin_closed_reason: string | null;
-  admin_adjusted_checkout_at: string | null;
-  admin_exclude_from_totals: boolean | null;
+  admin_closed_by?: string | null;
+  admin_closed_at?: string | null;
+  admin_closed_reason?: string | null;
+  admin_adjusted_checkout_at?: string | null;
+  admin_exclude_from_totals?: boolean | null;
   created_at: string;
   updated_at: string;
 };
@@ -106,30 +106,46 @@ export async function GET(request: NextRequest) {
   }
 
   const boundsRow = Array.isArray(boundsRes.data) ? (boundsRes.data[0] as OfficeDateBoundsRow | undefined) : undefined;
-  if (!boundsRow?.start_ts || !boundsRow.end_ts || !boundsRow.tz) {
+  if (!boundsRow || !boundsRow.start_ts || !boundsRow.end_ts || !boundsRow.tz) {
     return NextResponse.json({ error: "failed_to_resolve_bounds" }, { status: 500 });
   }
+  const bounds = boundsRow;
 
   const admin = getSupabaseAdminClient();
   const max = clampLimit(limit);
 
-  let query = admin
-    .from("office_hour_sessions")
-    .select(
-      "id,user_id,office_location_id,checkin_at,checkout_at,status,within_radius,within_grace,distance_m_at_checkin,distance_m_at_checkout,kiosk_checkin_photo_path,kiosk_checkin_photo_deleted_at,admin_closed_by,admin_closed_at,admin_closed_reason,admin_adjusted_checkout_at,admin_exclude_from_totals,created_at,updated_at",
-    )
-    .gte("checkin_at", boundsRow.start_ts)
-    .lt("checkin_at", boundsRow.end_ts)
-    .order("checkin_at", { ascending: true })
-    .limit(max);
+  const baseSelect =
+    "id,user_id,office_location_id,checkin_at,checkout_at,status,within_radius,within_grace,distance_m_at_checkin,distance_m_at_checkout,kiosk_checkin_photo_path,kiosk_checkin_photo_deleted_at,created_at,updated_at";
+  const selectWithAdminOverrides =
+    `${baseSelect},admin_closed_by,admin_closed_at,admin_closed_reason,admin_adjusted_checkout_at,admin_exclude_from_totals`;
 
-  if (userId) query = query.eq("user_id", userId);
-  if (statuses.length > 0) query = query.in("status", statuses);
+  function runQuery(select: string) {
+    let query = admin
+      .from("office_hour_sessions")
+      .select(select)
+      .gte("checkin_at", bounds.start_ts)
+      .lt("checkin_at", bounds.end_ts)
+      .order("checkin_at", { ascending: true })
+      .limit(max);
 
-  const { data: rawSessions, error: sessionsErr } = await query;
+    if (userId) query = query.eq("user_id", userId);
+    if (statuses.length > 0) query = query.in("status", statuses);
+
+    return query;
+  }
+
+  let adminOverridesSupported = true;
+
+  let { data: rawSessions, error: sessionsErr } = await runQuery(selectWithAdminOverrides);
+  if (sessionsErr?.message?.includes("admin_closed_by") && sessionsErr.message.includes("does not exist")) {
+    // Older DBs may not have applied the admin overrides migration yet. Fall back so the admin
+    // calendar still works (names/emails are still redacted below for non-allowlisted users).
+    adminOverridesSupported = false;
+    ({ data: rawSessions, error: sessionsErr } = await runQuery(baseSelect));
+  }
   if (sessionsErr) return NextResponse.json({ error: sessionsErr.message }, { status: 500 });
 
-  const sessions = ((rawSessions ?? []) as OfficeHourSessionRow[]) || [];
+  const sessions = (rawSessions ?? []) as unknown as OfficeHourSessionRow[];
 
   const userIds = Array.from(new Set(sessions.map((s) => s.user_id)));
   const officeLocationIds = Array.from(
@@ -200,11 +216,12 @@ export async function GET(request: NextRequest) {
   });
 
   return NextResponse.json({
-    tz: boundsRow.tz,
-    startDate: boundsRow.start_date,
-    endDate: boundsRow.end_date,
-    startTs: boundsRow.start_ts,
-    endTs: boundsRow.end_ts,
+    tz: bounds.tz,
+    startDate: bounds.start_date,
+    endDate: bounds.end_date,
+    startTs: bounds.start_ts,
+    endTs: bounds.end_ts,
+    adminOverridesSupported,
     sessions: enriched,
   });
 }
