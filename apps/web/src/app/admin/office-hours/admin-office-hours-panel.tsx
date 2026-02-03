@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { normalizeDateOnlyString } from "@/lib/dateOnly";
 import { computeAdminOverrideMinutes, validateAdminCheckoutAt } from "@/lib/office-hours-admin-overrides.mjs";
+import { shouldCloseOnBackdrop } from "@/lib/lightbox-utils.mjs";
 import { cn } from "@/lib/utils";
 
 type UserRow = {
@@ -1117,6 +1118,14 @@ function SelfieLightbox({
 }) {
   if (!open || !session) return null;
 
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
   const title = session.user_display_name || session.user_email || "Kiosk selfie";
   const subtitle = `${formatTimeInTz(session.checkin_at, tz)} • session ${session.id.slice(0, 8)}`;
 
@@ -1127,12 +1136,12 @@ function SelfieLightbox({
       aria-modal="true"
       aria-label="Kiosk selfie"
       onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (shouldCloseOnBackdrop({ target: e.target, currentTarget: e.currentTarget })) onClose();
       }}
     >
-      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
-      <div className="relative w-full max-w-2xl overflow-hidden rounded-2xl border bg-background/90 shadow-2xl ring-1 ring-black/10 backdrop-blur supports-[backdrop-filter]:bg-background/80">
-        <div className="flex items-start justify-between gap-3 border-b p-4">
+      <div data-backdrop="true" className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+      <div className="relative flex w-full max-w-4xl max-h-[92vh] flex-col overflow-hidden rounded-2xl border bg-background/90 shadow-2xl ring-1 ring-black/10 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+        <div className="flex items-start justify-between gap-3 border-b bg-background/80 p-4">
           <div className="min-w-0">
             <div className="text-sm font-semibold truncate">{title}</div>
             <div className="mt-0.5 text-xs text-foreground/60 truncate">{subtitle}</div>
@@ -1146,7 +1155,7 @@ function SelfieLightbox({
                 onClick={() => window.open(url, "_blank", "noopener,noreferrer")}
                 className="h-8 px-3"
               >
-                Open
+                Open full
               </Button>
             ) : null}
             <Button type="button" variant="ghost" size="sm" onClick={onClose} className="h-8 px-2">
@@ -1155,9 +1164,9 @@ function SelfieLightbox({
           </div>
         </div>
 
-        <div className="p-4">
+        <div className="flex-1 overflow-y-auto p-4">
           {loading ? (
-            <div className="flex h-[420px] items-center justify-center rounded-xl border bg-foreground/[0.02] text-sm text-foreground/70">
+            <div className="flex min-h-[320px] items-center justify-center rounded-xl border bg-foreground/[0.02] text-sm text-foreground/70">
               Loading selfie…
             </div>
           ) : error ? (
@@ -1176,9 +1185,14 @@ function SelfieLightbox({
             </div>
           ) : url ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={url} alt="Kiosk check-in selfie" className="w-full rounded-xl border bg-black object-contain" />
+            <img
+              src={url}
+              alt="Kiosk check-in selfie"
+              className="w-full max-h-[70vh] rounded-xl border bg-black object-contain shadow-sm cursor-zoom-in"
+              onClick={() => window.open(url, "_blank", "noopener,noreferrer")}
+            />
           ) : (
-            <div className="flex h-[420px] items-center justify-center rounded-xl border bg-foreground/[0.02] text-sm text-foreground/70">
+            <div className="flex min-h-[320px] items-center justify-center rounded-xl border bg-foreground/[0.02] text-sm text-foreground/70">
               No selfie found.
             </div>
           )}
