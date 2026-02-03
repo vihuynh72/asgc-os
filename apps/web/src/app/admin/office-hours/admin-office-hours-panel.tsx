@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { normalizeDateOnlyString } from "@/lib/dateOnly";
+import { computeAdminOverrideMinutes, validateAdminCheckoutAt } from "@/lib/office-hours-admin-overrides.mjs";
+import { shouldCloseOnBackdrop } from "@/lib/lightbox-utils.mjs";
 import { cn } from "@/lib/utils";
 
 type UserRow = {
@@ -31,6 +33,11 @@ type OfficeHourAdminSession = {
   within_grace: boolean | null;
   distance_m_at_checkin: number | null;
   distance_m_at_checkout: number | null;
+  admin_closed_by?: string | null;
+  admin_closed_at?: string | null;
+  admin_closed_reason?: string | null;
+  admin_adjusted_checkout_at?: string | null;
+  admin_exclude_from_totals?: boolean | null;
 };
 
 type ViewMode = "day" | "week" | "month";
@@ -124,8 +131,47 @@ function formatMinutes(minutes: number): string {
   return `${h}h ${mm}m`;
 }
 
+function formatLocalDateTimeInput(iso: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const pad = (v: number) => String(v).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function parseLocalDateTimeInput(value: string): string | null {
+  if (!value) return null;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString();
+}
+
+function computeDurationMinutes(checkinAtIso: string, checkoutAtIso: string | null): number | null {
+  if (!checkoutAtIso) return null;
+  const start = Date.parse(checkinAtIso);
+  const end = Date.parse(checkoutAtIso);
+  if (!Number.isNaN(start) && !Number.isNaN(end)) {
+    return Math.max(Math.round((end - start) / 60000), 0);
+  }
+  return null;
+}
+
 async function fetchJson<T>(url: string): Promise<T> {
   const res = await fetch(url);
+  const data = (await res.json().catch(() => ({}))) as T;
+  if (!res.ok) {
+    const message = (data as { error?: string }).error || `Request failed: ${res.status}`;
+    throw new Error(message);
+  }
+  return data;
+}
+
+async function postJson<T>(url: string, body: unknown): Promise<T> {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
   const data = (await res.json().catch(() => ({}))) as T;
   if (!res.ok) {
     const message = (data as { error?: string }).error || `Request failed: ${res.status}`;
@@ -156,6 +202,13 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
   const [selfieUrl, setSelfieUrl] = useState<string>("");
   const [selfieLoading, setSelfieLoading] = useState<boolean>(false);
   const [selfieError, setSelfieError] = useState<string>("");
+  const [overrideOpen, setOverrideOpen] = useState(false);
+  const [overrideSession, setOverrideSession] = useState<OfficeHourAdminSession | null>(null);
+  const [overrideCheckoutLocal, setOverrideCheckoutLocal] = useState("");
+  const [overrideExclude, setOverrideExclude] = useState(false);
+  const [overrideReason, setOverrideReason] = useState("");
+  const [overrideSubmitting, setOverrideSubmitting] = useState(false);
+  const [overrideMessage, setOverrideMessage] = useState("");
 
   const { startDate, endDate } = useMemo(() => {
     if (view === "day") {
@@ -235,6 +288,97 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
     }
   }
 
+  function openAdminOverride(session: OfficeHourAdminSession) {
+    setOverrideSession(session);
+    setOverrideOpen(true);
+    setOverrideExclude(false);
+    setOverrideReason("");
+    setOverrideMessage("");
+    setOverrideCheckoutLocal(formatLocalDateTimeInput(new Date().toISOString()));
+  }
+
+  function closeAdminOverride() {
+    setOverrideOpen(false);
+    setOverrideSession(null);
+    setOverrideReason("");
+    setOverrideMessage("");
+    setOverrideExclude(false);
+    setOverrideCheckoutLocal("");
+  }
+
+  async function submitAdminOverride() {
+    if (!overrideSession) return;
+    const checkoutAtIso = parseLocalDateTimeInput(overrideCheckoutLocal);
+    if (!checkoutAtIso) {
+      setOverrideMessage("Choose a valid checkout time.");
+      return;
+    }
+
+    const validation = validateAdminCheckoutAt({
+      checkinAtIso: overrideSession.checkin_at,
+      checkoutAtIso,
+      nowIso: new Date().toISOString(),
+    });
+    if (!validation.ok) {
+      setOverrideMessage("Checkout time must be between check-in and now.");
+      return;
+    }
+
+    if (overrideReason.trim().length < 2) {
+      setOverrideMessage("Please provide a short reason.");
+      return;
+    }
+
+    setOverrideSubmitting(true);
+    setOverrideMessage("");
+
+    try {
+      const data = await postJson<{
+        ok: true;
+        session: OfficeHourAdminSession;
+        notify_error?: string;
+      }>("/api/admin/office-hours/close-session", {
+        sessionId: overrideSession.id,
+        checkoutAt: checkoutAtIso,
+        excludeFromTotals: overrideExclude,
+        reason: overrideReason.trim(),
+      });
+
+      const updated = data.session;
+      setSessions((prev) =>
+        prev.map((s) =>
+          s.id === updated.id
+            ? {
+                ...s,
+                ...updated,
+                duration_minutes: computeDurationMinutes(updated.checkin_at, updated.checkout_at),
+              }
+            : s,
+        ),
+      );
+
+      setOverrideSession((prev) =>
+        prev
+          ? {
+              ...prev,
+              ...updated,
+              duration_minutes: computeDurationMinutes(updated.checkin_at, updated.checkout_at),
+            }
+          : prev,
+      );
+
+      if (data.notify_error) {
+        setOverrideMessage(`Updated (email failed: ${data.notify_error})`);
+      } else {
+        setOverrideMessage("Session updated.");
+      }
+    } catch (e) {
+      setOverrideMessage(e instanceof Error ? e.message : "Failed to update session.");
+    } finally {
+      setOverrideSubmitting(false);
+    }
+  }
+
   function onPrev() {
     if (view === "day") setAnchorDate((d) => addDays(d, -1));
     else if (view === "week") setAnchorDate((d) => addDays(d, -7));
@@ -255,6 +399,11 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
       return hay.includes(q);
     });
   }, [search, sessions]);
+
+  const openSessions = useMemo(
+    () => sessions.filter((s) => s.status === "open" && !s.checkout_at),
+    [sessions],
+  );
 
   const sessionsByDay = useMemo(() => {
     const m = new Map<string, OfficeHourAdminSession[]>();
@@ -350,6 +499,22 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
     }
     return sum;
   }, [filteredSessions]);
+
+  const overrideCheckoutIso = overrideCheckoutLocal ? parseLocalDateTimeInput(overrideCheckoutLocal) : null;
+  const overrideMinLocal = overrideSession ? formatLocalDateTimeInput(overrideSession.checkin_at) : "";
+  const overrideMaxLocal = formatLocalDateTimeInput(new Date().toISOString());
+  const overrideValidation =
+    overrideSession && overrideCheckoutIso
+      ? validateAdminCheckoutAt({
+          checkinAtIso: overrideSession.checkin_at,
+          checkoutAtIso: overrideCheckoutIso,
+          nowIso: new Date().toISOString(),
+        })
+      : { ok: false };
+  const overridePreviewMinutes =
+    overrideSession && overrideCheckoutIso ? computeAdminOverrideMinutes(overrideSession.checkin_at, overrideCheckoutIso) : null;
+  const overrideCanSubmit =
+    !!overrideSession && !!overrideCheckoutIso && overrideValidation.ok && overrideReason.trim().length >= 2 && !overrideSubmitting;
 
   return (
     <div className="space-y-4">
@@ -480,6 +645,14 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
           >
             Selfies
           </Button>
+          {openSessions.length > 0 ? (
+            <span className="inline-flex items-center gap-2 rounded-full border border-emerald-200/60 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700">
+              Open sessions
+              <span className="rounded-full bg-emerald-600 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                {openSessions.length}
+              </span>
+            </span>
+          ) : null}
           <span className="ml-auto">
             {loading ? "Loading…" : `${filteredSessions.length} session${filteredSessions.length === 1 ? "" : "s"} • ${formatMinutes(totalMinutes)}`}
           </span>
@@ -507,6 +680,7 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
                   <th className="px-3 py-2">Duration</th>
                   <th className="px-3 py-2">Selfie</th>
                   <th className="px-3 py-2">Status</th>
+                  <th className="px-3 py-2">Admin</th>
                   <th className="px-3 py-2">Location</th>
                   <th className="px-3 py-2">In radius</th>
                 </tr>
@@ -533,13 +707,37 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
                     <td className="px-3 py-2">
                       <StatusBadge status={s.status} />
                     </td>
+                    <td className="px-3 py-2">
+                      {s.status === "open" && !s.checkout_at ? (
+                        <button
+                          type="button"
+                          className="rounded-full border border-foreground/15 bg-background px-3 py-1 text-[11px] font-medium text-foreground/80 shadow-sm transition hover:bg-foreground/5"
+                          onClick={() => openAdminOverride(s)}
+                        >
+                          Admin actions
+                        </button>
+                      ) : s.admin_closed_by ? (
+                        <div className="flex flex-col gap-1 text-[10px] text-foreground/70">
+                          <span className="inline-flex w-fit items-center rounded-full bg-foreground/10 px-2 py-0.5 font-medium">
+                            Admin-closed
+                          </span>
+                          {s.admin_exclude_from_totals ? (
+                            <span className="inline-flex w-fit items-center rounded-full bg-amber-100 px-2 py-0.5 font-medium text-amber-700">
+                              Excluded
+                            </span>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <span className="text-xs text-foreground/50">—</span>
+                      )}
+                    </td>
                     <td className="px-3 py-2">{s.office_location_name || "—"}</td>
                     <td className="px-3 py-2">{s.within_radius ? "Yes" : "No"}</td>
                   </tr>
                 ))}
                 {filteredSessions.length === 0 ? (
                   <tr>
-                    <td className="px-3 py-3 text-sm text-foreground/60" colSpan={8}>
+                    <td className="px-3 py-3 text-sm text-foreground/60" colSpan={9}>
                       No sessions found for this day.
                     </td>
                   </tr>
@@ -610,14 +808,27 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
                           </summary>
                           <div className="border-t bg-muted/10 p-2 space-y-2">
                             {g.sessions.map((s) => (
-                              <SessionCard key={s.id} session={s} tz={tz} onViewSelfie={(sess) => void openSelfie(sess)} />
+                              <SessionCard
+                                key={s.id}
+                                session={s}
+                                tz={tz}
+                                onViewSelfie={(sess) => void openSelfie(sess)}
+                                onAdminOverride={(sess) => openAdminOverride(sess)}
+                              />
                             ))}
                           </div>
                         </details>
                       ))
                     ) : (
                       daySessions.map((s) => (
-                        <SessionCard key={s.id} session={s} tz={tz} showUser onViewSelfie={(sess) => void openSelfie(sess)} />
+                        <SessionCard
+                          key={s.id}
+                          session={s}
+                          tz={tz}
+                          showUser
+                          onViewSelfie={(sess) => void openSelfie(sess)}
+                          onAdminOverride={(sess) => openAdminOverride(sess)}
+                        />
                       ))
                     )}
                   </div>
@@ -675,6 +886,119 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
         </div>
       ) : null}
 
+      {overrideOpen && overrideSession ? (
+        <div
+          className="fixed inset-0 z-50 flex justify-end"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Admin override session"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) closeAdminOverride();
+          }}
+        >
+          <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" />
+          <div className="relative h-full w-full max-w-md overflow-y-auto border-l bg-background/90 shadow-2xl ring-1 ring-black/5 backdrop-blur">
+            <div className="flex items-center justify-between border-b px-5 py-4">
+              <div>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-foreground/50">
+                  Admin override
+                </div>
+                <div className="text-lg font-semibold text-foreground">Close open session</div>
+              </div>
+              <Button variant="ghost" size="sm" onClick={closeAdminOverride} className="h-8 px-2">
+                Close
+              </Button>
+            </div>
+
+            <div className="space-y-5 px-5 py-4 text-sm">
+              <div className="rounded-2xl border bg-foreground/[0.02] p-4 shadow-sm">
+                <div className="text-sm font-semibold">
+                  {overrideSession.user_display_name || "Member"}
+                </div>
+                <div className="text-xs text-foreground/60">
+                  {overrideSession.user_email || overrideSession.user_id}
+                </div>
+                <div className="mt-2 text-xs text-foreground/70">
+                  Check-in: {formatTimeInTz(overrideSession.checkin_at, tz)} • {formatDateHeading(formatDateKeyInTz(overrideSession.checkin_at, tz), tz)}
+                </div>
+              </div>
+
+              <label className="space-y-2">
+                <div className="text-xs font-semibold uppercase tracking-wider text-foreground/60">Checkout time</div>
+                <input
+                  type="datetime-local"
+                  min={overrideMinLocal}
+                  max={overrideMaxLocal}
+                  value={overrideCheckoutLocal}
+                  onChange={(e) => setOverrideCheckoutLocal(e.target.value)}
+                  className="h-11 w-full rounded-xl border bg-transparent px-3 text-sm shadow-sm"
+                />
+                <div className="text-xs text-foreground/60">Must be between check-in and now.</div>
+              </label>
+
+              <label className="space-y-2">
+                <div className="text-xs font-semibold uppercase tracking-wider text-foreground/60">Reason (required)</div>
+                <textarea
+                  rows={3}
+                  value={overrideReason}
+                  onChange={(e) => setOverrideReason(e.target.value)}
+                  className="w-full rounded-xl border bg-transparent px-3 py-2 text-sm shadow-sm"
+                  placeholder="Short reason for the change"
+                />
+              </label>
+
+              <label className="flex items-center justify-between rounded-xl border bg-background/60 px-3 py-3 shadow-sm">
+                <div>
+                  <div className="text-sm font-medium">Count hours</div>
+                  <div className="text-xs text-foreground/60">Include this session in weekly totals.</div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={!overrideExclude}
+                  onChange={(e) => setOverrideExclude(!e.target.checked)}
+                  className="h-4 w-4"
+                />
+              </label>
+
+              <div className="rounded-xl border bg-foreground/[0.02] p-3 text-xs text-foreground/70">
+                {overridePreviewMinutes !== null ? (
+                  <div>
+                    Estimated duration: <span className="font-semibold">{formatMinutes(overridePreviewMinutes)}</span>
+                  </div>
+                ) : (
+                  <div>Estimated duration will appear once a valid time is set.</div>
+                )}
+                <div className="mt-1">
+                  This change will <span className="font-medium">{overrideExclude ? "exclude" : "count"}</span> toward totals.
+                </div>
+              </div>
+
+              {overrideMessage ? (
+                <div className="rounded-xl border border-emerald-200/60 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
+                  {overrideMessage}
+                </div>
+              ) : null}
+
+              <div className="space-y-2">
+                <Button
+                  onClick={() => void submitAdminOverride()}
+                  disabled={!overrideCanSubmit}
+                  className="h-11 w-full rounded-xl"
+                >
+                  {overrideSubmitting ? "Updating…" : "Confirm update"}
+                </Button>
+                <Button variant="ghost" onClick={closeAdminOverride} className="h-10 w-full">
+                  Cancel
+                </Button>
+                <div className="text-xs text-foreground/60">
+                  The member will be notified by email. Changes are audit-logged.
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <SelfieLightbox
         open={!!selfieSession}
         session={selfieSession}
@@ -701,11 +1025,13 @@ function SessionCard({
   tz,
   showUser,
   onViewSelfie,
+  onAdminOverride,
 }: {
   session: OfficeHourAdminSession;
   tz: string | null;
   showUser?: boolean;
   onViewSelfie?: (session: OfficeHourAdminSession) => void;
+  onAdminOverride?: (session: OfficeHourAdminSession) => void;
 }) {
   return (
     <div className="rounded border bg-background p-2 text-xs shadow-sm">
@@ -744,6 +1070,29 @@ function SessionCard({
           ) : null}
         </div>
       </div>
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[10px] text-muted-foreground">
+        <div className="flex items-center gap-1.5">
+          {session.admin_closed_by ? (
+            <span className="rounded-full bg-foreground/10 px-2 py-0.5 font-medium text-foreground/70">
+              Admin-closed
+            </span>
+          ) : null}
+          {session.admin_exclude_from_totals ? (
+            <span className="rounded-full bg-amber-100 px-2 py-0.5 font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+              Excluded
+            </span>
+          ) : null}
+        </div>
+        {session.status === "open" && !session.checkout_at && onAdminOverride ? (
+          <button
+            type="button"
+            className="rounded-full border border-foreground/15 bg-background px-2.5 py-0.5 font-medium text-foreground/80 shadow-sm transition hover:bg-foreground/5"
+            onClick={() => onAdminOverride(session)}
+          >
+            Admin actions
+          </button>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -769,6 +1118,14 @@ function SelfieLightbox({
 }) {
   if (!open || !session) return null;
 
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
   const title = session.user_display_name || session.user_email || "Kiosk selfie";
   const subtitle = `${formatTimeInTz(session.checkin_at, tz)} • session ${session.id.slice(0, 8)}`;
 
@@ -779,12 +1136,12 @@ function SelfieLightbox({
       aria-modal="true"
       aria-label="Kiosk selfie"
       onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (shouldCloseOnBackdrop({ target: e.target, currentTarget: e.currentTarget })) onClose();
       }}
     >
-      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
-      <div className="relative w-full max-w-2xl overflow-hidden rounded-2xl border bg-background/90 shadow-2xl ring-1 ring-black/10 backdrop-blur supports-[backdrop-filter]:bg-background/80">
-        <div className="flex items-start justify-between gap-3 border-b p-4">
+      <div data-backdrop="true" className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+      <div className="relative flex w-full max-w-4xl max-h-[92vh] flex-col overflow-hidden rounded-2xl border bg-background/90 shadow-2xl ring-1 ring-black/10 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+        <div className="flex items-start justify-between gap-3 border-b bg-background/80 p-4">
           <div className="min-w-0">
             <div className="text-sm font-semibold truncate">{title}</div>
             <div className="mt-0.5 text-xs text-foreground/60 truncate">{subtitle}</div>
@@ -798,7 +1155,7 @@ function SelfieLightbox({
                 onClick={() => window.open(url, "_blank", "noopener,noreferrer")}
                 className="h-8 px-3"
               >
-                Open
+                Open full
               </Button>
             ) : null}
             <Button type="button" variant="ghost" size="sm" onClick={onClose} className="h-8 px-2">
@@ -807,9 +1164,9 @@ function SelfieLightbox({
           </div>
         </div>
 
-        <div className="p-4">
+        <div className="flex-1 overflow-y-auto p-4">
           {loading ? (
-            <div className="flex h-[420px] items-center justify-center rounded-xl border bg-foreground/[0.02] text-sm text-foreground/70">
+            <div className="flex min-h-[320px] items-center justify-center rounded-xl border bg-foreground/[0.02] text-sm text-foreground/70">
               Loading selfie…
             </div>
           ) : error ? (
@@ -828,9 +1185,14 @@ function SelfieLightbox({
             </div>
           ) : url ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={url} alt="Kiosk check-in selfie" className="w-full rounded-xl border bg-black object-contain" />
+            <img
+              src={url}
+              alt="Kiosk check-in selfie"
+              className="w-full max-h-[70vh] rounded-xl border bg-black object-contain shadow-sm cursor-zoom-in"
+              onClick={() => window.open(url, "_blank", "noopener,noreferrer")}
+            />
           ) : (
-            <div className="flex h-[420px] items-center justify-center rounded-xl border bg-foreground/[0.02] text-sm text-foreground/70">
+            <div className="flex min-h-[320px] items-center justify-center rounded-xl border bg-foreground/[0.02] text-sm text-foreground/70">
               No selfie found.
             </div>
           )}

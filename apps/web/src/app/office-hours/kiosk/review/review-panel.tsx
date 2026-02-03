@@ -401,12 +401,20 @@ export function KioskPhotoReviewPanel() {
               {expanded ? (
                 <div className="mt-3">
                   {photoUrl ? (
+                    <div className="mb-2 flex flex-wrap items-center gap-2">
+                      <Button variant="outline" size="sm" onClick={() => window.open(photoUrl, "_blank", "noopener,noreferrer")}>
+                        Open full
+                      </Button>
+                    </div>
+                  ) : null}
+                  {photoUrl ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
                       src={photoUrl}
                       alt="Kiosk check-in selfie"
-                      className="w-full max-w-lg rounded-md border"
+                      className="w-full max-w-4xl max-h-[70vh] rounded-xl border bg-black/5 object-contain shadow-sm cursor-zoom-in"
                       loading="lazy"
+                      onClick={() => window.open(photoUrl, "_blank", "noopener,noreferrer")}
                     />
                   ) : (
                     <div className="text-sm text-foreground/70">Loading selfie…</div>
