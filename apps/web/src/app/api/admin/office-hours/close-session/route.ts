@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
 import { requireFullAdminOrEvp } from "@/lib/adminAuth";
-import { buildAdminOverrideNotification } from "@/lib/office-hours-admin-overrides";
+import { buildAdminOverrideNotification } from "@/lib/office-hours-admin-overrides.mjs";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 import { getSupabaseRouteHandlerClient } from "@/lib/supabaseServer";
 import { sendEmail } from "@/lib/emailSender";
