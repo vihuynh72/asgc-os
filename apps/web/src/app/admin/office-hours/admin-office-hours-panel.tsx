@@ -21,6 +21,7 @@ type OfficeHourAdminSession = {
   user_id: string;
   user_display_name: string;
   user_email: string;
+  user_is_allowlisted?: boolean;
   office_location_id: string | null;
   office_location_name: string;
   office_location_timezone: string;
@@ -426,6 +427,7 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
         user_id: string;
         user_display_name: string;
         user_email: string;
+        user_is_allowlisted: boolean;
         total_minutes: number;
         sessions: OfficeHourAdminSession[];
       }>
@@ -438,6 +440,7 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
           user_id: string;
           user_display_name: string;
           user_email: string;
+          user_is_allowlisted: boolean;
           total_minutes: number;
           sessions: OfficeHourAdminSession[];
         }
@@ -450,6 +453,7 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
             user_id: s.user_id,
             user_display_name: s.user_display_name,
             user_email: s.user_email,
+            user_is_allowlisted: s.user_is_allowlisted !== false,
             total_minutes: 0,
             sessions: [],
           };
@@ -689,8 +693,12 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
                 {filteredSessions.map((s) => (
                   <tr key={s.id}>
                     <td className="px-3 py-2">
-                      <div className="font-medium">{s.user_display_name || "—"}</div>
-                      <div className="text-xs text-foreground/60">{s.user_email || s.user_id}</div>
+                      <div className="font-medium">
+                        {s.user_is_allowlisted === false ? "Hidden user" : (s.user_display_name || "—")}
+                      </div>
+                      <div className="text-xs text-foreground/60">
+                        {s.user_is_allowlisted === false ? "Not allowlisted" : (s.user_email || s.user_id)}
+                      </div>
                     </td>
                     <td className="px-3 py-2 font-mono">{formatTimeInTz(s.checkin_at, tz)}</td>
                     <td className="px-3 py-2 font-mono">{s.checkout_at ? formatTimeInTz(s.checkout_at, tz) : "—"}</td>
@@ -732,7 +740,9 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
                       )}
                     </td>
                     <td className="px-3 py-2">{s.office_location_name || "—"}</td>
-                    <td className="px-3 py-2">{s.within_radius ? "Yes" : "No"}</td>
+                    <td className="px-3 py-2">
+                      {typeof s.within_radius === "boolean" ? (s.within_radius ? "Yes" : "No") : "—"}
+                    </td>
                   </tr>
                 ))}
                 {filteredSessions.length === 0 ? (
@@ -787,8 +797,17 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
                         >
                           <summary className="flex cursor-pointer select-none items-center justify-between p-2 hover:bg-muted/50 transition-colors [&::-webkit-details-marker]:hidden">
                             <div className="flex flex-col min-w-0 flex-1 mr-2">
-                              <span className="font-medium truncate" title={g.user_display_name || g.user_email || g.user_id}>
-                                {g.user_display_name || g.user_email || g.user_id}
+                              <span
+                                className="font-medium truncate"
+                                title={
+                                  g.user_is_allowlisted
+                                    ? (g.user_display_name || g.user_email || g.user_id)
+                                    : "Hidden user"
+                                }
+                              >
+                                {g.user_is_allowlisted
+                                  ? (g.user_display_name || g.user_email || g.user_id)
+                                  : "Hidden user"}
                               </span>
                               <span className="text-[10px] text-muted-foreground">
                                 {g.sessions.length} sess • {formatMinutes(g.total_minutes)}
@@ -1037,7 +1056,9 @@ function SessionCard({
     <div className="rounded border bg-background p-2 text-xs shadow-sm">
       {showUser && (
         <div className="mb-1.5 font-medium truncate border-b pb-1">
-          {session.user_display_name || session.user_email || session.user_id}
+          {session.user_is_allowlisted === false
+            ? "Hidden user"
+            : (session.user_display_name || session.user_email || session.user_id)}
         </div>
       )}
       <div className="flex items-center justify-between gap-2">
@@ -1116,6 +1137,15 @@ function SelfieLightbox({
   onClose: () => void;
   onRetry: () => void;
 }) {
+  useEffect(() => {
+    if (!open) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [open, onClose]);
+
   if (!open || !session) return null;
 
   useEffect(() => {
