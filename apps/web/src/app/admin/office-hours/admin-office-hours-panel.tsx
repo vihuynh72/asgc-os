@@ -1148,14 +1148,6 @@ function SelfieLightbox({
 
   if (!open || !session) return null;
 
-  useEffect(() => {
-    function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape") onClose();
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
   const title = session.user_display_name || session.user_email || "Kiosk selfie";
   const subtitle = `${formatTimeInTz(session.checkin_at, tz)} • session ${session.id.slice(0, 8)}`;
 
