@@ -31,6 +31,11 @@ type OfficeHourAdminSession = {
   within_grace: boolean | null;
   distance_m_at_checkin: number | null;
   distance_m_at_checkout: number | null;
+  admin_closed_by?: string | null;
+  admin_closed_at?: string | null;
+  admin_closed_reason?: string | null;
+  admin_adjusted_checkout_at?: string | null;
+  admin_exclude_from_totals?: boolean | null;
 };
 
 type ViewMode = "day" | "week" | "month";
