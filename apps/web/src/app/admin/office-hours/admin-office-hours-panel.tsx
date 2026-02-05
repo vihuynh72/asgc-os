@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { normalizeDateOnlyString } from "@/lib/dateOnly";
@@ -210,6 +210,7 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
   const [overrideReason, setOverrideReason] = useState("");
   const [overrideSubmitting, setOverrideSubmitting] = useState(false);
   const [overrideMessage, setOverrideMessage] = useState("");
+  const [overrideMessageKind, setOverrideMessageKind] = useState<"success" | "warning" | "error" | "">("");
 
   const { startDate, endDate } = useMemo(() => {
     if (view === "day") {
@@ -295,23 +296,35 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
     setOverrideExclude(false);
     setOverrideReason("");
     setOverrideMessage("");
+    setOverrideMessageKind("");
     setOverrideCheckoutLocal(formatLocalDateTimeInput(new Date().toISOString()));
   }
 
-  function closeAdminOverride() {
+  const closeAdminOverride = useCallback(() => {
     setOverrideOpen(false);
     setOverrideSession(null);
     setOverrideReason("");
     setOverrideMessage("");
+    setOverrideMessageKind("");
     setOverrideExclude(false);
     setOverrideCheckoutLocal("");
-  }
+  }, []);
+
+  useEffect(() => {
+    if (!overrideOpen) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") closeAdminOverride();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [overrideOpen, closeAdminOverride]);
 
   async function submitAdminOverride() {
     if (!overrideSession) return;
     const checkoutAtIso = parseLocalDateTimeInput(overrideCheckoutLocal);
     if (!checkoutAtIso) {
       setOverrideMessage("Choose a valid checkout time.");
+      setOverrideMessageKind("error");
       return;
     }
 
@@ -322,16 +335,19 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
     });
     if (!validation.ok) {
       setOverrideMessage("Checkout time must be between check-in and now.");
+      setOverrideMessageKind("error");
       return;
     }
 
     if (overrideReason.trim().length < 2) {
       setOverrideMessage("Please provide a short reason.");
+      setOverrideMessageKind("error");
       return;
     }
 
     setOverrideSubmitting(true);
     setOverrideMessage("");
+    setOverrideMessageKind("");
 
     try {
       const data = await postJson<{
@@ -370,11 +386,14 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
 
       if (data.notify_error) {
         setOverrideMessage(`Updated (email failed: ${data.notify_error})`);
+        setOverrideMessageKind("warning");
       } else {
         setOverrideMessage("Session updated.");
+        setOverrideMessageKind("success");
       }
     } catch (e) {
       setOverrideMessage(e instanceof Error ? e.message : "Failed to update session.");
+      setOverrideMessageKind("error");
     } finally {
       setOverrideSubmitting(false);
     }
@@ -912,10 +931,10 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
           aria-modal="true"
           aria-label="Admin override session"
           onMouseDown={(e) => {
-            if (e.target === e.currentTarget) closeAdminOverride();
+            if (shouldCloseOnBackdrop({ target: e.target, currentTarget: e.currentTarget })) closeAdminOverride();
           }}
         >
-          <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" />
+          <div data-backdrop="true" className="absolute inset-0 bg-black/30 backdrop-blur-sm" />
           <div className="relative h-full w-full max-w-md overflow-y-auto border-l bg-background/90 shadow-2xl ring-1 ring-black/5 backdrop-blur">
             <div className="flex items-center justify-between border-b px-5 py-4">
               <div>
@@ -993,7 +1012,17 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
               </div>
 
               {overrideMessage ? (
-                <div className="rounded-xl border border-emerald-200/60 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
+                <div
+                  className={cn(
+                    "rounded-xl border px-3 py-2 text-xs",
+                    overrideMessageKind === "error" &&
+                      "border-red-500/30 bg-red-500/5 text-red-700 dark:text-red-300",
+                    overrideMessageKind === "warning" &&
+                      "border-amber-500/30 bg-amber-500/5 text-amber-800 dark:text-amber-300",
+                    (overrideMessageKind === "success" || overrideMessageKind === "") &&
+                      "border-emerald-500/30 bg-emerald-500/5 text-emerald-700 dark:text-emerald-300",
+                  )}
+                >
                   {overrideMessage}
                 </div>
               ) : null}
