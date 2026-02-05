@@ -16,8 +16,8 @@ alter table public.office_hour_sessions
 create or replace function public.admin_close_office_hour_session(
   _session_id uuid,
   _checkout_at timestamptz,
-  _exclude_from_totals boolean default false,
-  _reason text
+  _reason text,
+  _exclude_from_totals boolean default false
 )
 returns public.office_hour_sessions
 language plpgsql
@@ -100,10 +100,10 @@ begin
 end;
 $$;
 
-revoke all on function public.admin_close_office_hour_session(uuid, timestamptz, boolean, text) from public;
-revoke all on function public.admin_close_office_hour_session(uuid, timestamptz, boolean, text) from authenticated;
-grant execute on function public.admin_close_office_hour_session(uuid, timestamptz, boolean, text) to authenticated;
-grant execute on function public.admin_close_office_hour_session(uuid, timestamptz, boolean, text) to service_role;
+revoke all on function public.admin_close_office_hour_session(uuid, timestamptz, text, boolean) from public;
+revoke all on function public.admin_close_office_hour_session(uuid, timestamptz, text, boolean) from authenticated;
+grant execute on function public.admin_close_office_hour_session(uuid, timestamptz, text, boolean) to authenticated;
+grant execute on function public.admin_close_office_hour_session(uuid, timestamptz, text, boolean) to service_role;
 
 -- Member weekly rollup: closed-only + admin exclusions respected.
 create or replace function public.my_weekly_hours(_week_start date default null)
