@@ -8,6 +8,7 @@ import { addDaysDateOnly, normalizeDateOnlyString, startOfWeekMondayDateOnly, to
 import {
   completionPercent,
   reportStatus,
+  rosterStatusLabel,
   roleGroupLabel,
   roleKeyRank,
   sortWeeklyReportRows,
@@ -24,7 +25,7 @@ type AdminWeeklyHoursPreviewRow = {
   total_hours: number | string;
   missing_hours: number | string;
   needs_review_sessions: number | string;
-  member_status?: "active" | "pending_sign_in";
+  member_status?: "assigned" | "vacant" | "no_show";
 };
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -200,7 +201,8 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
     let behind = 0;
     let missing = 0;
     let notRequired = 0;
-    let pendingSignIn = 0;
+    let vacant = 0;
+    let noShow = 0;
     let requiredTotal = 0;
     let completedTotal = 0;
     let missingTotal = 0;
@@ -220,7 +222,8 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
         missing_hours: rem,
       });
 
-      if (row.member_status === "pending_sign_in") pendingSignIn += 1;
+      if (row.member_status === "vacant") vacant += 1;
+      else if (row.member_status === "no_show") noShow += 1;
 
       if (statusKey === "complete") complete += 1;
       else if (statusKey === "behind") behind += 1;
@@ -234,7 +237,8 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
       behind,
       missing,
       notRequired,
-      pendingSignIn,
+      vacant,
+      noShow,
       requiredTotal,
       completedTotal,
       missingTotal,
@@ -255,7 +259,7 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
           <div className="space-y-1">
             <div className="text-sm font-semibold tracking-tight">Office Hours Weekly Report</div>
             <div className="text-xs text-foreground/70">
-              Week starts {weekStartResolved ?? "—"} • Includes active members and pending sign-in role grants.
+              Week starts {weekStartResolved ?? "—"} • Blank-name roles are marked as Vacant.
             </div>
           </div>
 
@@ -315,7 +319,9 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
           <div className="rounded-lg border bg-foreground/[0.02] px-3 py-2">
             <div className="text-[11px] uppercase tracking-wide text-foreground/60">Members</div>
             <div className="text-xl font-semibold">{summary.total}</div>
-            <div className="text-xs text-foreground/60">{summary.pendingSignIn} pending sign-in</div>
+            <div className="text-xs text-foreground/60">
+              {summary.vacant} vacant • {summary.noShow} no show
+            </div>
           </div>
           <div className="rounded-lg border bg-foreground/[0.02] px-3 py-2">
             <div className="text-[11px] uppercase tracking-wide text-foreground/60">Compliance</div>
@@ -430,9 +436,15 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
                           <span className="text-xs text-foreground/60">•</span>
                           <span className="text-sm">{r.name || "—"}</span>
                           <span className={`rounded-full px-2 py-0.5 text-xs ${pill.className}`}>{pill.label}</span>
-                          {r.member_status === "pending_sign_in" ? (
-                            <span className="rounded-full bg-sky-500/15 px-2 py-0.5 text-xs text-sky-700 dark:text-sky-300">
-                              Pending sign-in
+                          {r.member_status === "vacant" || r.member_status === "no_show" ? (
+                            <span
+                              className={
+                                r.member_status === "vacant"
+                                  ? "rounded-full bg-slate-500/15 px-2 py-0.5 text-xs text-slate-700 dark:text-slate-300"
+                                  : "rounded-full bg-rose-500/15 px-2 py-0.5 text-xs text-rose-700 dark:text-rose-300"
+                              }
+                            >
+                              {rosterStatusLabel(r.member_status)}
                             </span>
                           ) : null}
                           {needsReview > 0 ? (

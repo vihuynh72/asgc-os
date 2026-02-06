@@ -144,7 +144,7 @@ type AdminWeeklyHoursPreviewRow = {
   role: string;
   name: string;
   email: string;
-  member_status?: "active" | "pending_sign_in";
+  member_status?: "assigned" | "vacant" | "no_show";
   required_hours: number | string;
   total_hours: number | string;
   missing_hours: number | string;
@@ -513,6 +513,12 @@ function formatHoursValue(value: number | string | null | undefined): string {
   if (n === null) return "—";
   const rounded = Math.round(Math.max(0, n) * 100) / 100;
   return `${rounded.toFixed(2)}h`;
+}
+
+function formatRosterStatus(value: "assigned" | "vacant" | "no_show" | undefined): string {
+  if (value === "vacant") return "Vacant";
+  if (value === "no_show") return "No show";
+  return "Assigned";
 }
 
 function toCsvValue(value: string | number | boolean | null | undefined): string {
@@ -1319,7 +1325,7 @@ export function AdminPanel({
           row.role ?? "",
           row.name ?? "",
           row.email ?? "",
-          row.member_status === "pending_sign_in" ? "Pending sign-in" : "Active",
+          formatRosterStatus(row.member_status),
           parseMinutesValue(row.required_hours) ?? "",
           parseMinutesValue(row.total_hours) ?? "",
           parseMinutesValue(row.missing_hours) ?? "",
@@ -4567,7 +4573,7 @@ export function AdminPanel({
                         <td className="px-3 py-2">{r.name || "—"}</td>
                         <td className="px-3 py-2">{r.email || "—"}</td>
                         <td className="px-3 py-2">
-                          {r.member_status === "pending_sign_in" ? "Pending sign-in" : "Active"}
+                          {formatRosterStatus(r.member_status)}
                         </td>
                         <td className="px-3 py-2 text-right font-mono">{formatHoursValue(r.total_hours)}</td>
                         <td className="px-3 py-2 text-right font-mono">{formatHoursValue(r.missing_hours)}</td>

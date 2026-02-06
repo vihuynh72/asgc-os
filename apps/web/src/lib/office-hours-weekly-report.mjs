@@ -187,6 +187,35 @@ export function completionPercent(row) {
 }
 
 /**
+ * @param {{ name?: string, required_hours?: number | string, total_hours?: number | string }} row
+ * @returns {"assigned"|"vacant"|"no_show"}
+ */
+export function deriveRosterStatus(row) {
+  const name = (row.name ?? "").trim();
+  if (!name) return "vacant";
+
+  const requiredRaw = row.required_hours;
+  const requiredNum = typeof requiredRaw === "number" ? requiredRaw : typeof requiredRaw === "string" ? Number(requiredRaw) : NaN;
+  const required = Number.isFinite(requiredNum) ? Math.max(0, requiredNum) : 0;
+
+  const totalRaw = row.total_hours;
+  const totalNum = typeof totalRaw === "number" ? totalRaw : typeof totalRaw === "string" ? Number(totalRaw) : NaN;
+  const total = Number.isFinite(totalNum) ? Math.max(0, totalNum) : 0;
+
+  if (required > 0 && total <= 0) return "no_show";
+  return "assigned";
+}
+
+/**
+ * @param {ReturnType<typeof deriveRosterStatus>} status
+ */
+export function rosterStatusLabel(status) {
+  if (status === "vacant") return "Vacant";
+  if (status === "no_show") return "No show";
+  return "Assigned";
+}
+
+/**
  * Deterministic ordering for weekly report rows:
  * - role_key hierarchy: president → executive → director → board_member → volunteer → others
  * - board members by board # when available

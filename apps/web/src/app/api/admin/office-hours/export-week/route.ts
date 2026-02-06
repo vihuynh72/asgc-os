@@ -7,9 +7,11 @@ import { getSupabaseRouteHandlerClient } from "@/lib/supabaseServer";
 import {
   completionPercent,
   csvEscape,
+  deriveRosterStatus,
   inferRoleLabel,
   reportStatus,
   reportStatusLabel,
+  rosterStatusLabel,
   roleGroupLabel,
   roleKeyRank,
   sortWeeklyReportRows,
@@ -37,7 +39,7 @@ type AdminWeeklyHoursPreviewRow = {
   required_hours: number;
   missing_hours: number;
   needs_review_sessions: number;
-  member_status: "active" | "pending_sign_in";
+  member_status: "assigned" | "vacant" | "no_show";
   // Kept for admin actions (copy emails), but not displayed in the UI by default.
   email: string;
 };
@@ -96,17 +98,6 @@ function isExactEmail(value: string): boolean {
 
 function normalizeName(raw: string | null | undefined): string {
   return (raw ?? "").trim();
-}
-
-function fallbackNameFromEmail(email: string): string {
-  if (!isExactEmail(email)) return "";
-  const local = email.split("@")[0] ?? "";
-  if (!local) return "";
-  return local
-    .replace(/[._-]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .replace(/\b\w/g, (m) => m.toUpperCase());
 }
 
 function isPreferredGrant(
@@ -338,7 +329,13 @@ export async function GET(request: NextRequest) {
       typeof needsReviewRaw === "number" ? needsReviewRaw : typeof needsReviewRaw === "string" ? Number(needsReviewRaw) : 0;
     const nameFromProfile = normalizeName(displayNameById.get(r.user_id));
     const nameFromAllowlist = isExactEmail(email) ? allowlistNameByEmail.get(email) ?? "" : "";
-    const name = nameFromProfile || nameFromAllowlist || fallbackNameFromEmail(email) || "Member";
+    const resolvedName = nameFromProfile || nameFromAllowlist;
+    const memberStatus = deriveRosterStatus({
+      name: resolvedName,
+      required_hours: requiredHours,
+      total_hours: totalHours,
+    });
+    const name = resolvedName || "Vacant";
 
     return {
       user_id: r.user_id,
@@ -350,7 +347,7 @@ export async function GET(request: NextRequest) {
       total_hours: totalHours,
       missing_hours: missingHours,
       needs_review_sessions: Number.isFinite(needsReview) ? needsReview : 0,
-      member_status: "active",
+      member_status: memberStatus,
       email,
     };
   });
@@ -379,8 +376,13 @@ export async function GET(request: NextRequest) {
     const requiredHours = roundHours(requiredMinutes);
     const totalHours = 0;
     const missingHours = requiredHours;
-    const name =
-      normalizeName(grant.notes) || allowlistNameByEmail.get(email) || fallbackNameFromEmail(email) || "Pending member";
+    const resolvedName = normalizeName(grant.notes) || allowlistNameByEmail.get(email) || "";
+    const memberStatus = deriveRosterStatus({
+      name: resolvedName,
+      required_hours: requiredHours,
+      total_hours: totalHours,
+    });
+    const name = resolvedName || "Vacant";
 
     reportRows.push({
       user_id: `pending:${grant.id}`,
@@ -392,7 +394,7 @@ export async function GET(request: NextRequest) {
       total_hours: totalHours,
       missing_hours: missingHours,
       needs_review_sessions: 0,
-      member_status: "pending_sign_in",
+      member_status: memberStatus,
       email,
     });
   }
@@ -439,7 +441,7 @@ export async function GET(request: NextRequest) {
         r.role,
         r.name,
         r.email,
-        r.member_status === "pending_sign_in" ? "Pending sign-in" : "Active",
+        rosterStatusLabel(r.member_status),
         formatHoursCsv(r.required_hours),
         formatHoursCsv(r.total_hours),
         formatHoursCsv(r.missing_hours),
