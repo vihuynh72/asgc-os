@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { copyTextWithFallback } from "@/lib/clipboard";
 import { addDaysDateOnly, normalizeDateOnlyString, startOfWeekMondayDateOnly, todayDateString } from "@/lib/dateOnly";
 import { allowlistKeysForNormalizedEmail } from "@/lib/invitesAllowlist";
+import { hoursFlagLabel } from "@/lib/office-hours-weekly-report.mjs";
 import { TEST_EMAIL_TEMPLATE } from "@/lib/testEmailTemplate";
 import { cn } from "@/lib/utils";
 
@@ -527,10 +528,13 @@ function formatRosterStatusFlag(value: "assigned" | "vacant" | "no_show" | undef
   return "🟢 Assigned";
 }
 
-function formatHoursStatusFlag(missingHours: number, completedHours: number): string {
-  if (missingHours <= 0) return "✅ Complete";
-  if (completedHours <= 0) return "❌ Missing";
-  return "🟠 Behind";
+function formatHoursStatusFlag(
+  missingHours: number,
+  completedHours: number,
+  memberStatus: "assigned" | "vacant" | "no_show" | undefined,
+): string {
+  const statusKey = missingHours <= 0 ? "complete" : completedHours <= 0 ? "missing" : "behind";
+  return hoursFlagLabel({ statusKey, memberStatus });
 }
 
 function toCsvValue(value: string | number | boolean | null | undefined): string {
@@ -1344,7 +1348,7 @@ export function AdminPanel({
           parseMinutesValue(row.required_hours) ?? "",
           parseMinutesValue(row.total_hours) ?? "",
           parseMinutesValue(row.missing_hours) ?? "",
-          formatHoursStatusFlag(parseMinutesValue(row.missing_hours) ?? 0, parseMinutesValue(row.total_hours) ?? 0),
+          formatHoursStatusFlag(parseMinutesValue(row.missing_hours) ?? 0, parseMinutesValue(row.total_hours) ?? 0, row.member_status),
           parseMinutesValue(row.needs_review_sessions) ?? "",
         ];
         return values.map(toCsvValue).join(",");

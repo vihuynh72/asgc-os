@@ -8,9 +8,10 @@ import {
   completionPercent,
   csvEscape,
   deriveRosterStatus,
+  hoursFlagLabel,
+  hoursStatusLabel,
   inferRoleLabel,
   reportStatus,
-  reportStatusLabel,
   rosterStatusLabel,
   roleGroupLabel,
   roleKeyRank,
@@ -92,13 +93,6 @@ function rosterFlag(status: "assigned" | "vacant" | "no_show"): string {
   if (status === "vacant") return "⚪ Vacant";
   if (status === "no_show") return "🛑 No show";
   return "🟢 Assigned";
-}
-
-function hoursFlag(statusKey: ReturnType<typeof reportStatus>): string {
-  if (statusKey === "complete") return "✅ Complete";
-  if (statusKey === "behind") return "🟠 Behind";
-  if (statusKey === "missing") return "❌ Missing";
-  return "⚪ Not required";
 }
 
 function normalizeEmail(raw: string | null | undefined): string {
@@ -462,8 +456,8 @@ export async function GET(request: NextRequest) {
         formatHoursCsv(r.total_hours),
         formatHoursCsv(r.missing_hours),
         formatPercentCsv(completion),
-        reportStatusLabel(statusKey),
-        hoursFlag(statusKey),
+        hoursStatusLabel({ statusKey, memberStatus: r.member_status }),
+        hoursFlagLabel({ statusKey, memberStatus: r.member_status }),
         r.needs_review_sessions,
       ]
         .map(csvEscape)

@@ -180,6 +180,34 @@ export function reportStatusLabel(statusKey) {
 }
 
 /**
+ * Human-friendly hours status label for display in table/report views.
+ *
+ * Vacant and no-show rows are intentionally separated from generic "Missing" so
+ * roster gaps are not conflated with members who simply did not check in.
+ *
+ * @param {{ statusKey: ReturnType<typeof reportStatus>, memberStatus?: ReturnType<typeof deriveRosterStatus> }} params
+ */
+export function hoursStatusLabel({ statusKey, memberStatus }) {
+  if (memberStatus === "vacant") return "Vacant slot";
+  if (memberStatus === "no_show" && statusKey === "missing") return "No show";
+  return reportStatusLabel(statusKey);
+}
+
+/**
+ * Symbol-driven hours status flag for CSV exports.
+ *
+ * @param {{ statusKey: ReturnType<typeof reportStatus>, memberStatus?: ReturnType<typeof deriveRosterStatus> }} params
+ */
+export function hoursFlagLabel({ statusKey, memberStatus }) {
+  if (memberStatus === "vacant") return "⚪ Vacant slot";
+  if (memberStatus === "no_show" && statusKey === "missing") return "🛑 No show";
+  if (statusKey === "complete") return "✅ Complete";
+  if (statusKey === "behind") return "🟠 Behind";
+  if (statusKey === "missing") return "❌ Missing";
+  return "⚪ Not required";
+}
+
+/**
  * @param {{ required_hours?: number | string, total_hours?: number | string }} row
  */
 export function completionPercent(row) {
