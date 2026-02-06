@@ -4,6 +4,8 @@ import assert from "node:assert/strict";
 import {
   completionPercent,
   deriveRosterStatus,
+  hoursFlagLabel,
+  hoursStatusLabel,
   inferRoleLabel,
   reportStatusLabel,
   roleGroupLabel,
@@ -88,4 +90,15 @@ test("deriveRosterStatus maps vacant and no-show rows", () => {
   assert.equal(deriveRosterStatus({ name: "", required_hours: 6, total_hours: 0 }), "vacant");
   assert.equal(deriveRosterStatus({ name: "Ciana Garcia", required_hours: 6, total_hours: 0 }), "no_show");
   assert.equal(deriveRosterStatus({ name: "Ciana Garcia", required_hours: 6, total_hours: 1 }), "assigned");
+});
+
+test("hoursStatusLabel and hoursFlagLabel distinguish vacant/no-show from generic missing", () => {
+  assert.equal(hoursStatusLabel({ statusKey: "missing", memberStatus: "vacant" }), "Vacant slot");
+  assert.equal(hoursFlagLabel({ statusKey: "missing", memberStatus: "vacant" }), "⚪ Vacant slot");
+
+  assert.equal(hoursStatusLabel({ statusKey: "missing", memberStatus: "no_show" }), "No show");
+  assert.equal(hoursFlagLabel({ statusKey: "missing", memberStatus: "no_show" }), "🛑 No show");
+
+  assert.equal(hoursStatusLabel({ statusKey: "missing", memberStatus: "assigned" }), "Missing");
+  assert.equal(hoursFlagLabel({ statusKey: "missing", memberStatus: "assigned" }), "❌ Missing");
 });
