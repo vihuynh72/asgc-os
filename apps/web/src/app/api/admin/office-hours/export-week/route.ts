@@ -88,6 +88,19 @@ function formatPercentCsv(unit: number): string {
   return `${(Math.round(Math.max(0, Math.min(1, unit)) * 1000) / 10).toFixed(1)}%`;
 }
 
+function rosterFlag(status: "assigned" | "vacant" | "no_show"): string {
+  if (status === "vacant") return "⚪ Vacant";
+  if (status === "no_show") return "🛑 No show";
+  return "🟢 Assigned";
+}
+
+function hoursFlag(statusKey: ReturnType<typeof reportStatus>): string {
+  if (statusKey === "complete") return "✅ Complete";
+  if (statusKey === "behind") return "🟠 Behind";
+  if (statusKey === "missing") return "❌ Missing";
+  return "⚪ Not required";
+}
+
 function normalizeEmail(raw: string | null | undefined): string {
   return (raw ?? "").trim().toLowerCase();
 }
@@ -412,11 +425,13 @@ export async function GET(request: NextRequest) {
     "Member Name",
     "Email",
     "Roster Status",
+    "Roster Flag",
     "Required Hours",
     "Completed Hours",
     "Missing Hours",
     "Completion Percent",
     "Status",
+    "Hours Flag",
     "Needs Review Sessions",
   ];
 
@@ -442,11 +457,13 @@ export async function GET(request: NextRequest) {
         r.name,
         r.email,
         rosterStatusLabel(r.member_status),
+        rosterFlag(r.member_status),
         formatHoursCsv(r.required_hours),
         formatHoursCsv(r.total_hours),
         formatHoursCsv(r.missing_hours),
         formatPercentCsv(completion),
         reportStatusLabel(statusKey),
+        hoursFlag(statusKey),
         r.needs_review_sessions,
       ]
         .map(csvEscape)

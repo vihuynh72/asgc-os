@@ -12,7 +12,17 @@ import {
 
 test("inferRoleLabel does not classify VPs as President", () => {
   assert.equal(inferRoleLabel({ email: "asgc.vpfinance@gcccd.edu", roleKey: "executive" }), "Vice President of Finance");
+  assert.equal(inferRoleLabel({ email: "asgc.execvp@gcccd.edu", roleKey: "executive" }), "Executive Vice President");
   assert.equal(inferRoleLabel({ email: "asgc.president@gcccd.edu", roleKey: "president" }), "President");
+});
+
+test("inferRoleLabel derives specific director titles from ASGC role emails", () => {
+  assert.equal(inferRoleLabel({ email: "asgc.dirwebdev@gcccd.edu", roleKey: "director" }), "Director of Website Development");
+  assert.equal(inferRoleLabel({ email: "asgc.dirboardaffairs@gcccd.edu", roleKey: "director" }), "Director of Board Affairs");
+  assert.equal(inferRoleLabel({ email: "asgc.studentleg@gcccd.edu", roleKey: "director" }), "Director of Student Legislation");
+  assert.equal(inferRoleLabel({ email: "asgc.dirstudentleg@gcccd.edu", roleKey: "director" }), "Director of Student Legislation");
+  assert.equal(inferRoleLabel({ email: "asgc.dircampusact@gcccd.edu", roleKey: "director" }), "Director of Campus Activities");
+  assert.equal(inferRoleLabel({ email: "asgc.dirpublicity@gcccd.edu", roleKey: "director" }), "Director of Publicity");
 });
 
 test("sortWeeklyReportRows orders president before executives (even if executive contains 'President')", () => {

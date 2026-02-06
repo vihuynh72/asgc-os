@@ -99,16 +99,25 @@ export function emailLocalPart(email) {
  */
 export function inferRoleLabel({ email, roleKey }) {
   const local = emailLocalPart(email);
+  const compactLocal = local.replace(/^asgc[._-]?/, "").replace(/[^a-z0-9]/g, "");
 
   if (roleKey === "president") return "President";
 
   if (roleKey === "executive") {
+    if (compactLocal.includes("execvp") || compactLocal.includes("evp")) return "Executive Vice President";
     if (local.includes("vpfinance")) return "Vice President of Finance";
     if (local.startsWith("vp") || local.includes("vicepresident") || local.includes("vice-president")) return "Vice President";
     return "Executive";
   }
 
-  if (roleKey === "director") return "Director";
+  if (roleKey === "director") {
+    if (compactLocal.includes("dirwebdev")) return "Director of Website Development";
+    if (compactLocal.includes("dirboardaffairs")) return "Director of Board Affairs";
+    if (compactLocal.includes("dirstudentleg") || compactLocal.includes("studentleg")) return "Director of Student Legislation";
+    if (compactLocal.includes("dircampusact")) return "Director of Campus Activities";
+    if (compactLocal.includes("dirpublicity")) return "Director of Publicity";
+    return "Director";
+  }
 
   if (roleKey === "board_member") {
     const m = local.match(/boardmember(\d{1,2})/);

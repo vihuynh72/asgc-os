@@ -144,6 +144,21 @@ function statusPill(statusKey: string): { label: string; className: string } {
   return { label: "Not required", className: "bg-foreground/10 text-foreground/70" };
 }
 
+function rosterBadge(value: string): { label: string; className: string } {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "vacant") return { label: "⚪ Vacant", className: "bg-slate-500/15 text-slate-700 dark:text-slate-300" };
+  if (normalized === "no show") return { label: "🛑 No show", className: "bg-rose-500/15 text-rose-700 dark:text-rose-300" };
+  return { label: "🟢 Assigned", className: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300" };
+}
+
+function hoursBadge(value: string): { label: string; className: string } {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "complete") return { label: "✅ Complete", className: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300" };
+  if (normalized === "behind") return { label: "🟠 Behind", className: "bg-amber-500/15 text-amber-700 dark:text-amber-300" };
+  if (normalized === "missing") return { label: "❌ Missing", className: "bg-red-500/15 text-red-700 dark:text-red-300" };
+  return { label: "⚪ Not required", className: "bg-foreground/10 text-foreground/70" };
+}
+
 export function OfficeHoursCsvPanel({ initialWeekStart }: { initialWeekStart: string | null }) {
   const [anchorDate, setAnchorDate] = useState<string>(() => normalizeDateOnlyString(initialWeekStart) ?? todayDateString());
   const [csvText, setCsvText] = useState<string>("");
@@ -594,19 +609,89 @@ export function OfficeHoursCsvPanel({ initialWeekStart }: { initialWeekStart: st
                 </tr>
               </thead>
               <tbody className="divide-y">
-                {filteredTableRows.map((r, idx) => (
-                  <tr key={idx} className={idx % 2 === 1 ? "bg-foreground/[0.02]" : undefined}>
-                    {displayHeaders.map((h) => {
-                      const col = parsed.headers.indexOf(h);
-                      const value = col >= 0 ? (r[col] ?? "") : "";
-                      return (
-                        <td key={`${idx}:${h}`} className="px-3 py-2">
-                          {value}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))}
+                {filteredTableRows.map((r, idx) => {
+                  const statusIdx = parsed.headers.indexOf("Status");
+                  const statusRaw = statusIdx >= 0 ? (r[statusIdx] ?? "") : "";
+                  const statusLower = statusRaw.trim().toLowerCase();
+                  const rowTone =
+                    statusLower === "missing"
+                      ? "bg-red-500/5"
+                      : statusLower === "behind"
+                        ? "bg-amber-500/5"
+                        : idx % 2 === 1
+                          ? "bg-foreground/[0.02]"
+                          : undefined;
+
+                  return (
+                    <tr key={idx} className={rowTone}>
+                      {displayHeaders.map((h) => {
+                        const col = parsed.headers.indexOf(h);
+                        const value = col >= 0 ? (r[col] ?? "") : "";
+
+                        if (h === "Roster Status") {
+                          const badge = rosterBadge(value);
+                          return (
+                            <td key={`${idx}:${h}`} className="px-3 py-2">
+                              <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${badge.className}`}>
+                                {badge.label}
+                              </span>
+                            </td>
+                          );
+                        }
+
+                        if (h === "Status") {
+                          const badge = hoursBadge(value);
+                          return (
+                            <td key={`${idx}:${h}`} className="px-3 py-2">
+                              <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${badge.className}`}>
+                                {badge.label}
+                              </span>
+                            </td>
+                          );
+                        }
+
+                        if (h === "Completion Percent") {
+                          const pct = Number.parseFloat(value.replace("%", ""));
+                          const tone =
+                            Number.isFinite(pct) && pct >= 100
+                              ? "text-emerald-700 dark:text-emerald-300"
+                              : Number.isFinite(pct) && pct <= 0
+                                ? "text-red-700 dark:text-red-300"
+                                : Number.isFinite(pct) && pct < 75
+                                  ? "text-amber-700 dark:text-amber-300"
+                                  : "text-foreground";
+                          return (
+                            <td key={`${idx}:${h}`} className={`px-3 py-2 font-semibold ${tone}`}>
+                              {value}
+                            </td>
+                          );
+                        }
+
+                        if (h === "Role" || h === "Member Name") {
+                          return (
+                            <td key={`${idx}:${h}`} className="px-3 py-2 font-medium">
+                              {value}
+                            </td>
+                          );
+                        }
+
+                        if (h === "Roster Flag" || h === "Hours Flag") {
+                          return (
+                            <td key={`${idx}:${h}`} className="px-3 py-2">
+                              <span className="font-medium">{value}</span>
+                            </td>
+                          );
+                        }
+
+                        return (
+                          <td key={`${idx}:${h}`} className="px-3 py-2">
+                            {value}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                })}
                 {filteredTableRows.length === 0 ? (
                   <tr>
                     <td className="px-3 py-3 text-sm text-foreground/60" colSpan={Math.max(1, displayHeaders.length)}>

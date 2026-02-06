@@ -521,6 +521,18 @@ function formatRosterStatus(value: "assigned" | "vacant" | "no_show" | undefined
   return "Assigned";
 }
 
+function formatRosterStatusFlag(value: "assigned" | "vacant" | "no_show" | undefined): string {
+  if (value === "vacant") return "⚪ Vacant";
+  if (value === "no_show") return "🛑 No show";
+  return "🟢 Assigned";
+}
+
+function formatHoursStatusFlag(missingHours: number, completedHours: number): string {
+  if (missingHours <= 0) return "✅ Complete";
+  if (completedHours <= 0) return "❌ Missing";
+  return "🟠 Behind";
+}
+
 function toCsvValue(value: string | number | boolean | null | undefined): string {
   if (value === null || value === undefined) return "";
   const raw = String(value);
@@ -1299,9 +1311,11 @@ export function AdminPanel({
       "member_name",
       "email",
       "roster_status",
+      "roster_flag",
       "required_hours",
       "completed_hours",
       "missing_hours",
+      "hours_flag",
       "needs_review_sessions",
     ];
     const lines = [
@@ -1326,9 +1340,11 @@ export function AdminPanel({
           row.name ?? "",
           row.email ?? "",
           formatRosterStatus(row.member_status),
+          formatRosterStatusFlag(row.member_status),
           parseMinutesValue(row.required_hours) ?? "",
           parseMinutesValue(row.total_hours) ?? "",
           parseMinutesValue(row.missing_hours) ?? "",
+          formatHoursStatusFlag(parseMinutesValue(row.missing_hours) ?? 0, parseMinutesValue(row.total_hours) ?? 0),
           parseMinutesValue(row.needs_review_sessions) ?? "",
         ];
         return values.map(toCsvValue).join(",");
