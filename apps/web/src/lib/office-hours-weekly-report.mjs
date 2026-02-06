@@ -64,6 +64,26 @@ export function roleKeyRank(roleKey) {
 }
 
 /**
+ * @param {RoleKey} roleKey
+ */
+export function roleGroupLabel(roleKey) {
+  switch (roleKey) {
+    case "president":
+      return "President";
+    case "executive":
+      return "Executives";
+    case "director":
+      return "Directors";
+    case "board_member":
+      return "Board Members";
+    case "volunteer":
+      return "Volunteers";
+    default:
+      return "Members";
+  }
+}
+
+/**
  * @param {string} email
  * @returns {string}
  */
@@ -138,6 +158,32 @@ export function reportStatus(row) {
   if (missing <= 0) return "complete";
   if (total <= 0 && missing >= required) return "missing";
   return "behind";
+}
+
+/**
+ * @param {ReturnType<typeof reportStatus>} statusKey
+ */
+export function reportStatusLabel(statusKey) {
+  if (statusKey === "complete") return "Complete";
+  if (statusKey === "missing") return "Missing";
+  if (statusKey === "behind") return "Behind";
+  return "Not required";
+}
+
+/**
+ * @param {{ required_hours?: number | string, total_hours?: number | string }} row
+ */
+export function completionPercent(row) {
+  const requiredRaw = row.required_hours;
+  const requiredNum = typeof requiredRaw === "number" ? requiredRaw : typeof requiredRaw === "string" ? Number(requiredRaw) : NaN;
+  const required = Number.isFinite(requiredNum) ? Math.max(0, requiredNum) : 0;
+
+  const totalRaw = row.total_hours;
+  const totalNum = typeof totalRaw === "number" ? totalRaw : typeof totalRaw === "string" ? Number(totalRaw) : NaN;
+  const total = Number.isFinite(totalNum) ? Math.max(0, totalNum) : 0;
+
+  if (required <= 0) return 1;
+  return Math.max(0, Math.min(1, total / required));
 }
 
 /**

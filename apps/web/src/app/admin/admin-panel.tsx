@@ -140,10 +140,15 @@ type BootstrapRoleGrantRow = {
 type AdminWeeklyHoursPreviewRow = {
   user_id: string;
   week_start: string;
-  display_name: string;
+  role_key: string | null;
+  role: string;
+  name: string;
   email: string;
-  total_minutes: number | string;
-  deficit_minutes: number | string;
+  member_status?: "active" | "pending_sign_in";
+  required_hours: number | string;
+  total_hours: number | string;
+  missing_hours: number | string;
+  needs_review_sessions: number | string;
 };
 
 type AdminMeetingRow = {
@@ -497,22 +502,17 @@ function buildOfficeConfigBaseline(
   };
 }
 
-function formatMinutes(totalMinutes: number): string {
-  const minutes = Math.max(0, Math.round(totalMinutes));
-  const hoursPart = Math.floor(minutes / 60);
-  const minutesPart = minutes % 60;
-  return `${hoursPart}h ${minutesPart}m`;
-}
-
 function parseMinutesValue(value: number | string | null | undefined): number | null {
   if (value === null || value === undefined) return null;
   const n = typeof value === "number" ? value : Number(value);
   return Number.isFinite(n) ? n : null;
 }
 
-function formatMinutesValue(value: number | string | null | undefined): string {
+function formatHoursValue(value: number | string | null | undefined): string {
   const n = parseMinutesValue(value);
-  return n === null ? "—" : formatMinutes(n);
+  if (n === null) return "—";
+  const rounded = Math.round(Math.max(0, n) * 100) / 100;
+  return `${rounded.toFixed(2)}h`;
 }
 
 function toCsvValue(value: string | number | boolean | null | undefined): string {
@@ -1175,11 +1175,11 @@ export function AdminPanel({
     const query = exportPreviewSearch.trim().toLowerCase();
     const filtered = base.filter((row) => {
       if (exportPreviewDeficitOnly) {
-        const deficit = parseMinutesValue(row.deficit_minutes) ?? 0;
+        const deficit = parseMinutesValue(row.missing_hours) ?? 0;
         if (deficit <= 0) return false;
       }
       if (!query) return true;
-      const hay = `${row.display_name ?? ""} ${row.email ?? ""}`.toLowerCase();
+      const hay = `${row.name ?? ""} ${row.role ?? ""} ${row.email ?? ""}`.toLowerCase();
       return hay.includes(query);
     });
 
@@ -1189,14 +1189,14 @@ export function AdminPanel({
     };
     const sorted = [...filtered].sort((a, b) => {
       if (exportPreviewSortKey === "name") {
-        const aName = (a.display_name || a.email || "").toLowerCase();
-        const bName = (b.display_name || b.email || "").toLowerCase();
+        const aName = (a.name || a.email || "").toLowerCase();
+        const bName = (b.name || b.email || "").toLowerCase();
         return aName.localeCompare(bName);
       }
       if (exportPreviewSortKey === "total") {
-        return toMinutes(b.total_minutes) - toMinutes(a.total_minutes);
+        return toMinutes(b.total_hours) - toMinutes(a.total_hours);
       }
-      return toMinutes(b.deficit_minutes) - toMinutes(a.deficit_minutes);
+      return toMinutes(b.missing_hours) - toMinutes(a.missing_hours);
     });
 
     return sorted;
@@ -1218,7 +1218,7 @@ export function AdminPanel({
     let totalDeficit = 0;
 
     for (const row of list) {
-      const deficit = parseMinutesValue(row.deficit_minutes) ?? 0;
+      const deficit = parseMinutesValue(row.missing_hours) ?? 0;
       if (deficit > 0) deficitCount += 1;
       totalDeficit += Math.max(0, deficit);
     }
@@ -1262,7 +1262,7 @@ export function AdminPanel({
   async function copyExportPreviewEmails(kind: "all" | "deficit") {
     const list = exportPreviewFilteredRows.filter((row) => {
       if (kind === "deficit") {
-        const deficit = parseMinutesValue(row.deficit_minutes) ?? 0;
+        const deficit = parseMinutesValue(row.missing_hours) ?? 0;
         return deficit > 0;
       }
       return true;
@@ -1288,20 +1288,42 @@ export function AdminPanel({
   function downloadExportPreviewCsv() {
     const header = [
       "week_start",
-      "display_name",
+      "group",
+      "role",
+      "member_name",
       "email",
-      "total_minutes",
-      "deficit_minutes",
+      "roster_status",
+      "required_hours",
+      "completed_hours",
+      "missing_hours",
+      "needs_review_sessions",
     ];
     const lines = [
       header.map(toCsvValue).join(","),
       ...exportPreviewFilteredRows.map((row) => {
+        const group =
+          row.role_key === "president"
+            ? "President"
+            : row.role_key === "executive"
+              ? "Executives"
+              : row.role_key === "director"
+                ? "Directors"
+                : row.role_key === "board_member"
+                  ? "Board Members"
+                  : row.role_key === "volunteer"
+                    ? "Volunteers"
+                    : "Members";
         const values = [
           row.week_start,
-          row.display_name ?? "",
+          group,
+          row.role ?? "",
+          row.name ?? "",
           row.email ?? "",
-          parseMinutesValue(row.total_minutes) ?? "",
-          parseMinutesValue(row.deficit_minutes) ?? "",
+          row.member_status === "pending_sign_in" ? "Pending sign-in" : "Active",
+          parseMinutesValue(row.required_hours) ?? "",
+          parseMinutesValue(row.total_hours) ?? "",
+          parseMinutesValue(row.missing_hours) ?? "",
+          parseMinutesValue(row.needs_review_sessions) ?? "",
         ];
         return values.map(toCsvValue).join(",");
       }),
@@ -4497,7 +4519,7 @@ export function AdminPanel({
             </div>
             <div className="flex flex-wrap items-center gap-3 border-t px-3 py-2 text-xs text-foreground/70">
               <span>Deficit: {exportPreviewSummary.deficitCount}</span>
-              <span>Total deficit: {formatMinutes(exportPreviewSummary.totalDeficit)}</span>
+              <span>Total deficit: {formatHoursValue(exportPreviewSummary.totalDeficit)}</span>
               <Button
                 variant="outline"
                 size="sm"
@@ -4527,28 +4549,34 @@ export function AdminPanel({
               <table className="w-full min-w-[760px] text-sm">
                 <thead className="border-t bg-foreground/5 text-left text-xs text-foreground/70">
                   <tr>
+                    <th className="px-3 py-2">Role</th>
                     <th className="px-3 py-2">Name</th>
                     <th className="px-3 py-2">Email</th>
-                    <th className="px-3 py-2 text-right">Total</th>
-                    <th className="px-3 py-2 text-right">Deficit</th>
+                    <th className="px-3 py-2">Status</th>
+                    <th className="px-3 py-2 text-right">Completed</th>
+                    <th className="px-3 py-2 text-right">Missing</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">
                   {exportPreviewFilteredRows.map((r) => {
-                    const deficit = parseMinutesValue(r.deficit_minutes) ?? 0;
+                    const deficit = parseMinutesValue(r.missing_hours) ?? 0;
                     const highlight = deficit > 0;
                     return (
                       <tr key={`${r.user_id}:${r.week_start}`} className={highlight ? "bg-red-500/5" : undefined}>
-                        <td className="px-3 py-2">{r.display_name || "—"}</td>
+                        <td className="px-3 py-2">{r.role || "—"}</td>
+                        <td className="px-3 py-2">{r.name || "—"}</td>
                         <td className="px-3 py-2">{r.email || "—"}</td>
-                        <td className="px-3 py-2 text-right font-mono">{formatMinutesValue(r.total_minutes)}</td>
-                        <td className="px-3 py-2 text-right font-mono">{formatMinutesValue(r.deficit_minutes)}</td>
+                        <td className="px-3 py-2">
+                          {r.member_status === "pending_sign_in" ? "Pending sign-in" : "Active"}
+                        </td>
+                        <td className="px-3 py-2 text-right font-mono">{formatHoursValue(r.total_hours)}</td>
+                        <td className="px-3 py-2 text-right font-mono">{formatHoursValue(r.missing_hours)}</td>
                       </tr>
                     );
                   })}
                   {exportPreviewFilteredRows.length === 0 ? (
                     <tr>
-                      <td className="px-3 py-3 text-sm text-foreground/60" colSpan={4}>
+                      <td className="px-3 py-3 text-sm text-foreground/60" colSpan={6}>
                         {exportPreviewFiltersActive ? "No rows match the current filters." : "No rows returned."}
                       </td>
                     </tr>

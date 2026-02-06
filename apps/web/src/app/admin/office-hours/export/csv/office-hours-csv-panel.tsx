@@ -6,7 +6,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { addDaysDateOnly, normalizeDateOnlyString, startOfWeekMondayDateOnly, todayDateString } from "@/lib/dateOnly";
-import { reportStatus, roleKeyRank, sortWeeklyReportRows } from "@/lib/office-hours-weekly-report.mjs";
+import {
+  completionPercent,
+  reportStatus,
+  roleGroupLabel,
+  roleKeyRank,
+  sortWeeklyReportRows,
+} from "@/lib/office-hours-weekly-report.mjs";
 
 type AdminWeeklyHoursPreviewRow = {
   user_id: string;
@@ -19,6 +25,7 @@ type AdminWeeklyHoursPreviewRow = {
   total_hours: number | string;
   missing_hours: number | string;
   needs_review_sessions: number | string;
+  member_status?: "active" | "pending_sign_in";
 };
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -127,15 +134,6 @@ async function copyToClipboard(text: string): Promise<boolean> {
   const ok = document.execCommand("copy");
   document.body.removeChild(textarea);
   return ok;
-}
-
-function groupLabel(key: string): string {
-  if (key === "president") return "President";
-  if (key === "executive") return "Executives";
-  if (key === "director") return "Directors";
-  if (key === "board_member") return "Board Members";
-  if (key === "volunteer") return "Volunteers";
-  return "Members";
 }
 
 function statusPill(statusKey: string): { label: string; className: string } {
@@ -257,6 +255,9 @@ export function OfficeHoursCsvPanel({ initialWeekStart }: { initialWeekStart: st
     if (!text) return { headers: [] as string[], rows: [] as string[][] };
     const all = parseCsvLinewise(text);
     const headers = all[0] ?? [];
+    if (headers[0]?.charCodeAt(0) === 0xfeff) {
+      headers[0] = headers[0].slice(1);
+    }
     const rowsOnly = all.slice(1);
     return { headers, rows: rowsOnly };
   }, [csvText]);
@@ -279,7 +280,7 @@ export function OfficeHoursCsvPanel({ initialWeekStart }: { initialWeekStart: st
     return orderedRows.filter((r) => {
       if (missingOnly && parseHoursValue(r.missing_hours) <= 0) return false;
       if (!q) return true;
-      const hay = `${r.role ?? ""} ${r.name ?? ""}`.toLowerCase();
+      const hay = `${r.role ?? ""} ${r.name ?? ""} ${r.email ?? ""}`.toLowerCase();
       return hay.includes(q);
     });
   }, [orderedRows, search, missingOnly]);
@@ -299,6 +300,7 @@ export function OfficeHoursCsvPanel({ initialWeekStart }: { initialWeekStart: st
     let behind = 0;
     let missing = 0;
     let notRequired = 0;
+    let pendingSignIn = 0;
     let requiredTotal = 0;
     let completedTotal = 0;
     let missingTotal = 0;
@@ -318,6 +320,8 @@ export function OfficeHoursCsvPanel({ initialWeekStart }: { initialWeekStart: st
         missing_hours: rem,
       });
 
+      if (row.member_status === "pending_sign_in") pendingSignIn += 1;
+
       if (statusKey === "complete") complete += 1;
       else if (statusKey === "behind") behind += 1;
       else if (statusKey === "missing") missing += 1;
@@ -330,6 +334,7 @@ export function OfficeHoursCsvPanel({ initialWeekStart }: { initialWeekStart: st
       behind,
       missing,
       notRequired,
+      pendingSignIn,
       requiredTotal,
       completedTotal,
       missingTotal,
@@ -431,7 +436,7 @@ export function OfficeHoursCsvPanel({ initialWeekStart }: { initialWeekStart: st
                 className="h-9 w-64 rounded-md border bg-transparent px-2 text-sm"
                 value={search}
                 onChange={(e: ChangeEvent<HTMLInputElement>) => setSearch(e.target.value)}
-                placeholder="Search name or role..."
+                placeholder="Search name, email, or role..."
               />
             </label>
             <Button variant="ghost" size="sm" onClick={() => setSearch("")} disabled={!search.trim()}>
@@ -459,7 +464,7 @@ export function OfficeHoursCsvPanel({ initialWeekStart }: { initialWeekStart: st
               <div className="space-y-1">
                 <div className="text-sm font-medium">Summary</div>
                 <div className="text-xs text-foreground/70">
-                  {summary.total} people • {summary.complete} complete • {summary.behind + summary.missing} behind • {summary.notRequired} not required
+                  {summary.total} people • {summary.complete} complete • {summary.behind + summary.missing} behind • {summary.notRequired} not required • {summary.pendingSignIn} pending sign-in
                 </div>
               </div>
 
@@ -484,7 +489,7 @@ export function OfficeHoursCsvPanel({ initialWeekStart }: { initialWeekStart: st
             {groups.map((g) => (
               <div key={g.key} className="rounded-md border">
                 <div className="flex items-center justify-between gap-3 border-b bg-foreground/5 px-3 py-2">
-                  <div className="text-sm font-medium">{groupLabel(g.key)}</div>
+                  <div className="text-sm font-medium">{roleGroupLabel(g.key)}</div>
                   <div className="text-xs text-foreground/60">{g.rows.length} people</div>
                 </div>
 
@@ -493,7 +498,10 @@ export function OfficeHoursCsvPanel({ initialWeekStart }: { initialWeekStart: st
                     const required = parseHoursValue(r.required_hours);
                     const completed = parseHoursValue(r.total_hours);
                     const missingH = parseHoursValue(r.missing_hours);
-                    const pct = required > 0 ? Math.max(0, Math.min(1, completed / required)) : 0;
+                    const pct = completionPercent({
+                      required_hours: required,
+                      total_hours: completed,
+                    });
                     const statusKey = reportStatus({
                       required_hours: required,
                       total_hours: completed,
@@ -514,6 +522,11 @@ export function OfficeHoursCsvPanel({ initialWeekStart }: { initialWeekStart: st
                               <span className="text-xs text-foreground/60">•</span>
                               <span className="text-sm">{r.name || "—"}</span>
                               <span className={`rounded-full px-2 py-0.5 text-xs ${pill.className}`}>{pill.label}</span>
+                              {r.member_status === "pending_sign_in" ? (
+                                <span className="rounded-full bg-sky-500/15 px-2 py-0.5 text-xs text-sky-700 dark:text-sky-300">
+                                  Pending sign-in
+                                </span>
+                              ) : null}
                               {needsReview > 0 ? (
                                 <span className="rounded-full bg-indigo-500/15 px-2 py-0.5 text-xs text-indigo-700 dark:text-indigo-300">
                                   Needs review ({needsReview})
@@ -523,6 +536,7 @@ export function OfficeHoursCsvPanel({ initialWeekStart }: { initialWeekStart: st
                             <div className="text-xs text-foreground/60">
                               Required {formatHours(required)} • Completed {formatHours(completed)} • Missing {formatHours(missingH)}
                             </div>
+                            {r.email ? <div className="text-[11px] text-foreground/50">{r.email}</div> : null}
                           </div>
 
                           <div className="space-y-1">
