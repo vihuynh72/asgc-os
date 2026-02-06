@@ -9,7 +9,6 @@ import { addDaysDateOnly, normalizeDateOnlyString, startOfWeekMondayDateOnly, to
 import {
   completionPercent,
   reportStatus,
-  rosterStatusLabel,
   roleGroupLabel,
   roleKeyRank,
   sortWeeklyReportRows,
@@ -49,65 +48,6 @@ async function fetchText(url: string, init?: RequestInit): Promise<string> {
   return res.text();
 }
 
-function parseCsvLinewise(input: string): string[][] {
-  const rows: string[][] = [];
-  let row: string[] = [];
-  let field = "";
-  let inQuotes = false;
-
-  const pushField = () => {
-    row.push(field);
-    field = "";
-  };
-  const pushRow = () => {
-    if (row.length === 0 && field.length === 0) return;
-    pushField();
-    rows.push(row);
-    row = [];
-  };
-
-  for (let i = 0; i < input.length; i += 1) {
-    const ch = input[i];
-
-    if (inQuotes) {
-      if (ch === "\"") {
-        const next = input[i + 1];
-        if (next === "\"") {
-          field += "\"";
-          i += 1;
-          continue;
-        }
-        inQuotes = false;
-        continue;
-      }
-      field += ch;
-      continue;
-    }
-
-    if (ch === "\"") {
-      inQuotes = true;
-      continue;
-    }
-
-    if (ch === ",") {
-      pushField();
-      continue;
-    }
-
-    if (ch === "\n") {
-      pushRow();
-      continue;
-    }
-
-    if (ch === "\r") continue;
-
-    field += ch;
-  }
-
-  pushRow();
-  return rows;
-}
-
 function parseHoursValue(value: number | string | null | undefined): number {
   if (value === null || value === undefined) return 0;
   const n = typeof value === "number" ? value : Number(value);
@@ -144,19 +84,17 @@ function statusPill(statusKey: string): { label: string; className: string } {
   return { label: "Not required", className: "bg-foreground/10 text-foreground/70" };
 }
 
-function rosterBadge(value: string): { label: string; className: string } {
-  const normalized = value.trim().toLowerCase();
-  if (normalized === "vacant") return { label: "⚪ Vacant", className: "bg-slate-500/15 text-slate-700 dark:text-slate-300" };
-  if (normalized === "no show") return { label: "🛑 No show", className: "bg-rose-500/15 text-rose-700 dark:text-rose-300" };
-  return { label: "🟢 Assigned", className: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300" };
+function rosterPill(memberStatus: AdminWeeklyHoursPreviewRow["member_status"]): { label: string; className: string } {
+  if (memberStatus === "vacant") return { label: "Vacant", className: "bg-slate-500/15 text-slate-700 dark:text-slate-300" };
+  if (memberStatus === "no_show") return { label: "No show", className: "bg-rose-500/15 text-rose-700 dark:text-rose-300" };
+  return { label: "Assigned", className: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300" };
 }
 
-function hoursBadge(value: string): { label: string; className: string } {
-  const normalized = value.trim().toLowerCase();
-  if (normalized === "complete") return { label: "✅ Complete", className: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300" };
-  if (normalized === "behind") return { label: "🟠 Behind", className: "bg-amber-500/15 text-amber-700 dark:text-amber-300" };
-  if (normalized === "missing") return { label: "❌ Missing", className: "bg-red-500/15 text-red-700 dark:text-red-300" };
-  return { label: "⚪ Not required", className: "bg-foreground/10 text-foreground/70" };
+function rowBackground(statusKey: ReturnType<typeof reportStatus>): string {
+  if (statusKey === "missing") return "bg-red-500/[0.06]";
+  if (statusKey === "behind") return "bg-amber-500/[0.06]";
+  if (statusKey === "not_required") return "bg-foreground/[0.02]";
+  return "";
 }
 
 export function OfficeHoursCsvPanel({ initialWeekStart }: { initialWeekStart: string | null }) {
@@ -265,29 +203,6 @@ export function OfficeHoursCsvPanel({ initialWeekStart }: { initialWeekStart: st
     const qs = weekStartResolved ? `?weekStart=${encodeURIComponent(weekStartResolved)}` : "";
     window.open(`/admin/office-hours/export${qs}`, "_blank", "noopener,noreferrer");
   }
-
-  const parsed = useMemo(() => {
-    const text = csvText.trim();
-    if (!text) return { headers: [] as string[], rows: [] as string[][] };
-    const all = parseCsvLinewise(text);
-    const headers = all[0] ?? [];
-    if (headers[0]?.charCodeAt(0) === 0xfeff) {
-      headers[0] = headers[0].slice(1);
-    }
-    const rowsOnly = all.slice(1);
-    return { headers, rows: rowsOnly };
-  }, [csvText]);
-
-  const displayHeaders = useMemo(() => {
-    const hidden = new Set(["Week Start"]);
-    return parsed.headers.filter((h) => !hidden.has(h));
-  }, [parsed.headers]);
-
-  const filteredTableRows = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return parsed.rows;
-    return parsed.rows.filter((r) => r.join(" ").toLowerCase().includes(q));
-  }, [parsed.rows, search]);
 
   const orderedRows = useMemo(() => sortWeeklyReportRows(rows ?? []), [rows]);
 
@@ -483,7 +398,8 @@ export function OfficeHoursCsvPanel({ initialWeekStart }: { initialWeekStart: st
               <div className="space-y-1">
                 <div className="text-sm font-medium">Summary</div>
                 <div className="text-xs text-foreground/70">
-                  {summary.total} people • {summary.complete} complete • {summary.behind + summary.missing} behind • {summary.notRequired} not required • {summary.vacant} vacant • {summary.noShow} no show
+                  {summary.total} people • {summary.complete} complete • {summary.behind} behind • {summary.missing} missing •{" "}
+                  {summary.notRequired} not required • {summary.vacant} vacant • {summary.noShow} no show
                 </div>
               </div>
 
@@ -527,31 +443,19 @@ export function OfficeHoursCsvPanel({ initialWeekStart }: { initialWeekStart: st
                       missing_hours: missingH,
                     });
                     const pill = statusPill(statusKey);
+                    const roster = rosterPill(r.member_status);
                     const needsReview = Number.parseInt(String(r.needs_review_sessions ?? 0), 10) || 0;
 
                     return (
-                      <div
-                        key={`${r.user_id}:${r.week_start}`}
-                        className={statusKey === "complete" ? "bg-transparent" : "bg-red-500/5"}
-                      >
+                      <div key={`${r.user_id}:${r.week_start}`} className={rowBackground(statusKey)}>
                         <div className="grid gap-2 px-3 py-3 sm:grid-cols-[1.4fr_1fr_0.8fr] sm:items-center">
                           <div className="space-y-1">
                             <div className="flex flex-wrap items-center gap-2">
                               <span className="text-sm font-medium">{r.role || "—"}</span>
                               <span className="text-xs text-foreground/60">•</span>
-                              <span className="text-sm">{r.name || "—"}</span>
+                              <span className="text-sm">{r.name || "Vacant"}</span>
+                              <span className={`rounded-full px-2 py-0.5 text-xs ${roster.className}`}>{roster.label}</span>
                               <span className={`rounded-full px-2 py-0.5 text-xs ${pill.className}`}>{pill.label}</span>
-                              {r.member_status === "vacant" || r.member_status === "no_show" ? (
-                                <span
-                                  className={
-                                    r.member_status === "vacant"
-                                      ? "rounded-full bg-slate-500/15 px-2 py-0.5 text-xs text-slate-700 dark:text-slate-300"
-                                      : "rounded-full bg-rose-500/15 px-2 py-0.5 text-xs text-rose-700 dark:text-rose-300"
-                                  }
-                                >
-                                  {rosterStatusLabel(r.member_status)}
-                                </span>
-                              ) : null}
                               {needsReview > 0 ? (
                                 <span className="rounded-full bg-indigo-500/15 px-2 py-0.5 text-xs text-indigo-700 dark:text-indigo-300">
                                   Needs review ({needsReview})
@@ -597,104 +501,93 @@ export function OfficeHoursCsvPanel({ initialWeekStart }: { initialWeekStart: st
 
       {viewMode === "table" ? (
         <div className="rounded-md border p-3">
+          <div className="mb-3 text-xs text-foreground/70">
+            Compact table view for fast scanning. The downloaded CSV includes additional symbol flags.
+          </div>
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[760px] text-sm">
-              <thead className="bg-foreground/5 text-left text-xs text-foreground/70">
+            <table className="w-full min-w-[1080px] text-sm">
+              <thead className="bg-foreground/5 text-left text-xs font-semibold text-foreground/70">
                 <tr>
-                  {displayHeaders.map((h) => (
-                    <th key={h} className="px-3 py-2">
-                      {h}
-                    </th>
-                  ))}
+                  <th className="px-3 py-2">Position</th>
+                  <th className="px-3 py-2">Member</th>
+                  <th className="px-3 py-2">Roster</th>
+                  <th className="px-3 py-2 text-right">Required</th>
+                  <th className="px-3 py-2 text-right">Completed</th>
+                  <th className="px-3 py-2 text-right">Missing</th>
+                  <th className="px-3 py-2">Completion</th>
+                  <th className="px-3 py-2">Hours Status</th>
                 </tr>
               </thead>
               <tbody className="divide-y">
-                {filteredTableRows.map((r, idx) => {
-                  const statusIdx = parsed.headers.indexOf("Status");
-                  const statusRaw = statusIdx >= 0 ? (r[statusIdx] ?? "") : "";
-                  const statusLower = statusRaw.trim().toLowerCase();
-                  const rowTone =
-                    statusLower === "missing"
-                      ? "bg-red-500/5"
-                      : statusLower === "behind"
-                        ? "bg-amber-500/5"
-                        : idx % 2 === 1
-                          ? "bg-foreground/[0.02]"
-                          : undefined;
+                {visibleRows.map((r, idx) => {
+                  const required = parseHoursValue(r.required_hours);
+                  const completed = parseHoursValue(r.total_hours);
+                  const missingH = parseHoursValue(r.missing_hours);
+                  const statusKey = reportStatus({
+                    required_hours: required,
+                    total_hours: completed,
+                    missing_hours: missingH,
+                  });
+                  const status = statusPill(statusKey);
+                  const roster = rosterPill(r.member_status);
+                  const completion = completionPercent({
+                    required_hours: required,
+                    total_hours: completed,
+                  });
+                  const completionLabel = `${Math.round(completion * 100)}%`;
+                  const needsReview = Number.parseInt(String(r.needs_review_sessions ?? 0), 10) || 0;
+                  const rowTone = rowBackground(statusKey) || (idx % 2 === 1 ? "bg-foreground/[0.01]" : "");
+                  const completionBarTone =
+                    statusKey === "complete"
+                      ? "bg-emerald-500"
+                      : statusKey === "missing"
+                        ? "bg-red-500"
+                        : statusKey === "behind"
+                          ? "bg-amber-500"
+                          : "bg-foreground/30";
 
                   return (
                     <tr key={idx} className={rowTone}>
-                      {displayHeaders.map((h) => {
-                        const col = parsed.headers.indexOf(h);
-                        const value = col >= 0 ? (r[col] ?? "") : "";
-
-                        if (h === "Roster Status") {
-                          const badge = rosterBadge(value);
-                          return (
-                            <td key={`${idx}:${h}`} className="px-3 py-2">
-                              <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${badge.className}`}>
-                                {badge.label}
-                              </span>
-                            </td>
-                          );
-                        }
-
-                        if (h === "Status") {
-                          const badge = hoursBadge(value);
-                          return (
-                            <td key={`${idx}:${h}`} className="px-3 py-2">
-                              <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${badge.className}`}>
-                                {badge.label}
-                              </span>
-                            </td>
-                          );
-                        }
-
-                        if (h === "Completion Percent") {
-                          const pct = Number.parseFloat(value.replace("%", ""));
-                          const tone =
-                            Number.isFinite(pct) && pct >= 100
-                              ? "text-emerald-700 dark:text-emerald-300"
-                              : Number.isFinite(pct) && pct <= 0
-                                ? "text-red-700 dark:text-red-300"
-                                : Number.isFinite(pct) && pct < 75
-                                  ? "text-amber-700 dark:text-amber-300"
-                                  : "text-foreground";
-                          return (
-                            <td key={`${idx}:${h}`} className={`px-3 py-2 font-semibold ${tone}`}>
-                              {value}
-                            </td>
-                          );
-                        }
-
-                        if (h === "Role" || h === "Member Name") {
-                          return (
-                            <td key={`${idx}:${h}`} className="px-3 py-2 font-medium">
-                              {value}
-                            </td>
-                          );
-                        }
-
-                        if (h === "Roster Flag" || h === "Hours Flag") {
-                          return (
-                            <td key={`${idx}:${h}`} className="px-3 py-2">
-                              <span className="font-medium">{value}</span>
-                            </td>
-                          );
-                        }
-
-                        return (
-                          <td key={`${idx}:${h}`} className="px-3 py-2">
-                            {value}
-                          </td>
-                        );
-                      })}
+                      <td className="px-3 py-3 align-top">
+                        <div className="font-medium">{r.role || "Member"}</div>
+                        <div className="text-xs text-foreground/60">{roleGroupLabel(r.role_key ?? null)}</div>
+                      </td>
+                      <td className="px-3 py-3 align-top">
+                        <div className={cn("font-medium", r.member_status === "vacant" && "text-foreground/70")}>
+                          {r.name || "Vacant"}
+                        </div>
+                        <div className="text-xs text-foreground/60">{r.email || "No email on file"}</div>
+                      </td>
+                      <td className="px-3 py-3 align-top">
+                        <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${roster.className}`}>
+                          {roster.label}
+                        </span>
+                      </td>
+                      <td className="px-3 py-3 text-right font-mono">{formatHours(required)}</td>
+                      <td className="px-3 py-3 text-right font-mono">{formatHours(completed)}</td>
+                      <td className="px-3 py-3 text-right font-mono">{formatHours(missingH)}</td>
+                      <td className="px-3 py-3 align-top">
+                        <div className="w-28 space-y-1">
+                          <div className="h-1.5 overflow-hidden rounded-full bg-foreground/10">
+                            <div className={completionBarTone} style={{ width: `${Math.round(completion * 100)}%`, height: "100%" }} />
+                          </div>
+                          <div className="text-xs font-medium text-foreground/70">{completionLabel}</div>
+                        </div>
+                      </td>
+                      <td className="px-3 py-3 align-top">
+                        <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${status.className}`}>
+                          {status.label}
+                        </span>
+                        {needsReview > 0 ? (
+                          <div className="mt-1 text-xs text-indigo-700 dark:text-indigo-300">Needs review: {needsReview}</div>
+                        ) : null}
+                      </td>
                     </tr>
                   );
                 })}
-                {filteredTableRows.length === 0 ? (
+                {visibleRows.length === 0 ? (
                   <tr>
-                    <td className="px-3 py-3 text-sm text-foreground/60" colSpan={Math.max(1, displayHeaders.length)}>
+                    <td className="px-3 py-3 text-sm text-foreground/60" colSpan={8}>
                       No rows.
                     </td>
                   </tr>
