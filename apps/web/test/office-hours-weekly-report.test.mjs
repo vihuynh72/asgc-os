@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   completionPercent,
+  deriveRosterStatus,
   inferRoleLabel,
   reportStatusLabel,
   roleGroupLabel,
@@ -71,4 +72,10 @@ test("completionPercent handles required and not-required rows", () => {
   assert.equal(completionPercent({ required_hours: 10, total_hours: 2.5 }), 0.25);
   assert.equal(completionPercent({ required_hours: 0, total_hours: 0 }), 1);
   assert.equal(completionPercent({ required_hours: 10, total_hours: 14 }), 1);
+});
+
+test("deriveRosterStatus maps vacant and no-show rows", () => {
+  assert.equal(deriveRosterStatus({ name: "", required_hours: 6, total_hours: 0 }), "vacant");
+  assert.equal(deriveRosterStatus({ name: "Ciana Garcia", required_hours: 6, total_hours: 0 }), "no_show");
+  assert.equal(deriveRosterStatus({ name: "Ciana Garcia", required_hours: 6, total_hours: 1 }), "assigned");
 });
