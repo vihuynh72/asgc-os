@@ -5,7 +5,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { addDaysDateOnly, normalizeDateOnlyString, startOfWeekMondayDateOnly, todayDateString } from "@/lib/dateOnly";
-import { reportStatus, roleKeyRank, sortWeeklyReportRows } from "@/lib/office-hours-weekly-report.mjs";
+import {
+  completionPercent,
+  reportStatus,
+  roleGroupLabel,
+  roleKeyRank,
+  sortWeeklyReportRows,
+} from "@/lib/office-hours-weekly-report.mjs";
 
 type AdminWeeklyHoursPreviewRow = {
   user_id: string;
@@ -18,6 +24,7 @@ type AdminWeeklyHoursPreviewRow = {
   total_hours: number | string;
   missing_hours: number | string;
   needs_review_sessions: number | string;
+  member_status?: "active" | "pending_sign_in";
 };
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -57,15 +64,6 @@ async function copyToClipboard(text: string): Promise<boolean> {
   const ok = document.execCommand("copy");
   document.body.removeChild(textarea);
   return ok;
-}
-
-function groupLabel(key: string): string {
-  if (key === "president") return "President";
-  if (key === "executive") return "Executives";
-  if (key === "director") return "Directors";
-  if (key === "board_member") return "Board Members";
-  if (key === "volunteer") return "Volunteers";
-  return "Members";
 }
 
 function statusPill(statusKey: string): { label: string; className: string } {
@@ -177,15 +175,15 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
 
   const orderedRows = useMemo(() => sortWeeklyReportRows(rows ?? []), [rows]);
 
-  const visibleRows = useMemo(() => {
+  const visibleRows = (() => {
     const query = rowSearch.trim().toLowerCase();
     return orderedRows.filter((r) => {
       if (missingOnly && parseHoursValue(r.missing_hours) <= 0) return false;
       if (!query) return true;
-      const hay = `${r.role ?? ""} ${r.name ?? ""}`.toLowerCase();
+      const hay = `${r.role ?? ""} ${r.name ?? ""} ${r.email ?? ""}`.toLowerCase();
       return hay.includes(query);
     });
-  }, [orderedRows, rowSearch, missingOnly]);
+  })();
 
   const groups = useMemo(() => {
     const map = new Map<string, AdminWeeklyHoursPreviewRow[]>();
@@ -202,6 +200,7 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
     let behind = 0;
     let missing = 0;
     let notRequired = 0;
+    let pendingSignIn = 0;
     let requiredTotal = 0;
     let completedTotal = 0;
     let missingTotal = 0;
@@ -221,6 +220,8 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
         missing_hours: rem,
       });
 
+      if (row.member_status === "pending_sign_in") pendingSignIn += 1;
+
       if (statusKey === "complete") complete += 1;
       else if (statusKey === "behind") behind += 1;
       else if (statusKey === "missing") missing += 1;
@@ -233,6 +234,7 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
       behind,
       missing,
       notRequired,
+      pendingSignIn,
       requiredTotal,
       completedTotal,
       missingTotal,
@@ -248,11 +250,13 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
 
   return (
     <div className="space-y-4">
-      <div className="rounded-md border p-3">
+      <div className="rounded-xl border bg-gradient-to-br from-slate-50 via-white to-emerald-50/60 p-4 shadow-sm">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div className="space-y-1">
-            <div className="text-sm font-medium">Week starts {weekStartResolved ?? "—"}</div>
-            <div className="text-xs text-foreground/70">HR-style weekly office hour report (manual checkout credit only).</div>
+            <div className="text-sm font-semibold tracking-tight">Office Hours Weekly Report</div>
+            <div className="text-xs text-foreground/70">
+              Week starts {weekStartResolved ?? "—"} • Includes active members and pending sign-in role grants.
+            </div>
           </div>
 
           <div className="flex flex-wrap items-end gap-2">
@@ -299,39 +303,38 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
               Calendar view
             </Button>
             <Button variant="outline" onClick={openCsvView}>
-              Raw CSV
+              CSV preview
             </Button>
             <Button onClick={downloadCsv}>Download CSV</Button>
           </div>
         </div>
       </div>
 
-      <div className="rounded-md border p-3">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div className="space-y-1">
-            <div className="text-sm font-medium">Summary</div>
-            <div className="text-xs text-foreground/70">
-              {summary.total} people • {summary.complete} complete • {summary.behind + summary.missing} behind • {summary.notRequired} not required
-            </div>
+      <div className="rounded-xl border bg-white p-4 shadow-sm">
+        <div className="grid gap-2 md:grid-cols-4">
+          <div className="rounded-lg border bg-foreground/[0.02] px-3 py-2">
+            <div className="text-[11px] uppercase tracking-wide text-foreground/60">Members</div>
+            <div className="text-xl font-semibold">{summary.total}</div>
+            <div className="text-xs text-foreground/60">{summary.pendingSignIn} pending sign-in</div>
           </div>
-
-          <div className="flex flex-wrap items-center gap-4 text-xs text-foreground/70">
-            <div>
-              <div className="text-[11px] uppercase tracking-wide text-foreground/60">Required</div>
-              <div className="font-mono text-sm text-foreground">{formatHours(summary.requiredTotal)}</div>
-            </div>
-            <div>
-              <div className="text-[11px] uppercase tracking-wide text-foreground/60">Completed</div>
-              <div className="font-mono text-sm text-foreground">{formatHours(summary.completedTotal)}</div>
-            </div>
-            <div>
-              <div className="text-[11px] uppercase tracking-wide text-foreground/60">Missing</div>
-              <div className="font-mono text-sm text-foreground">{formatHours(summary.missingTotal)}</div>
-            </div>
+          <div className="rounded-lg border bg-foreground/[0.02] px-3 py-2">
+            <div className="text-[11px] uppercase tracking-wide text-foreground/60">Compliance</div>
+            <div className="text-xl font-semibold">{summary.complete}</div>
+            <div className="text-xs text-foreground/60">{summary.behind + summary.missing} behind or missing</div>
+          </div>
+          <div className="rounded-lg border bg-foreground/[0.02] px-3 py-2">
+            <div className="text-[11px] uppercase tracking-wide text-foreground/60">Required</div>
+            <div className="font-mono text-xl font-semibold">{formatHours(summary.requiredTotal)}</div>
+            <div className="text-xs text-foreground/60">Target this week</div>
+          </div>
+          <div className="rounded-lg border bg-foreground/[0.02] px-3 py-2">
+            <div className="text-[11px] uppercase tracking-wide text-foreground/60">Completed / Missing</div>
+            <div className="font-mono text-xl font-semibold">{formatHours(summary.completedTotal)}</div>
+            <div className="text-xs text-foreground/60">Missing {formatHours(summary.missingTotal)}</div>
           </div>
         </div>
 
-        <div className="mt-3 flex flex-wrap items-end justify-between gap-3 border-t pt-3">
+        <div className="mt-4 flex flex-wrap items-end justify-between gap-3 border-t pt-3">
           <div className="flex flex-wrap items-end gap-2">
             <label className="space-y-1 text-xs">
               <div className="text-foreground/70">Search</div>
@@ -340,7 +343,7 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
                 className="h-9 w-72 rounded-md border bg-transparent px-2 text-sm"
                 value={rowSearch}
                 onChange={(e: ChangeEvent<HTMLInputElement>) => setRowSearch(e.target.value)}
-                placeholder="Search name or role..."
+                placeholder="Search name, email, or role..."
               />
             </label>
             <Button variant="ghost" size="sm" onClick={() => setRowSearch("")} disabled={!rowSearch.trim()}>
@@ -374,10 +377,16 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
       {status ? <div className="text-sm text-foreground/70">{status}</div> : null}
 
       <div className="space-y-4">
+        {groups.length === 0 ? (
+          <div className="rounded-xl border border-dashed px-4 py-8 text-center text-sm text-foreground/60">
+            {filtersActive ? "No rows match the current filters." : "No rows returned for this week."}
+          </div>
+        ) : null}
+
         {groups.map((g) => (
-          <div key={g.key} className="rounded-md border">
-            <div className="flex items-center justify-between gap-3 border-b bg-foreground/5 px-3 py-2">
-              <div className="text-sm font-medium">{groupLabel(g.key)}</div>
+          <div key={g.key} className="overflow-hidden rounded-xl border bg-white shadow-sm">
+            <div className="flex items-center justify-between gap-3 border-b bg-foreground/[0.03] px-4 py-3">
+              <div className="text-sm font-semibold">{roleGroupLabel(g.key)}</div>
               <div className="text-xs text-foreground/60">{g.rows.length} people</div>
             </div>
 
@@ -386,7 +395,10 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
                 const required = parseHoursValue(r.required_hours);
                 const completed = parseHoursValue(r.total_hours);
                 const missingH = parseHoursValue(r.missing_hours);
-                const pct = required > 0 ? Math.max(0, Math.min(1, completed / required)) : 0;
+                const pct = completionPercent({
+                  required_hours: required,
+                  total_hours: completed,
+                });
                 const statusKey = reportStatus({
                   required_hours: required,
                   total_hours: completed,
@@ -394,16 +406,35 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
                 });
                 const pill = statusPill(statusKey);
                 const needsReview = Number.parseInt(String(r.needs_review_sessions ?? 0), 10) || 0;
+                const progressClass =
+                  statusKey === "complete"
+                    ? "bg-emerald-500"
+                    : statusKey === "missing"
+                      ? "bg-red-500"
+                      : statusKey === "behind"
+                        ? "bg-amber-500"
+                        : "bg-slate-400";
+                const rowTone =
+                  statusKey === "complete"
+                    ? "bg-white"
+                    : statusKey === "not_required"
+                      ? "bg-slate-50/50"
+                      : "bg-red-50/40";
 
                 return (
-                  <div key={`${r.user_id}:${r.week_start}`} className={statusKey === "complete" ? "bg-transparent" : "bg-red-500/5"}>
-                    <div className="grid gap-2 px-3 py-3 sm:grid-cols-[1.4fr_1fr_0.8fr] sm:items-center">
-                      <div className="space-y-1">
+                  <div key={`${r.user_id}:${r.week_start}`} className={rowTone}>
+                    <div className="grid gap-3 px-4 py-3 sm:grid-cols-[1.7fr_1fr_0.9fr] sm:items-center">
+                      <div className="space-y-1.5">
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className="text-sm font-medium">{r.role || "—"}</span>
+                          <span className="text-sm font-semibold">{r.role || "—"}</span>
                           <span className="text-xs text-foreground/60">•</span>
                           <span className="text-sm">{r.name || "—"}</span>
                           <span className={`rounded-full px-2 py-0.5 text-xs ${pill.className}`}>{pill.label}</span>
+                          {r.member_status === "pending_sign_in" ? (
+                            <span className="rounded-full bg-sky-500/15 px-2 py-0.5 text-xs text-sky-700 dark:text-sky-300">
+                              Pending sign-in
+                            </span>
+                          ) : null}
                           {needsReview > 0 ? (
                             <span className="rounded-full bg-indigo-500/15 px-2 py-0.5 text-xs text-indigo-700 dark:text-indigo-300">
                               Needs review ({needsReview})
@@ -413,12 +444,13 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
                         <div className="text-xs text-foreground/60">
                           Required {formatHours(required)} • Completed {formatHours(completed)} • Missing {formatHours(missingH)}
                         </div>
+                        {r.email ? <div className="text-[11px] text-foreground/50">{r.email}</div> : null}
                       </div>
 
-                      <div className="space-y-1">
-                        <div className="h-2 w-full overflow-hidden rounded-full bg-foreground/10">
+                      <div className="space-y-1.5">
+                        <div className="h-2.5 w-full overflow-hidden rounded-full bg-foreground/10">
                           <div
-                            className={statusKey === "complete" ? "h-full bg-emerald-500" : "h-full bg-amber-500"}
+                            className={`h-full ${progressClass}`}
                             style={{ width: `${Math.round(pct * 100)}%` }}
                           />
                         </div>
@@ -439,12 +471,6 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
                   </div>
                 );
               })}
-
-              {g.rows.length === 0 ? (
-                <div className="px-3 py-3 text-sm text-foreground/60">
-                  {filtersActive ? "No rows match the current filters." : "No rows returned."}
-                </div>
-              ) : null}
             </div>
           </div>
         ))}
@@ -452,4 +478,3 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
     </div>
   );
 }
-

@@ -1,7 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { inferRoleLabel, sortWeeklyReportRows } from "../src/lib/office-hours-weekly-report.mjs";
+import {
+  completionPercent,
+  inferRoleLabel,
+  reportStatusLabel,
+  roleGroupLabel,
+  sortWeeklyReportRows,
+} from "../src/lib/office-hours-weekly-report.mjs";
 
 test("inferRoleLabel does not classify VPs as President", () => {
   assert.equal(inferRoleLabel({ email: "asgc.vpfinance@gcccd.edu", roleKey: "executive" }), "Vice President of Finance");
@@ -53,3 +59,16 @@ test("sortWeeklyReportRows orders board members by number when present", () => {
   );
 });
 
+test("roleGroupLabel and reportStatusLabel return human-friendly labels", () => {
+  assert.equal(roleGroupLabel("executive"), "Executives");
+  assert.equal(roleGroupLabel("unknown"), "Members");
+  assert.equal(reportStatusLabel("complete"), "Complete");
+  assert.equal(reportStatusLabel("missing"), "Missing");
+  assert.equal(reportStatusLabel("not_required"), "Not required");
+});
+
+test("completionPercent handles required and not-required rows", () => {
+  assert.equal(completionPercent({ required_hours: 10, total_hours: 2.5 }), 0.25);
+  assert.equal(completionPercent({ required_hours: 0, total_hours: 0 }), 1);
+  assert.equal(completionPercent({ required_hours: 10, total_hours: 14 }), 1);
+});
