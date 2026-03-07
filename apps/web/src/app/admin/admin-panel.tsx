@@ -9,7 +9,8 @@ import { Button } from "@/components/ui/button";
 import { copyTextWithFallback } from "@/lib/clipboard";
 import { addDaysDateOnly, normalizeDateOnlyString, startOfWeekMondayDateOnly, todayDateString } from "@/lib/dateOnly";
 import { allowlistKeysForNormalizedEmail } from "@/lib/invitesAllowlist";
-import { hoursFlagLabel } from "@/lib/office-hours-weekly-report.mjs";
+import { hoursFlagLabel, roleGroupLabel } from "@/lib/office-hours-weekly-report.mjs";
+import { DEFAULT_WEEKLY_TOTAL_HOURS_BY_ROLE, ROLE_LABEL_BY_KEY, ROLE_OPTIONS, TERM_ROLE_KEYS } from "@/lib/role-config.mjs";
 import { TEST_EMAIL_TEMPLATE } from "@/lib/testEmailTemplate";
 import { cn } from "@/lib/utils";
 
@@ -40,7 +41,7 @@ type CommitteeDraft = {
   committee_key: string;
 };
 
-type RoleKey = "advisor" | "president" | "executive" | "director" | "board_member" | "volunteer";
+type RoleKey = "advisor" | "president" | "executive" | "board_member" | "volunteer";
 
 type OfficeLocationRow = {
   id: string;
@@ -204,15 +205,6 @@ type AdminAccessAudit = {
   invalid_assignments: AdminAccessAuditRow[];
 };
 
-const ROLE_OPTIONS: Array<{ key: RoleKey; label: string; scope: "global" | "term" }> = [
-  { key: "advisor", label: "Advisor (global)", scope: "global" },
-  { key: "president", label: "President (term)", scope: "term" },
-  { key: "executive", label: "Executive (term)", scope: "term" },
-  { key: "director", label: "Director (term)", scope: "term" },
-  { key: "board_member", label: "Board member (term)", scope: "term" },
-  { key: "volunteer", label: "Volunteer (term)", scope: "term" },
-];
-
 const MEETING_STATUS_OPTIONS = ["scheduled", "cancelled", "completed"] as const;
 const MEETING_DURATION_MINUTES = [30, 60, 90, 120];
 const WEEKDAY_LABELS: Record<number, string> = {
@@ -226,14 +218,7 @@ const WEEKDAY_LABELS: Record<number, string> = {
 };
 const COMMITTEE_KEY_PATTERN = /^[a-z0-9][a-z0-9_-]*$/i;
 
-const ROLE_LABEL_BY_KEY: Record<RoleKey, string> = {
-  advisor: "Advisor",
-  president: "President",
-  executive: "Executive",
-  director: "Director",
-  board_member: "Board member",
-  volunteer: "Volunteer",
-};
+const OFFICE_HOUR_ROLE_KEYS = TERM_ROLE_KEYS as RoleKey[];
 
 function normalizeEmailKey(raw: string | null | undefined): string {
   return raw?.trim().toLowerCase() ?? "";
@@ -827,7 +812,7 @@ export function AdminPanel({
   async function onSaveOfficeHourRequirements() {
     if (!selectedTermId) return;
 
-    const roles: RoleKey[] = ["president", "executive", "director", "board_member", "volunteer"];
+    const roles = OFFICE_HOUR_ROLE_KEYS;
     const payload = roles.map((roleKey) => {
       const row = officeHourRequirements.find(
         (r) => r.role_key === roleKey && r.term_id === selectedTermId && !r.effective_start && !r.effective_end,
@@ -835,7 +820,7 @@ export function AdminPanel({
 
       return {
         roleKey,
-        weeklyTotalHours: row?.weekly_total_hours ?? 0,
+        weeklyTotalHours: row?.weekly_total_hours ?? DEFAULT_WEEKLY_TOTAL_HOURS_BY_ROLE[roleKey] ?? 0,
         weeklyInOfficeHours: 0,
       };
     });
@@ -877,7 +862,7 @@ export function AdminPanel({
         id: "",
         role_key: roleKey,
         term_id: selectedTermId,
-        weekly_total_hours: patch.weekly_total_hours ?? 0,
+        weekly_total_hours: patch.weekly_total_hours ?? DEFAULT_WEEKLY_TOTAL_HOURS_BY_ROLE[roleKey] ?? 0,
         weekly_in_office_hours: 0,
         effective_start: null,
         effective_end: null,
@@ -1325,18 +1310,7 @@ export function AdminPanel({
     const lines = [
       header.map(toCsvValue).join(","),
       ...exportPreviewFilteredRows.map((row) => {
-        const group =
-          row.role_key === "president"
-            ? "President"
-            : row.role_key === "executive"
-              ? "Executives"
-              : row.role_key === "director"
-                ? "Directors"
-                : row.role_key === "board_member"
-                  ? "Board Members"
-                  : row.role_key === "volunteer"
-                    ? "Volunteers"
-                    : "Members";
+        const group = roleGroupLabel(row.role_key ?? null);
         const values = [
           row.week_start,
           group,
@@ -4706,7 +4680,7 @@ export function AdminPanel({
 
         <div className="rounded-md border p-3">
           <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-            {(["president", "executive", "director", "board_member", "volunteer"] as RoleKey[]).map((roleKey) => {
+            {OFFICE_HOUR_ROLE_KEYS.map((roleKey) => {
               const row = reqRows.get(roleKey);
               const total = row?.weekly_total_hours ?? 0;
 

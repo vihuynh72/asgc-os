@@ -18,13 +18,11 @@ test("inferRoleLabel does not classify VPs as President", () => {
   assert.equal(inferRoleLabel({ email: "asgc.president@gcccd.edu", roleKey: "president" }), "President");
 });
 
-test("inferRoleLabel derives specific director titles from ASGC role emails", () => {
-  assert.equal(inferRoleLabel({ email: "asgc.dirwebdev@gcccd.edu", roleKey: "director" }), "Director of Website Development");
-  assert.equal(inferRoleLabel({ email: "asgc.dirboardaffairs@gcccd.edu", roleKey: "director" }), "Director of Board Affairs");
-  assert.equal(inferRoleLabel({ email: "asgc.studentleg@gcccd.edu", roleKey: "director" }), "Director of Student Legislation");
-  assert.equal(inferRoleLabel({ email: "asgc.dirstudentleg@gcccd.edu", roleKey: "director" }), "Director of Student Legislation");
-  assert.equal(inferRoleLabel({ email: "asgc.dircampusact@gcccd.edu", roleKey: "director" }), "Director of Campus Activities");
-  assert.equal(inferRoleLabel({ email: "asgc.dirpublicity@gcccd.edu", roleKey: "director" }), "Director of Publicity");
+test("inferRoleLabel maps the board affairs executive title from legacy ASGC email patterns", () => {
+  assert.equal(
+    inferRoleLabel({ email: "asgc.dirboardaffairs@gcccd.edu", roleKey: "executive" }),
+    "Director of Board Affairs",
+  );
 });
 
 test("sortWeeklyReportRows orders president before executives (even if executive contains 'President')", () => {
@@ -74,6 +72,7 @@ test("sortWeeklyReportRows orders board members by number when present", () => {
 
 test("roleGroupLabel and reportStatusLabel return human-friendly labels", () => {
   assert.equal(roleGroupLabel("executive"), "Executives");
+  assert.equal(roleGroupLabel("director"), "Board Members");
   assert.equal(roleGroupLabel("unknown"), "Members");
   assert.equal(reportStatusLabel("complete"), "Complete");
   assert.equal(reportStatusLabel("missing"), "Missing");

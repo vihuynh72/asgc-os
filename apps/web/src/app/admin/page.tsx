@@ -10,7 +10,7 @@ export const revalidate = 0;
 type AssignmentRow = {
   id: string;
   user_id: string;
-  role_key: "advisor" | "president" | "executive" | "director" | "board_member" | "volunteer";
+  role_key: "advisor" | "president" | "executive" | "board_member" | "volunteer";
   term_id: string | null;
   starts_at: string;
   ends_at: string | null;
@@ -43,7 +43,7 @@ type OfficeLocationRow = {
 
 type OfficeHourRequirementRow = {
   id: string;
-  role_key: "advisor" | "president" | "executive" | "director" | "board_member" | "volunteer";
+  role_key: "advisor" | "president" | "executive" | "board_member" | "volunteer";
   term_id: string | null;
   weekly_total_hours: number;
   weekly_in_office_hours: number;
@@ -78,7 +78,7 @@ type BootstrapRoleGrantRow = {
   id: string;
   email: string;
   email_normalized: string;
-  role_key: "advisor" | "president" | "executive" | "director" | "board_member" | "volunteer";
+  role_key: "advisor" | "president" | "executive" | "board_member" | "volunteer";
   term_id: string | null;
   is_active: boolean;
   consumed_at: string | null;

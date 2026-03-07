@@ -38,7 +38,7 @@ async function isAdminForRequest(
   return { ok: true, userId: user.id };
 }
 
-const RoleKeySchema = z.enum(["advisor", "president", "executive", "director", "board_member", "volunteer"]);
+const RoleKeySchema = z.enum(["advisor", "president", "executive", "board_member", "volunteer"]);
 
 const EntrySchema = z.object({
   email: z.string().email(),

@@ -7,13 +7,12 @@ import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
 
-type RoleKey = "advisor" | "president" | "executive" | "director" | "board_member" | "volunteer";
+type RoleKey = "advisor" | "president" | "executive" | "board_member" | "volunteer";
 
 const ROLE_SCOPES: Record<RoleKey, "global" | "term"> = {
   advisor: "global",
   president: "term",
   executive: "term",
-  director: "term",
   board_member: "term",
   volunteer: "term",
 };
@@ -117,7 +116,7 @@ export async function GET(request: NextRequest) {
 
 const CreateSchema = z.object({
   email: z.string().email().transform(normalizeEmail),
-  roleKey: z.enum(["advisor", "president", "executive", "director", "board_member", "volunteer"]),
+  roleKey: z.enum(["advisor", "president", "executive", "board_member", "volunteer"]),
   termId: z.string().uuid().nullable().optional(),
   notes: z.string().optional(),
 });
