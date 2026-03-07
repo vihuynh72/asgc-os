@@ -40,12 +40,10 @@ function roleRank(roleKey: string): number {
       return 1;
     case "executive":
       return 2;
-    case "director":
-      return 3;
     case "board_member":
-      return 4;
+      return 3;
     case "volunteer":
-      return 5;
+      return 4;
     default:
       return 9;
   }
@@ -53,8 +51,7 @@ function roleRank(roleKey: string): number {
 
 function canDelegateTo(actorRole: string, targetRole: string): boolean {
   if (actorRole === "advisor" || actorRole === "president") return true;
-  if (actorRole === "executive") return ["director", "board_member", "volunteer"].includes(targetRole);
-  if (actorRole === "director") return ["board_member", "volunteer"].includes(targetRole);
+  if (actorRole === "executive") return ["board_member", "volunteer"].includes(targetRole);
   return false;
 }
 
@@ -148,7 +145,7 @@ export async function GET(request: NextRequest) {
 
     const termRows = rows.filter((r) => r.term_id && currentTermId && r.term_id === currentTermId);
     const eligible = termRows.filter((r) =>
-      ["president", "executive", "director", "board_member", "volunteer"].includes(r.role_key),
+      ["president", "executive", "board_member", "volunteer"].includes(r.role_key),
     );
 
     if (eligible.length === 0) return "volunteer";

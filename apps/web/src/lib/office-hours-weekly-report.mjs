@@ -4,8 +4,10 @@
  * Keep this module as plain JS so Node's built-in test runner can import it directly.
  */
 
+import { inferExecutiveDisplayTitleFromEmail } from "./role-config.mjs";
+
 /**
- * @typedef {"president"|"executive"|"director"|"board_member"|"volunteer"|string|null} RoleKey
+ * @typedef {"president"|"executive"|"board_member"|"volunteer"|string|null} RoleKey
  */
 
 /**
@@ -52,12 +54,11 @@ export function roleKeyRank(roleKey) {
       return 0;
     case "executive":
       return 1;
+    case "board_member":
     case "director":
       return 2;
-    case "board_member":
-      return 3;
     case "volunteer":
-      return 4;
+      return 3;
     default:
       return 9;
   }
@@ -72,9 +73,8 @@ export function roleGroupLabel(roleKey) {
       return "President";
     case "executive":
       return "Executives";
-    case "director":
-      return "Directors";
     case "board_member":
+    case "director":
       return "Board Members";
     case "volunteer":
       return "Volunteers";
@@ -104,19 +104,14 @@ export function inferRoleLabel({ email, roleKey }) {
   if (roleKey === "president") return "President";
 
   if (roleKey === "executive") {
-    if (compactLocal.includes("execvp") || compactLocal.includes("evp")) return "Executive Vice President";
-    if (local.includes("vpfinance")) return "Vice President of Finance";
-    if (local.startsWith("vp") || local.includes("vicepresident") || local.includes("vice-president")) return "Vice President";
+    const title = inferExecutiveDisplayTitleFromEmail(email);
+    if (title) return title;
     return "Executive";
   }
 
   if (roleKey === "director") {
-    if (compactLocal.includes("dirwebdev")) return "Director of Website Development";
     if (compactLocal.includes("dirboardaffairs")) return "Director of Board Affairs";
-    if (compactLocal.includes("dirstudentleg") || compactLocal.includes("studentleg")) return "Director of Student Legislation";
-    if (compactLocal.includes("dircampusact")) return "Director of Campus Activities";
-    if (compactLocal.includes("dirpublicity")) return "Director of Publicity";
-    return "Director";
+    return "Board Member";
   }
 
   if (roleKey === "board_member") {
@@ -254,7 +249,7 @@ export function rosterStatusLabel(status) {
 
 /**
  * Deterministic ordering for weekly report rows:
- * - role_key hierarchy: president → executive → director → board_member → volunteer → others
+ * - role_key hierarchy: president → executive → board_member/director → volunteer → others
  * - board members by board # when available
  * - then larger missing first (to surface problems)
  * - then name/email A-Z

@@ -69,7 +69,7 @@ type OfficeHourRequirementRow = {
   created_at: string;
 };
 
-const REPORT_ROLE_KEYS = ["president", "executive", "director", "board_member", "volunteer"] as const;
+const REPORT_ROLE_KEYS = ["president", "executive", "board_member", "volunteer"] as const;
 
 function toFiniteNumber(value: number | string | null | undefined): number {
   if (value === null || value === undefined) return 0;

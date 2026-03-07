@@ -6,15 +6,14 @@ import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
 
-function isValidRoleKey(roleKey: string): roleKey is "advisor" | "president" | "executive" | "director" | "board_member" | "volunteer" {
-  return ["advisor", "president", "executive", "director", "board_member", "volunteer"].includes(roleKey);
+function isValidRoleKey(roleKey: string): roleKey is "advisor" | "president" | "executive" | "board_member" | "volunteer" {
+  return ["advisor", "president", "executive", "board_member", "volunteer"].includes(roleKey);
 }
 
 const ROLE_LABEL_BY_KEY: Record<string, string> = {
   advisor: "Advisor",
   president: "President",
   executive: "Executive",
-  director: "Director",
   board_member: "Board member",
   volunteer: "Volunteer",
 };
