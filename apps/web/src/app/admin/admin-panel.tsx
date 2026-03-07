@@ -9,8 +9,13 @@ import { Button } from "@/components/ui/button";
 import { copyTextWithFallback } from "@/lib/clipboard";
 import { addDaysDateOnly, normalizeDateOnlyString, startOfWeekMondayDateOnly, todayDateString } from "@/lib/dateOnly";
 import { allowlistKeysForNormalizedEmail } from "@/lib/invitesAllowlist";
+import {
+  buildOfficeHourRequirementPayload,
+  getDefaultWeeklyTotalHours,
+  OFFICE_HOUR_ROLE_KEYS,
+} from "@/lib/office-hour-requirements.mjs";
 import { hoursFlagLabel, roleGroupLabel } from "@/lib/office-hours-weekly-report.mjs";
-import { DEFAULT_WEEKLY_TOTAL_HOURS_BY_ROLE, ROLE_LABEL_BY_KEY, ROLE_OPTIONS, TERM_ROLE_KEYS } from "@/lib/role-config.mjs";
+import { ROLE_LABEL_BY_KEY, ROLE_OPTIONS } from "@/lib/role-config.mjs";
 import { TEST_EMAIL_TEMPLATE } from "@/lib/testEmailTemplate";
 import { cn } from "@/lib/utils";
 
@@ -42,6 +47,7 @@ type CommitteeDraft = {
 };
 
 type RoleKey = "advisor" | "president" | "executive" | "board_member" | "volunteer";
+type OfficeHourRoleKey = (typeof OFFICE_HOUR_ROLE_KEYS)[number];
 
 type OfficeLocationRow = {
   id: string;
@@ -217,8 +223,6 @@ const WEEKDAY_LABELS: Record<number, string> = {
   7: "Sunday",
 };
 const COMMITTEE_KEY_PATTERN = /^[a-z0-9][a-z0-9_-]*$/i;
-
-const OFFICE_HOUR_ROLE_KEYS = TERM_ROLE_KEYS as RoleKey[];
 
 function normalizeEmailKey(raw: string | null | undefined): string {
   return raw?.trim().toLowerCase() ?? "";
@@ -812,17 +816,9 @@ export function AdminPanel({
   async function onSaveOfficeHourRequirements() {
     if (!selectedTermId) return;
 
-    const roles = OFFICE_HOUR_ROLE_KEYS;
-    const payload = roles.map((roleKey) => {
-      const row = officeHourRequirements.find(
-        (r) => r.role_key === roleKey && r.term_id === selectedTermId && !r.effective_start && !r.effective_end,
-      );
-
-      return {
-        roleKey,
-        weeklyTotalHours: row?.weekly_total_hours ?? DEFAULT_WEEKLY_TOTAL_HOURS_BY_ROLE[roleKey] ?? 0,
-        weeklyInOfficeHours: 0,
-      };
+    const payload = buildOfficeHourRequirementPayload({
+      termId: selectedTermId,
+      requirements: officeHourRequirements,
     });
 
     setStatus("Saving office hour requirements...");
@@ -845,7 +841,10 @@ export function AdminPanel({
     }
   }
 
-  function updateRequirement(roleKey: RoleKey, patch: Partial<Pick<OfficeHourRequirementRow, "weekly_total_hours">>) {
+  function updateRequirement(
+    roleKey: OfficeHourRoleKey,
+    patch: Partial<Pick<OfficeHourRequirementRow, "weekly_total_hours">>,
+  ) {
     if (!selectedTermId) return;
     setOfficeHourRequirements((prev) => {
       const next = [...prev];
@@ -862,7 +861,7 @@ export function AdminPanel({
         id: "",
         role_key: roleKey,
         term_id: selectedTermId,
-        weekly_total_hours: patch.weekly_total_hours ?? DEFAULT_WEEKLY_TOTAL_HOURS_BY_ROLE[roleKey] ?? 0,
+        weekly_total_hours: patch.weekly_total_hours ?? getDefaultWeeklyTotalHours(roleKey),
         weekly_in_office_hours: 0,
         effective_start: null,
         effective_end: null,

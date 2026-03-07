@@ -4,7 +4,7 @@
  * Keep this as plain JS so the Node test runner can import it directly.
  */
 
-export const TERM_ROLE_KEYS = Object.freeze(["president", "executive", "board_member", "volunteer"]);
+export const TERM_ROLE_KEYS = /** @type {const} */ (["president", "executive", "board_member", "volunteer"]);
 
 export const ROLE_OPTIONS = Object.freeze([
   { key: "advisor", label: "Advisor (global)", scope: "global" },

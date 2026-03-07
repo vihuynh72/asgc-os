@@ -50,7 +50,7 @@ npx tsc -p tsconfig.json --noEmit
 
 - App routes: [src/app](src/app)
 - API routes: [src/app/api](src/app/api)
-- Middleware (auth/admin gates): [src/middleware.ts](src/middleware.ts)
+- Proxy (auth/admin gates): [src/proxy.ts](src/proxy.ts)
 - Supabase clients:
 	- Browser: [src/lib/supabaseClient.ts](src/lib/supabaseClient.ts)
 	- Server components: [src/lib/supabaseServerComponent.ts](src/lib/supabaseServerComponent.ts)

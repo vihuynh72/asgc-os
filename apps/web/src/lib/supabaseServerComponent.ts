@@ -19,7 +19,7 @@ export function getSupabaseServerComponentClient() {
               cookieStore.set(name, value, options);
             }
           } catch {
-            // Next.js Server Components cannot set cookies; middleware should refresh sessions.
+            // Next.js Server Components cannot set cookies; proxy should refresh sessions.
           }
         },
       },

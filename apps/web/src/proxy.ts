@@ -22,7 +22,7 @@ const UNPROTECTED_PREFIXES = ["/office-hours/kiosk"];
 const KIOSK_FALLBACK_PREFIXES = ["/office-hours/check-in", "/office-hours/check-out"];
 const MFA_EXEMPT_PREFIXES = ["/mfa", "/auth", "/login", "/unauthorized"];
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   if (!hasPublicSupabaseEnv()) {
     const redirectUrl = request.nextUrl.clone();
     redirectUrl.pathname = "/";
