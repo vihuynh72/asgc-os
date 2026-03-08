@@ -1,312 +1,200 @@
-import { PageShell } from "@/components/page-shell";
+import Link from "next/link";
+
+import { AdminDomainCard } from "@/components/admin/admin-domain-card";
+import { AdminHero } from "@/components/admin/admin-hero";
+import { AdminInlineNotice } from "@/components/admin/admin-inline-notice";
+import { AdminStatStrip } from "@/components/admin/admin-stat-strip";
+import { AdminSurface } from "@/components/admin/admin-surface";
+import type { AdminCardMetric, AdminStat } from "@/components/admin/admin-types";
+import { Button } from "@/components/ui/button";
+import { getDefaultAdminPath, getVisibleAdminDomains } from "@/lib/admin/navigation.mjs";
+import { loadAdminHubSnapshot, requireAdminViewer } from "@/lib/admin/server";
+
 import { AdminPanel } from "./admin-panel";
-import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
-import { getSupabaseServerComponentClient } from "@/lib/supabaseServerComponent";
-import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-type AssignmentRow = {
-  id: string;
-  user_id: string;
-  role_key: "advisor" | "president" | "executive" | "board_member" | "volunteer";
-  term_id: string | null;
-  starts_at: string;
-  ends_at: string | null;
-  is_primary: boolean;
-};
-
-type OfficeConfigRow = {
-  primary_office_location_id: string;
-  quiet_hours_enabled: boolean;
-  quiet_hours_start_local: string;
-  quiet_hours_end_local: string;
-  weekly_hours_reminder_enabled: boolean;
-  weekly_hours_reminder_weekday: number;
-  weekly_hours_reminder_time_local: string;
-  office_hours_allow_weekends: boolean;
-  office_hours_allowed_weekdays: number[];
-  office_hours_extra_allowed_dates: string[];
-};
-
-type OfficeLocationRow = {
-  id: string;
-  name: string;
-  lat: number | null;
-  lon: number | null;
-  radius_m: number | null;
-  grace_radius_m: number | null;
-  timezone: string;
-  active: boolean;
-};
-
-type OfficeHourRequirementRow = {
-  id: string;
-  role_key: "advisor" | "president" | "executive" | "board_member" | "volunteer";
-  term_id: string | null;
-  weekly_total_hours: number;
-  weekly_in_office_hours: number;
-  effective_start: string | null;
-  effective_end: string | null;
-};
-
-type InviteAllowlistRow = {
-  id: string;
-  email: string;
-  email_normalized: string;
-  sort_order: number;
-  is_active: boolean;
-  invited_by: string | null;
-  invited_at: string;
-  revoked_at: string | null;
-  notes: string | null;
-};
-
-type InviteBlocklistRow = {
-  id: string;
-  pattern: string;
-  pattern_normalized: string;
-  is_active: boolean;
-  banned_by: string | null;
-  banned_at: string;
-  unbanned_at: string | null;
-  notes: string | null;
-};
-
-type BootstrapRoleGrantRow = {
-  id: string;
-  email: string;
-  email_normalized: string;
-  role_key: "advisor" | "president" | "executive" | "board_member" | "volunteer";
-  term_id: string | null;
-  is_active: boolean;
-  consumed_at: string | null;
-  created_at: string;
-  notes: string | null;
-};
-
-async function ensureOfficeConfigRow(admin: ReturnType<typeof getSupabaseAdminClient>) {
-  const { data: existing, error: existingErr } = await admin
-    .from("office_config")
-    .select(
-      "primary_office_location_id,quiet_hours_enabled,quiet_hours_start_local,quiet_hours_end_local,weekly_hours_reminder_enabled,weekly_hours_reminder_weekday,weekly_hours_reminder_time_local,office_hours_allow_weekends,office_hours_allowed_weekdays,office_hours_extra_allowed_dates",
-    )
-    .eq("id", true)
-    .maybeSingle();
-
-  if (existingErr) throw existingErr;
-  if (existing) return existing as OfficeConfigRow;
-
-  const { data: office, error: officeErr } = await admin
-    .from("office_locations")
-    .select("id")
-    .order("created_at", { ascending: true })
-    .limit(1)
-    .maybeSingle();
-
-  if (officeErr) throw officeErr;
-  if (!office?.id) throw new Error("No office_locations row found");
-
-  const { data: inserted, error: insertErr } = await admin
-    .from("office_config")
-    .insert({ id: true, primary_office_location_id: office.id })
-    .select(
-      "primary_office_location_id,quiet_hours_enabled,quiet_hours_start_local,quiet_hours_end_local,weekly_hours_reminder_enabled,weekly_hours_reminder_weekday,weekly_hours_reminder_time_local,office_hours_allow_weekends,office_hours_allowed_weekdays,office_hours_extra_allowed_dates",
-    )
-    .single();
-
-  if (insertErr) throw insertErr;
-  return inserted as OfficeConfigRow;
-}
-
 export default async function AdminPage() {
-  const supabase = await getSupabaseServerComponentClient();
+  const viewer = await requireAdminViewer({ redirectTo: "/admin", capability: "hub" });
+  const snapshot = await loadAdminHubSnapshot({ tier: viewer.tier, isEvp: viewer.isEvp });
+  const visibleDomains = getVisibleAdminDomains({ tier: viewer.tier, isEvp: viewer.isEvp });
+  const defaultPath = getDefaultAdminPath({ tier: viewer.tier, isEvp: viewer.isEvp });
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    redirect("/login");
-  }
-
-  // Fetch admin tier info for tiered access
-  const { data: tierData, error: tierErr } = await supabase.rpc("get_admin_tier", { _uid: user.id });
-  const tier = tierData?.tier as "full" | "partial" | "read-only" | null;
-  const isEvp = tierData?.is_evp as boolean ?? false;
-
-  if (tierErr || !tier) {
-    redirect("/unauthorized?reason=admin&redirectTo=/admin");
-  }
-
-  const canSeeAccessTab = tier === "full";
-  const canSeeOfficeConfig = (tier === "full" || isEvp) && tier !== "read-only";
-  const shouldLoadUsers = canSeeAccessTab || canSeeOfficeConfig;
-
-  const admin = getSupabaseAdminClient();
-
-  const usersPromise = shouldLoadUsers
-    ? admin
-        .from("profiles")
-        .select("id,display_name,status,created_at,profile_private(email)")
-        .order("created_at", { ascending: false })
-    : Promise.resolve({ data: [] as Array<unknown> });
-
-  const [{ data: terms }, { data: usersRaw }] = await Promise.all([
-    admin.from("terms").select("id,name,start_date,end_date,is_current").order("created_at", { ascending: false }),
-    usersPromise,
-  ]);
-
-  const safeTerms = terms ?? [];
-  const safeUsers =
-    usersRaw?.map((row) => {
-      const maybePrivate = (row as unknown as { profile_private?: { email?: string | null } | null }).profile_private;
-      return {
-        id: (row as unknown as { id: string }).id,
-        email: maybePrivate?.email ?? null,
-        display_name: (row as unknown as { display_name: string | null }).display_name ?? null,
-        status: (row as unknown as { status: string }).status,
-        created_at: (row as unknown as { created_at: string }).created_at,
-      };
-    }) ?? [];
-  const selectedTermId =
-    safeTerms.find((t) => t.is_current)?.id ?? safeTerms[0]?.id ?? "";
-
-  let globalAdvisorAssignments: AssignmentRow[] = [];
-  let termAssignments: AssignmentRow[] = [];
-
-  if (canSeeAccessTab) {
-    const [globalAdvisorRes, termAssignmentsRes] = await Promise.all([
-      admin
-        .from("role_assignments")
-        .select("id,user_id,role_key,term_id,starts_at,ends_at,is_primary")
-        .eq("role_key", "advisor")
-        .is("term_id", null)
-        .is("ends_at", null)
-        .order("starts_at", { ascending: false }),
-      selectedTermId
-        ? admin
-            .from("role_assignments")
-            .select("id,user_id,role_key,term_id,starts_at,ends_at,is_primary")
-            .eq("term_id", selectedTermId)
-            .is("ends_at", null)
-            .order("starts_at", { ascending: false })
-        : Promise.resolve({ data: [] as AssignmentRow[] }),
-    ]);
-
-    globalAdvisorAssignments = (globalAdvisorRes.data ?? []) as AssignmentRow[];
-    termAssignments = (termAssignmentsRes.data ?? []) as AssignmentRow[];
-  }
-
-  let initialInvitesAllowlist: InviteAllowlistRow[] = [];
-  if (canSeeAccessTab) {
-    try {
-      const { data: invites } = await admin
-        .from("invites_allowlist")
-        .select("id,email,email_normalized,sort_order,is_active,invited_by,invited_at,revoked_at,notes")
-        .order("sort_order", { ascending: false })
-        .order("invited_at", { ascending: false })
-        .limit(200);
-      initialInvitesAllowlist = (invites ?? []) as InviteAllowlistRow[];
-    } catch {
-      initialInvitesAllowlist = [];
-    }
-  }
-
-  let initialInvitesBlocklist: InviteBlocklistRow[] = [];
-  if (canSeeAccessTab) {
-    try {
-      const { data: bans } = await admin
-        .from("invites_blocklist")
-        .select("id,pattern,pattern_normalized,is_active,banned_by,banned_at,unbanned_at,notes")
-        .order("is_active", { ascending: false })
-        .order("banned_at", { ascending: false })
-        .limit(200);
-      initialInvitesBlocklist = (bans ?? []) as InviteBlocklistRow[];
-    } catch {
-      initialInvitesBlocklist = [];
-    }
-  }
-
-  let initialBootstrapRoleGrants: BootstrapRoleGrantRow[] = [];
-  if (canSeeAccessTab) {
-    try {
-      const { data: grants } = await admin
-        .from("bootstrap_role_grants")
-        .select("id,email,email_normalized,role_key,term_id,is_active,consumed_at,created_at,notes")
-        .eq("is_active", true)
-        .is("consumed_at", null)
-        .order("created_at", { ascending: false })
-        .limit(500);
-      initialBootstrapRoleGrants = (grants ?? []) as BootstrapRoleGrantRow[];
-    } catch {
-      initialBootstrapRoleGrants = [];
-    }
-  }
-
-  // Phase 11: office config + quiet hours (best-effort; requires Phase 11 migration applied)
-  let initialOfficeConfig: OfficeConfigRow | null = null;
-  let initialOfficeLocation: OfficeLocationRow | null = null;
-
-  // Phase 12: office hour requirements (best-effort)
-  let initialOfficeHourRequirements: OfficeHourRequirementRow[] = [];
-
-  if (canSeeOfficeConfig) {
-    try {
-      initialOfficeConfig = await ensureOfficeConfigRow(admin);
-
-      const { data: location, error: locationErr } = await admin
-        .from("office_locations")
-        .select("id,name,lat,lon,radius_m,grace_radius_m,timezone,active")
-        .eq("id", initialOfficeConfig.primary_office_location_id)
-        .single();
-
-      if (!locationErr) {
-        initialOfficeLocation = location as OfficeLocationRow;
-      }
-    } catch {
-      // If Phase 11 isn't applied yet, keep nulls. The client can still load via /api/admin/office-config.
-    }
-
-    try {
-      if (selectedTermId) {
-        const { data: reqs, error: reqErr } = await admin
-          .from("office_hour_requirements")
-          .select(
-            "id,role_key,term_id,weekly_total_hours,weekly_in_office_hours,effective_start,effective_end",
-          )
-          .eq("term_id", selectedTermId)
-          .is("effective_start", null)
-          .is("effective_end", null)
-          .order("role_key", { ascending: true });
-
-        if (!reqErr) {
-          initialOfficeHourRequirements = (reqs ?? []) as OfficeHourRequirementRow[];
+  const cards: Array<{
+    id: string;
+    href: string;
+    title: string;
+    description: string;
+    eyebrow?: string;
+    badge?: string | null;
+    issue?: string | null;
+    metrics?: AdminCardMetric[];
+    primaryLabel?: string;
+  }> = [
+    visibleDomains.includes("people")
+      ? {
+          id: "people",
+          href: "/admin/people",
+          title: "People",
+          description: "Member access, role ownership, term rollover, and admin access checks live here.",
+          eyebrow: snapshot.currentTermName,
+          badge: snapshot.people.pendingInvites > 0 ? `${snapshot.people.pendingInvites} pending` : "stable",
+          issue:
+            snapshot.people.pendingInvites > 0
+              ? `${snapshot.people.pendingInvites} invited members still have not signed in.`
+              : snapshot.people.blockedEntries > 0
+                ? `${snapshot.people.blockedEntries} blocked entries are active in the blocklist.`
+                : "Invite health and role coverage look stable.",
+          metrics: [
+            { label: "Invites", value: String(snapshot.people.activeInvites) },
+            { label: "Active roles", value: String(snapshot.people.activeRoles) },
+            { label: "Pending grants", value: String(snapshot.people.pendingGrants) },
+          ],
+          primaryLabel: "Open People",
         }
-      }
-    } catch {
-      // Keep empty; the client can load via /api/admin/office-hour-requirements.
-    }
-  }
+      : null,
+    visibleDomains.includes("meetings")
+      ? {
+          id: "meetings",
+          href: "/admin/meetings",
+          title: "Meetings",
+          description: "Create agendas, track committee readiness, and keep meeting records from one calmer workspace.",
+          eyebrow: "Publishing",
+          badge: snapshot.meetings.missingNoticeCount > 0 ? `${snapshot.meetings.missingNoticeCount} notices` : "ready",
+          issue:
+            snapshot.meetings.missingNoticeCount > 0
+              ? `${snapshot.meetings.missingNoticeCount} scheduled meetings still need public notice.`
+              : "Upcoming meetings and committee coverage look healthy.",
+          metrics: [
+            { label: "Upcoming", value: String(snapshot.meetings.upcomingMeetings) },
+            { label: "Missing agenda", value: String(snapshot.meetings.missingAgendaCount) },
+            { label: "Committees", value: String(snapshot.meetings.committeeCount) },
+          ],
+          primaryLabel: "Open Meetings",
+        }
+      : null,
+    visibleDomains.includes("office_hours")
+      ? {
+          id: "office_hours",
+          href: "/admin/office-hours",
+          title: "Office Hours",
+          description: "Check weekly status, then jump into sessions, requirements, configuration, or exports without carrying every control at once.",
+          eyebrow: "Operations",
+          badge: snapshot.officeHours.officeReady ? "ready" : "setup",
+          issue: snapshot.officeHours.officeReady
+            ? "Office config is loaded and ready for specialist workflows."
+            : "Office setup still needs attention before operations are fully reliable.",
+          metrics: [
+            { label: "Configured roles", value: String(snapshot.officeHours.configuredRoles) },
+            { label: "Reminder", value: snapshot.officeHours.reminderEnabled ? "On" : "Off" },
+            { label: "Workspace", value: snapshot.officeHours.officeReady ? "Ready" : "Needs review" },
+          ],
+          primaryLabel: "Open Office Hours",
+        }
+      : null,
+  ].filter((card): card is NonNullable<typeof card> => Boolean(card));
+
+  const quickStats: AdminStat[] = [
+    {
+      id: "current-term",
+      label: "Current term",
+      value: snapshot.currentTermName,
+      detail: "Shared across People and Office Hours requirements.",
+    },
+    {
+      id: "default-workspace",
+      label: "Default workspace",
+      value: defaultPath.replace("/admin/", "").replace("-", " ") || "overview",
+      detail: "Where this admin tier lands first.",
+    },
+    {
+      id: "issues",
+      label: "Open issues",
+      value: String(
+        snapshot.people.pendingInvites +
+          snapshot.people.pendingGrants +
+          snapshot.meetings.missingNoticeCount +
+          snapshot.meetings.missingAgendaCount,
+      ),
+      detail: "Visible operational follow-ups across the command center.",
+      tone:
+        snapshot.people.pendingInvites +
+          snapshot.people.pendingGrants +
+          snapshot.meetings.missingNoticeCount +
+          snapshot.meetings.missingAgendaCount >
+        0
+          ? "warning"
+          : "positive",
+    },
+  ];
 
   return (
-    <PageShell title="Admin Command Center" showHeader={false} containerClassName="max-w-7xl">
-      <AdminPanel
-        tier={tier}
-        isEvp={isEvp}
-        initialTerms={safeTerms}
-        initialUsers={safeUsers}
-        initialSelectedTermId={selectedTermId}
-        initialGlobalAdvisorAssignments={(globalAdvisorAssignments ?? []) as AssignmentRow[]}
-        initialTermAssignments={(termAssignments ?? []) as AssignmentRow[]}
-        initialInvitesAllowlist={initialInvitesAllowlist}
-        initialInvitesBlocklist={initialInvitesBlocklist}
-        initialBootstrapRoleGrants={initialBootstrapRoleGrants}
-        initialOfficeConfig={initialOfficeConfig}
-        initialOfficeLocation={initialOfficeLocation}
-        initialOfficeHourRequirements={initialOfficeHourRequirements}
-      />
-    </PageShell>
+    <div className="admin-page space-y-6">
+      <AdminPanel tier={viewer.tier} isEvp={viewer.isEvp} />
+
+      <AdminHero
+        eyebrow="Command Center"
+        title="A calmer way into admin work"
+        description="This page is now a launcher, not a control dump. Start from status, open the domain that needs attention, and keep dense operations in focused specialist pages."
+        actions={
+          <>
+            <Link href={defaultPath}>
+              <Button>Open default workspace</Button>
+            </Link>
+            {visibleDomains.includes("meetings") ? (
+              <Link href="/admin/meetings#admin-meetings-create">
+                <Button variant="outline">Create meeting</Button>
+              </Link>
+            ) : null}
+          </>
+        }
+      >
+        <div className="flex flex-wrap gap-3 text-sm text-foreground/60">
+          <span>Current term: {snapshot.currentTermName}</span>
+          <span>Primary goal: less clutter, faster entry into real work.</span>
+        </div>
+      </AdminHero>
+
+      {viewer.isReadOnly ? (
+        <AdminInlineNotice tone="warning">
+          Read-only access is active. You can inspect the command center and specialist pages, but write actions remain disabled.
+        </AdminInlineNotice>
+      ) : null}
+
+      <AdminStatStrip stats={quickStats} />
+
+      <div className="grid gap-4 xl:grid-cols-3">
+        {cards.map((card) => (
+          <AdminDomainCard key={card.id} {...card} />
+        ))}
+      </div>
+
+      <AdminSurface
+        title="Current issues"
+        description="Only the operational items worth acting on right now stay visible here."
+      >
+        <div className="grid gap-3 md:grid-cols-3">
+          <AdminInlineNotice tone={snapshot.people.pendingInvites > 0 ? "warning" : "positive"}>
+            People:{" "}
+            {snapshot.people.pendingInvites > 0
+              ? `${snapshot.people.pendingInvites} invited members still need a first sign-in.`
+              : "No pending invite backlog."}
+          </AdminInlineNotice>
+          <AdminInlineNotice tone={snapshot.meetings.missingNoticeCount > 0 ? "warning" : "positive"}>
+            Meetings:{" "}
+            {snapshot.meetings.missingNoticeCount > 0
+              ? `${snapshot.meetings.missingNoticeCount} scheduled meetings still need public notice.`
+              : "No missing notices in the current meeting set."}
+          </AdminInlineNotice>
+          <AdminInlineNotice tone={snapshot.officeHours.officeReady ? "positive" : "warning"}>
+            Office Hours:{" "}
+            {snapshot.officeHours.officeReady
+              ? "Configuration is loaded and specialist tools are ready."
+              : "Office configuration still needs review before deeper work."}
+          </AdminInlineNotice>
+        </div>
+      </AdminSurface>
+    </div>
   );
 }

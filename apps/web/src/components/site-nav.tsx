@@ -21,7 +21,7 @@ const communityLinks = [
   { href: "/icc", label: "ICC" },
 ];
 const adminLink = { href: "/admin", label: "Admin" };
-const createMeetingLink = { href: "/admin?tab=meetings#admin-meetings-create", label: "Create meeting" };
+const createMeetingLink = { href: "/admin/meetings#admin-meetings-create", label: "Create meeting" };
 
 const publicLinks = [{ href: "/office-hours/kiosk", label: "Office Hours Form" }];
 

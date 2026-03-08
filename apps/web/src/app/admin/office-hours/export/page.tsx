@@ -1,7 +1,6 @@
-import { redirect } from "next/navigation";
-
-import { PageShell } from "@/components/page-shell";
-import { getSupabaseServerComponentClient } from "@/lib/supabaseServerComponent";
+import { AdminHero } from "@/components/admin/admin-hero";
+import { AdminSectionNav } from "@/components/admin/admin-section-nav";
+import { requireAdminViewer } from "@/lib/admin/server";
 
 import { OfficeHoursExportPanel } from "./office-hours-export-panel";
 
@@ -13,24 +12,7 @@ export default async function AdminOfficeHoursExportPage({
 }: {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const supabase = await getSupabaseServerComponentClient();
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    redirect("/login?redirectTo=/admin/office-hours/export");
-  }
-
-  const { data: tierData, error: tierErr } = await supabase.rpc("get_admin_tier", { _uid: user.id });
-  const tier = tierData?.tier as "full" | "partial" | "read-only" | null;
-  const isEvp = tierData?.is_evp as boolean ?? false;
-  const canAccess = (tier === "full" || isEvp) && tier !== "read-only";
-
-  if (tierErr || !tier || !canAccess) {
-    redirect("/unauthorized?reason=admin&redirectTo=/admin/office-hours/export");
-  }
+  await requireAdminViewer({ redirectTo: "/admin/office-hours/export", capability: "office_hours" });
 
   const resolvedSearchParams = await searchParams;
   const weekStart =
@@ -41,14 +23,25 @@ export default async function AdminOfficeHoursExportPage({
         : null;
 
   return (
-    <PageShell
-      title="Office Hours Weekly Report"
-      description="HR-style weekly totals & deficits with CSV export."
-      containerClassName="max-w-7xl"
-      backHref="/admin/office-hours"
-      backLabel="Back to Office Hours"
-    >
+    <div className="admin-page space-y-6">
+      <AdminHero
+        eyebrow="Office Hours"
+        title="Weekly report workspace"
+        description="Review weekly totals, missing hours, and reporting output without carrying the live session controls on screen."
+      />
+
+      <AdminSectionNav
+        activeId="export"
+        items={[
+          { id: "overview", label: "Overview", href: "/admin/office-hours" },
+          { id: "sessions", label: "Sessions", href: "/admin/office-hours/sessions" },
+          { id: "requirements", label: "Requirements", href: "/admin/office-hours/requirements" },
+          { id: "config", label: "Config", href: "/admin/office-hours/config" },
+          { id: "export", label: "Export", href: "/admin/office-hours/export" },
+        ]}
+      />
+
       <OfficeHoursExportPanel initialWeekStart={weekStart} />
-    </PageShell>
+    </div>
   );
 }

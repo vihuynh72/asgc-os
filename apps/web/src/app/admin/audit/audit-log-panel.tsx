@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { AdminEmptyState } from "@/components/admin/admin-empty-state";
+import { AdminFilterTray } from "@/components/admin/admin-filter-tray";
 import { AdminStatStrip } from "@/components/admin/admin-stat-strip";
 import { AdminSurface } from "@/components/admin/admin-surface";
 import { AdminToolbar } from "@/components/admin/admin-toolbar";
@@ -115,6 +116,7 @@ export function AuditLogPanel() {
   const [filterTargetId, setFilterTargetId] = useState<string>("");
   const [filterStartDate, setFilterStartDate] = useState<string>("");
   const [filterEndDate, setFilterEndDate] = useState<string>("");
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   const buildFilterParams = useCallback(() => {
     const params = new URLSearchParams();
@@ -269,95 +271,94 @@ export function AuditLogPanel() {
           </div>
         }
       >
-        <details open={summary.total === 0}>
-          <summary className="px-1 py-1 text-sm font-medium text-foreground/72">
-            Show filters
-          </summary>
-          <div className="mt-4">
-            <AdminToolbar
-              primary={
-                <>
-                  <Button onClick={handleFilter} disabled={loading}>
-                    Apply
-                  </Button>
-                  <Button variant="outline" onClick={handleClearFilters} disabled={loading}>
-                    Clear
-                  </Button>
-                  <Button variant="ghost" onClick={handleRefresh} disabled={loading}>
-                    Refresh
-                  </Button>
-                </>
-              }
-            >
-              <label className="space-y-1 text-sm">
-                <div className="text-foreground/62">Action</div>
-                <select
-                  className="h-10 w-full rounded-xl border bg-transparent px-3 text-sm"
-                  value={filterAction}
-                  onChange={(e) => setFilterAction(e.target.value)}
-                >
-                  <option value="">All actions</option>
-                  {actionKeys.map((key) => (
-                    <option key={key} value={key}>
-                      {key}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="space-y-1 text-sm">
-                <div className="text-foreground/62">Actor</div>
-                <input
-                  className="h-10 w-full rounded-xl border bg-transparent px-3 text-sm"
-                  value={filterActor}
-                  onChange={(e) => setFilterActor(e.target.value)}
-                  placeholder="Name or email..."
-                />
-              </label>
-              <label className="space-y-1 text-sm">
-                <div className="text-foreground/62">Target type</div>
-                <select
-                  className="h-10 w-full rounded-xl border bg-transparent px-3 text-sm"
-                  value={filterTargetType}
-                  onChange={(e) => setFilterTargetType(e.target.value)}
-                >
-                  <option value="">All targets</option>
-                  {targetTypes.map((type) => (
-                    <option key={type} value={type}>
-                      {type}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="space-y-1 text-sm">
-                <div className="text-foreground/62">Target ID</div>
-                <input
-                  className="h-10 w-full rounded-xl border bg-transparent px-3 text-sm"
-                  value={filterTargetId}
-                  onChange={(e) => setFilterTargetId(e.target.value)}
-                  placeholder="Exact ID..."
-                />
-              </label>
-              <label className="space-y-1 text-sm">
-                <div className="text-foreground/62">Start date</div>
-                <input
-                  type="date"
-                  className="h-10 w-full rounded-xl border bg-transparent px-3 text-sm"
-                  value={filterStartDate}
-                  onChange={(e) => setFilterStartDate(e.target.value)}
-                />
-              </label>
-              <label className="space-y-1 text-sm">
-                <div className="text-foreground/62">End date</div>
-                <input
-                  type="date"
-                  className="h-10 w-full rounded-xl border bg-transparent px-3 text-sm"
-                  value={filterEndDate}
-                  onChange={(e) => setFilterEndDate(e.target.value)}
-                />
-              </label>
-            </AdminToolbar>
-          </div>
-        </details>
+        <AdminFilterTray
+          open={filtersOpen || summary.total === 0}
+          onToggle={() => setFiltersOpen((prev) => !prev)}
+          description="Apply only the slice you need, then share the exact view."
+        >
+          <AdminToolbar
+            primary={
+              <>
+                <Button onClick={handleFilter} disabled={loading}>
+                  Apply
+                </Button>
+                <Button variant="outline" onClick={handleClearFilters} disabled={loading}>
+                  Clear
+                </Button>
+                <Button variant="ghost" onClick={handleRefresh} disabled={loading}>
+                  Refresh
+                </Button>
+              </>
+            }
+          >
+            <label className="space-y-1 text-sm">
+              <div className="text-foreground/62">Action</div>
+              <select
+                className="h-10 w-full rounded-xl border bg-transparent px-3 text-sm"
+                value={filterAction}
+                onChange={(e) => setFilterAction(e.target.value)}
+              >
+                <option value="">All actions</option>
+                {actionKeys.map((key) => (
+                  <option key={key} value={key}>
+                    {key}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="space-y-1 text-sm">
+              <div className="text-foreground/62">Actor</div>
+              <input
+                className="h-10 w-full rounded-xl border bg-transparent px-3 text-sm"
+                value={filterActor}
+                onChange={(e) => setFilterActor(e.target.value)}
+                placeholder="Name or email..."
+              />
+            </label>
+            <label className="space-y-1 text-sm">
+              <div className="text-foreground/62">Target type</div>
+              <select
+                className="h-10 w-full rounded-xl border bg-transparent px-3 text-sm"
+                value={filterTargetType}
+                onChange={(e) => setFilterTargetType(e.target.value)}
+              >
+                <option value="">All targets</option>
+                {targetTypes.map((type) => (
+                  <option key={type} value={type}>
+                    {type}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="space-y-1 text-sm">
+              <div className="text-foreground/62">Target ID</div>
+              <input
+                className="h-10 w-full rounded-xl border bg-transparent px-3 text-sm"
+                value={filterTargetId}
+                onChange={(e) => setFilterTargetId(e.target.value)}
+                placeholder="Exact ID..."
+              />
+            </label>
+            <label className="space-y-1 text-sm">
+              <div className="text-foreground/62">Start date</div>
+              <input
+                type="date"
+                className="h-10 w-full rounded-xl border bg-transparent px-3 text-sm"
+                value={filterStartDate}
+                onChange={(e) => setFilterStartDate(e.target.value)}
+              />
+            </label>
+            <label className="space-y-1 text-sm">
+              <div className="text-foreground/62">End date</div>
+              <input
+                type="date"
+                className="h-10 w-full rounded-xl border bg-transparent px-3 text-sm"
+                value={filterEndDate}
+                onChange={(e) => setFilterEndDate(e.target.value)}
+              />
+            </label>
+          </AdminToolbar>
+        </AdminFilterTray>
       </AdminSurface>
 
       <AdminSurface
