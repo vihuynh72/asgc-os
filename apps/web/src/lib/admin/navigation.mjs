@@ -2,21 +2,19 @@ const DOMAIN_ORDER = ["people", "office_hours", "meetings"];
 
 const SECTION_NAV = {
   people: [
-    { id: "overview", label: "Overview", href: "/admin/people" },
-    { id: "invites", label: "Invites", href: "/admin/people/invites" },
+    { id: "invites", label: "Invites", href: "/admin/people" },
     { id: "assignments", label: "Assignments", href: "/admin/people/assignments" },
     { id: "terms", label: "Terms", href: "/admin/people/terms" },
     { id: "access_audit", label: "Access Audit", href: "/admin/people/access-audit" },
   ],
   office_hours: [
-    { id: "overview", label: "Overview", href: "/admin/office-hours" },
-    { id: "sessions", label: "Sessions", href: "/admin/office-hours/sessions" },
+    { id: "sessions", label: "Sessions", href: "/admin/office-hours" },
     { id: "requirements", label: "Requirements", href: "/admin/office-hours/requirements" },
     { id: "config", label: "Config", href: "/admin/office-hours/config" },
     { id: "export", label: "Export", href: "/admin/office-hours/export" },
   ],
   meetings: [
-    { id: "overview", label: "Overview", href: "/admin/meetings" },
+    { id: "queue", label: "Queue", href: "/admin/meetings" },
     { id: "create", label: "Create", href: "/admin/meetings#admin-meetings-create" },
     { id: "upcoming", label: "Upcoming", href: "/admin/meetings#admin-meetings-upcoming" },
     { id: "committees", label: "Committees", href: "/admin/meetings#admin-meetings-committees" },
@@ -75,17 +73,17 @@ function normalizePathname(pathname) {
 }
 
 function buildPeoplePath(section) {
-  if (!section || section === "overview") return "/admin/people";
+  if (!section || section === "overview" || section === "invites") return "/admin/people";
   if (section === "access_audit" || section === "audit") return "/admin/people/access-audit";
-  if (section === "invites" || section === "assignments" || section === "terms") {
+  if (section === "assignments" || section === "terms") {
     return `/admin/people/${section}`;
   }
   return "/admin/people";
 }
 
 function buildOfficeHoursPath(section) {
-  if (!section || section === "overview" || section === "summary") return "/admin/office-hours";
-  if (section === "sessions" || section === "requirements" || section === "config") {
+  if (!section || section === "overview" || section === "summary" || section === "sessions") return "/admin/office-hours";
+  if (section === "requirements" || section === "config") {
     return `/admin/office-hours/${section}`;
   }
   if (section === "export") return "/admin/office-hours/export";
@@ -94,7 +92,8 @@ function buildOfficeHoursPath(section) {
 }
 
 function buildMeetingsLocation(section, hash) {
-  const nextHash = MEETING_HASH_BY_SECTION[section] ?? (VALID_MEETING_HASHES.has(hash) ? hash : "");
+  const nextHash =
+    section === "queue" ? "" : MEETING_HASH_BY_SECTION[section] ?? (VALID_MEETING_HASHES.has(hash) ? hash : "");
   return { pathname: "/admin/meetings", hash: nextHash ?? "" };
 }
 
@@ -105,15 +104,15 @@ function parseDomainFromPath(pathname) {
   if (segments[1] === "people") {
     return {
       domainId: "people",
-      section: segments[2] === "access-audit" ? "access_audit" : segments[2] ?? "overview",
+      section: segments[2] === "access-audit" ? "access_audit" : segments[2] ?? "invites",
     };
   }
   if (segments[1] === "office-hours") {
     if (segments[2] === "export" && segments[3] === "csv") return { domainId: "office_hours", section: "csv" };
     if (segments[2] === "export") return { domainId: "office_hours", section: "export" };
-    return { domainId: "office_hours", section: segments[2] ?? "overview" };
+    return { domainId: "office_hours", section: segments[2] ?? "sessions" };
   }
-  if (segments[1] === "meetings") return { domainId: "meetings", section: "overview" };
+  if (segments[1] === "meetings") return { domainId: "meetings", section: "queue" };
   if (segments[1] === "audit") return { domainId: "people", section: "access_audit" };
   return { domainId: null, section: null };
 }
