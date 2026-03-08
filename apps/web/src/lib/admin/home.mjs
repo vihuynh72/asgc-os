@@ -4,27 +4,59 @@ function pluralize(count, singular, plural = `${singular}s`) {
   return `${count} ${count === 1 ? singular : plural}`;
 }
 
+const DOMAIN_ORDER = {
+  people: 0,
+  office_hours: 1,
+  meetings: 2,
+};
+
+const STATUS_PRIORITY = {
+  critical: 0,
+  warning: 1,
+  neutral: 2,
+  good: 3,
+};
+
 function buildPeopleCard(snapshot) {
   const pendingInvites = snapshot.people.pendingInvites;
   const blockedEntries = snapshot.people.blockedEntries;
   const pendingGrants = snapshot.people.pendingGrants;
 
-  let status = "Invite queue is calm and access changes look stable.";
+  let status = "Queue clear";
+  let statusShort = "Ready";
+  let statusTone = "good";
+  let statusIcon = "check";
+  let count = 0;
+
   if (pendingInvites > 0) {
-    status = `${pluralize(pendingInvites, "invited member")} still need${pendingInvites === 1 ? "s" : ""} their first sign-in.`;
+    status = `${pluralize(pendingInvites, "invite")} waiting`;
+    statusShort = "Invites pending";
+    statusTone = "warning";
+    statusIcon = "clock";
+    count = pendingInvites;
   } else if (pendingGrants > 0) {
-    status = `${pluralize(pendingGrants, "pre-login role grant")} are still waiting to be applied.`;
+    status = `${pluralize(pendingGrants, "grant")} waiting`;
+    statusShort = "Grants queued";
+    statusTone = "warning";
+    statusIcon = "clock";
+    count = pendingGrants;
   } else if (blockedEntries > 0) {
-    status = `${pluralize(blockedEntries, "blocked invite pattern")} should be reviewed against current access decisions.`;
+    status = `${pluralize(blockedEntries, "block rule")} to review`;
+    statusShort = "Blocks to review";
+    statusTone = "warning";
+    statusIcon = "clock";
+    count = blockedEntries;
   }
 
   return {
     id: "people",
     href: "/admin/people",
     title: "People",
-    badge: pendingInvites > 0 ? `${pluralize(pendingInvites, "pending invite")}` : null,
     status,
-    description: `Current term: ${snapshot.currentTermName}. Invite access, assignments, and term changes stay separate from each other.`,
+    statusShort,
+    statusTone,
+    statusIcon,
+    count,
     primaryLabel: "Open invite queue",
   };
 }
@@ -37,13 +69,11 @@ function buildOfficeHoursCard(snapshot) {
     id: "office_hours",
     href: "/admin/office-hours",
     title: "Office Hours",
-    badge: officeReady ? null : "Needs setup",
-    status: officeReady
-      ? "Sessions, requirements, and configuration are ready to work in."
-      : "Office Hours setup still needs attention before weekly operations feel reliable.",
-    description: officeReady
-      ? `${pluralize(configuredRoles, "role")} already have requirements configured for the current term.`
-      : "Finish setup first, then move into sessions, requirements, or export without extra clutter.",
+    status: officeReady ? `${pluralize(configuredRoles, "role")} configured` : "Setup still needed",
+    statusShort: officeReady ? "Ready" : "Setup required",
+    statusTone: officeReady ? "good" : "warning",
+    statusIcon: officeReady ? "check" : "clock",
+    count: officeReady ? configuredRoles : 0,
     primaryLabel: "Open sessions",
   };
 }
@@ -53,20 +83,35 @@ function buildMeetingsCard(snapshot) {
   const missingAgendaCount = snapshot.meetings.missingAgendaCount;
   const upcomingMeetings = snapshot.meetings.upcomingMeetings;
 
-  let status = "Upcoming meetings and publishing checks look on track.";
+  let status = "Queue on track";
+  let statusShort = "On track";
+  let statusTone = "good";
+  let statusIcon = "check";
+  let count = upcomingMeetings;
+
   if (missingNoticeCount > 0) {
-    status = `${pluralize(missingNoticeCount, "scheduled meeting")} still need${missingNoticeCount === 1 ? "s" : ""} public notice.`;
+    status = `${pluralize(missingNoticeCount, "notice")} due`;
+    statusShort = "Notice due";
+    statusTone = "critical";
+    statusIcon = "triangle";
+    count = missingNoticeCount;
   } else if (missingAgendaCount > 0) {
-    status = `${pluralize(missingAgendaCount, "scheduled meeting")} still need${missingAgendaCount === 1 ? "s" : ""} an agenda.`;
+    status = `${pluralize(missingAgendaCount, "agenda")} missing`;
+    statusShort = "Agenda due";
+    statusTone = "warning";
+    statusIcon = "clock";
+    count = missingAgendaCount;
   }
 
   return {
     id: "meetings",
     href: "/admin/meetings",
     title: "Meetings",
-    badge: missingNoticeCount > 0 ? `${pluralize(missingNoticeCount, "notice")}` : null,
     status,
-    description: upcomingMeetings > 0 ? `${pluralize(upcomingMeetings, "upcoming meeting")} are currently on the queue.` : "No upcoming meetings are on the queue right now.",
+    statusShort,
+    statusTone,
+    statusIcon,
+    count,
     primaryLabel: "Open meeting queue",
   };
 }
@@ -80,9 +125,11 @@ function buildIssues(snapshot, visibleDomains) {
         id: "people-pending-invites",
         domainId: "people",
         href: "/admin/people",
-        label: "People",
-        message: `${pluralize(snapshot.people.pendingInvites, "invited member")} still need${snapshot.people.pendingInvites === 1 ? "s" : ""} their first sign-in.`,
-        tone: "warning",
+        label: "Pending invites",
+        count: snapshot.people.pendingInvites,
+        statusTone: "warning",
+        statusIcon: "clock",
+        priority: STATUS_PRIORITY.warning,
       });
     }
     if (snapshot.people.pendingGrants > 0) {
@@ -90,9 +137,11 @@ function buildIssues(snapshot, visibleDomains) {
         id: "people-pending-grants",
         domainId: "people",
         href: "/admin/people/assignments",
-        label: "People",
-        message: `${pluralize(snapshot.people.pendingGrants, "pre-login role grant")} are still waiting to be applied.`,
-        tone: "warning",
+        label: "Role grants",
+        count: snapshot.people.pendingGrants,
+        statusTone: "warning",
+        statusIcon: "clock",
+        priority: STATUS_PRIORITY.warning,
       });
     }
     if (snapshot.people.blockedEntries > 0) {
@@ -100,9 +149,11 @@ function buildIssues(snapshot, visibleDomains) {
         id: "people-blocklist",
         domainId: "people",
         href: "/admin/people/access-audit",
-        label: "People",
-        message: `${pluralize(snapshot.people.blockedEntries, "blocked invite pattern")} should be reviewed against current access decisions.`,
-        tone: "warning",
+        label: "Blocked patterns",
+        count: snapshot.people.blockedEntries,
+        statusTone: "warning",
+        statusIcon: "clock",
+        priority: STATUS_PRIORITY.warning,
       });
     }
   }
@@ -112,9 +163,11 @@ function buildIssues(snapshot, visibleDomains) {
       id: "office-hours-setup",
       domainId: "office_hours",
       href: "/admin/office-hours/config",
-      label: "Office Hours",
-      message: "Office setup still needs review before specialist workflows are dependable.",
-      tone: "warning",
+      label: "Setup review",
+      count: 1,
+      statusTone: "warning",
+      statusIcon: "clock",
+      priority: STATUS_PRIORITY.warning,
     });
   }
 
@@ -124,9 +177,11 @@ function buildIssues(snapshot, visibleDomains) {
         id: "meetings-notices",
         domainId: "meetings",
         href: "/admin/meetings#admin-meetings-upcoming",
-        label: "Meetings",
-        message: `${pluralize(snapshot.meetings.missingNoticeCount, "scheduled meeting")} still need${snapshot.meetings.missingNoticeCount === 1 ? "s" : ""} public notice.`,
-        tone: "warning",
+        label: "Post notices",
+        count: snapshot.meetings.missingNoticeCount,
+        statusTone: "critical",
+        statusIcon: "triangle",
+        priority: STATUS_PRIORITY.critical,
       });
     }
     if (snapshot.meetings.missingAgendaCount > 0) {
@@ -134,14 +189,27 @@ function buildIssues(snapshot, visibleDomains) {
         id: "meetings-agendas",
         domainId: "meetings",
         href: "/admin/meetings#admin-meetings-existing",
-        label: "Meetings",
-        message: `${pluralize(snapshot.meetings.missingAgendaCount, "scheduled meeting")} ${snapshot.meetings.missingAgendaCount === 1 ? "is" : "are"} still missing ${snapshot.meetings.missingAgendaCount === 1 ? "an agenda" : "agendas"}.`,
-        tone: "warning",
+        label: "Agenda missing",
+        count: snapshot.meetings.missingAgendaCount,
+        statusTone: "warning",
+        statusIcon: "clock",
+        priority: STATUS_PRIORITY.warning,
       });
     }
   }
 
-  return issues;
+  return issues
+    .map((issue, sortIndex) => ({ issue, sortIndex }))
+    .sort((a, b) => {
+      const priority = a.issue.priority - b.issue.priority;
+      if (priority !== 0) return priority;
+      const domain =
+        (DOMAIN_ORDER[a.issue.domainId] ?? Number.MAX_SAFE_INTEGER) -
+        (DOMAIN_ORDER[b.issue.domainId] ?? Number.MAX_SAFE_INTEGER);
+      if (domain !== 0) return domain;
+      return a.sortIndex - b.sortIndex;
+    })
+    .map((entry) => entry.issue);
 }
 
 export function buildAdminHomeViewModel({ tier, isEvp, snapshot }) {
@@ -155,7 +223,7 @@ export function buildAdminHomeViewModel({ tier, isEvp, snapshot }) {
 
   return {
     title: "Admin",
-    description: "A calm overview of what needs attention, without turning the page into a control wall.",
+    description: "See what matters now, then jump in.",
     cards,
     issues: buildIssues(snapshot, visibleDomains),
     primaryPath: visibleDomains[0] ? buildAdminHref(visibleDomains[0]) : "/admin/meetings",
