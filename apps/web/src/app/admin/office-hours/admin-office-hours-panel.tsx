@@ -2,6 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { AdminDrawer } from "@/components/admin/admin-drawer";
+import { AdminEmptyState } from "@/components/admin/admin-empty-state";
+import { AdminStatStrip } from "@/components/admin/admin-stat-strip";
+import { AdminSurface } from "@/components/admin/admin-surface";
+import { AdminToolbar } from "@/components/admin/admin-toolbar";
+import type { AdminStat } from "@/components/admin/admin-types";
 import { Button } from "@/components/ui/button";
 import { normalizeDateOnlyString } from "@/lib/dateOnly";
 import { computeAdminOverrideMinutes, validateAdminCheckoutAt } from "@/lib/office-hours-admin-overrides.mjs";
@@ -538,55 +544,123 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
     overrideSession && overrideCheckoutIso ? computeAdminOverrideMinutes(overrideSession.checkin_at, overrideCheckoutIso) : null;
   const overrideCanSubmit =
     !!overrideSession && !!overrideCheckoutIso && overrideValidation.ok && overrideReason.trim().length >= 2 && !overrideSubmitting;
+  const stats: AdminStat[] = [
+    {
+      id: "office-hours-view",
+      label: "View",
+      value: view.toUpperCase(),
+      detail: tz ? `Times shown in ${tz}` : "Loading timezone",
+    },
+    {
+      id: "office-hours-open",
+      label: "Open sessions",
+      value: String(openSessions.length),
+      detail: openSessions.length > 0 ? "Members currently checked in" : "No open sessions right now",
+      tone: openSessions.length > 0 ? "warning" : "default",
+    },
+    {
+      id: "office-hours-filtered",
+      label: "Visible sessions",
+      value: String(filteredSessions.length),
+      detail: search.trim() ? `Filtered by "${search.trim()}"` : "Current filters applied",
+    },
+    {
+      id: "office-hours-total",
+      label: "Tracked time",
+      value: formatMinutes(totalMinutes),
+      detail: view === "week" ? `Week of ${weekStartForExport}` : `Anchor ${anchorDate}`,
+    },
+  ];
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <div className="flex flex-wrap items-end justify-between gap-3">
-        <div className="text-sm text-foreground/70">
-          {tz ? `Times shown in ${tz}. Week view is Mon-Fri only.` : "Loading office timezone…"}
+        <div className="text-sm text-foreground/68">
+          {tz ? `Times shown in ${tz}. The week view stays focused on Monday through Friday.` : "Loading office timezone…"}
         </div>
-
         <div className="flex flex-wrap items-center gap-2">
-          <Button variant={view === "day" ? "default" : "outline"} onClick={() => setView("day")}>
+          <Button variant={view === "day" ? "default" : "ghost"} onClick={() => setView("day")}>
             Day
           </Button>
-          <Button variant={view === "week" ? "default" : "outline"} onClick={() => setView("week")}>
+          <Button variant={view === "week" ? "default" : "ghost"} onClick={() => setView("week")}>
             Week
           </Button>
-          <Button variant={view === "month" ? "default" : "outline"} onClick={() => setView("month")}>
+          <Button variant={view === "month" ? "default" : "ghost"} onClick={() => setView("month")}>
             Month
           </Button>
         </div>
       </div>
 
-      <div className="rounded-md border p-3">
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="flex items-center gap-2">
-            <Button variant="outline" onClick={onPrev}>
-              Prev
-            </Button>
-            <Button variant="outline" onClick={() => setAnchorDate(todayDateString())}>
-              Today
-            </Button>
-            <Button variant="outline" onClick={onNext}>
-              Next
-            </Button>
-          </div>
+      <AdminStatStrip stats={stats} />
 
+      <AdminSurface title="Filters and navigation" description="Keep only the filters you need active. Everything updates in place.">
+        <AdminToolbar
+          primary={
+            <>
+              <Button variant="outline" onClick={onPrev}>
+                Prev
+              </Button>
+              <Button variant="outline" onClick={() => setAnchorDate(todayDateString())}>
+                Today
+              </Button>
+              <Button variant="outline" onClick={onNext}>
+                Next
+              </Button>
+            </>
+          }
+          secondary={
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  window.open(
+                    weekStartForExport ? `/admin/office-hours/export?weekStart=${encodeURIComponent(weekStartForExport)}` : "/admin/office-hours/export",
+                    "_blank",
+                    "noopener,noreferrer",
+                  )
+                }
+              >
+                Weekly report
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() =>
+                  window.open(
+                    weekStartForExport
+                      ? `/admin/office-hours/export/csv?weekStart=${encodeURIComponent(weekStartForExport)}`
+                      : "/admin/office-hours/export/csv",
+                    "_blank",
+                    "noopener,noreferrer",
+                  )
+                }
+              >
+                CSV
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => window.open("/office-hours/kiosk/review", "_blank", "noopener,noreferrer")}
+              >
+                Selfies
+              </Button>
+            </>
+          }
+        >
           <label className="space-y-1 text-sm">
-            <div className="text-foreground/70">{view === "week" ? "Work week of" : "Date"}</div>
+            <div className="text-foreground/62">{view === "week" ? "Work week of" : "Date"}</div>
             <input
               type="date"
-              className="h-9 rounded-md border bg-transparent px-2 text-sm"
+              className="h-10 rounded-xl border bg-transparent px-3 text-sm"
               value={anchorDate}
               onChange={(e) => setAnchorDate(normalizeDateOnlyString(e.target.value) ?? todayDateString())}
             />
           </label>
-
           <label className="space-y-1 text-sm">
-            <div className="text-foreground/70">User (optional)</div>
+            <div className="text-foreground/62">User</div>
             <select
-              className="h-9 w-72 rounded-md border bg-transparent px-2 text-sm"
+              className="h-10 w-full rounded-xl border bg-transparent px-3 text-sm"
               value={selectedUserId}
               onChange={(e) => setSelectedUserId(e.target.value)}
             >
@@ -598,17 +672,15 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
               ))}
             </select>
           </label>
-
           <label className="space-y-1 text-sm">
-            <div className="text-foreground/70">Search</div>
+            <div className="text-foreground/62">Search</div>
             <input
-              className="h-9 w-60 rounded-md border bg-transparent px-2 text-sm"
+              className="h-10 w-full rounded-xl border bg-transparent px-3 text-sm"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Name, email, status…"
             />
           </label>
-
           {view === "week" ? (
             <label className="flex items-center gap-2 text-sm">
               <input
@@ -619,81 +691,50 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
               <span className="text-foreground/70">Group by user</span>
             </label>
           ) : null}
-        </div>
-
-        <div className="mt-3 flex flex-wrap items-center gap-3 text-sm text-foreground/70">
-          <span>Status:</span>
           {Object.keys(statusFilter).map((k) => (
-            <label key={k} className="flex items-center gap-2">
+            <label key={k} className="flex items-center gap-2 text-sm">
               <input
                 type="checkbox"
                 checked={statusFilter[k]}
                 onChange={(e) => setStatusFilter((prev) => ({ ...prev, [k]: e.target.checked }))}
               />
-              <span className="font-mono">{k}</span>
+              <span className="font-mono text-foreground/70">{k}</span>
             </label>
           ))}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() =>
-              window.open(
-                weekStartForExport ? `/admin/office-hours/export?weekStart=${encodeURIComponent(weekStartForExport)}` : "/admin/office-hours/export",
-                "_blank",
-                "noopener,noreferrer",
-              )
-            }
-          >
-            Weekly report
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() =>
-              window.open(
-                weekStartForExport
-                  ? `/admin/office-hours/export/csv?weekStart=${encodeURIComponent(weekStartForExport)}`
-                  : "/admin/office-hours/export/csv",
-                "_blank",
-                "noopener,noreferrer",
-              )
-            }
-          >
-            CSV
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => window.open("/office-hours/kiosk/review", "_blank", "noopener,noreferrer")}
-          >
-            Selfies
-          </Button>
-          {openSessions.length > 0 ? (
-            <span className="inline-flex items-center gap-2 rounded-full border border-emerald-200/60 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700">
-              Open sessions
-              <span className="rounded-full bg-emerald-600 px-1.5 py-0.5 text-[10px] font-semibold text-white">
-                {openSessions.length}
-              </span>
-            </span>
-          ) : null}
-          <span className="ml-auto">
-            {loading ? "Loading…" : `${filteredSessions.length} session${filteredSessions.length === 1 ? "" : "s"} • ${formatMinutes(totalMinutes)}`}
-          </span>
-        </div>
+        </AdminToolbar>
 
         {error ? (
-          <div className="mt-3 text-sm text-red-600" role="alert">
+          <div className="mt-4 rounded-2xl border border-red-500/30 bg-red-500/5 px-4 py-3 text-sm text-red-700 dark:text-red-300" role="alert">
             {error}
           </div>
         ) : null}
-      </div>
+        {loading ? (
+          <div className="mt-4 text-sm text-foreground/65">Refreshing sessions…</div>
+        ) : null}
+      </AdminSurface>
 
       {view === "day" ? (
-        <div className="rounded-md border">
-          <div className="px-3 py-2 text-sm text-foreground/70">
-            {formatDateHeading(startDate, tz)} • {filteredSessions.length} session{filteredSessions.length === 1 ? "" : "s"}
+        <AdminSurface title="Day view" description={`${formatDateHeading(startDate, tz)} • ${filteredSessions.length} session${filteredSessions.length === 1 ? "" : "s"}`}>
+          <div className="space-y-3 md:hidden">
+            {filteredSessions.length === 0 ? (
+              <AdminEmptyState
+                title="No sessions for this day"
+                description="Try a different date or broaden the current filters."
+              />
+            ) : (
+              filteredSessions.map((s) => (
+                <SessionCard
+                  key={s.id}
+                  session={s}
+                  tz={tz}
+                  showUser
+                  onViewSelfie={(sess) => void openSelfie(sess)}
+                  onAdminOverride={(sess) => openAdminOverride(sess)}
+                />
+              ))
+            )}
           </div>
-          <div className="overflow-x-auto">
+          <div className="hidden overflow-x-auto md:block">
             <table className="w-full min-w-[860px] text-sm">
               <thead className="border-t bg-foreground/5 text-left text-xs text-foreground/70">
                 <tr>
@@ -774,12 +815,12 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
               </tbody>
             </table>
           </div>
-        </div>
+        </AdminSurface>
       ) : null}
 
       {view === "week" ? (
-        <div className="overflow-x-auto pb-4">
-          <div className="grid min-w-[1400px] grid-cols-5 gap-4">
+        <AdminSurface title="Week view" description="Scan the work week at a glance, then expand only the member stacks you need.">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
             {weekDays.map((day) => {
               const daySessions = sessionsByDay.get(day) ?? [];
               const dayMinutes = daySessions.reduce((sum, s) => sum + (typeof s.duration_minutes === "number" ? s.duration_minutes : 0), 0);
@@ -874,11 +915,11 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
               );
             })}
           </div>
-        </div>
+        </AdminSurface>
       ) : null}
 
       {view === "month" ? (
-        <div className="rounded-md border">
+        <AdminSurface title="Month view" description="Use the month grid to find busy days quickly, then tap into Day view for detail.">
           <div className="border-b px-3 py-2 text-sm text-foreground/70">
             Month starting {monthGrid.monthStart}
           </div>
@@ -921,130 +962,114 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
           <div className="px-3 py-2 text-xs text-foreground/60">
             Tip: click a day to jump to Day view.
           </div>
-        </div>
+        </AdminSurface>
       ) : null}
 
-      {overrideOpen && overrideSession ? (
-        <div
-          className="fixed inset-0 z-50 flex justify-end"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Admin override session"
-          onMouseDown={(e) => {
-            if (shouldCloseOnBackdrop({ target: e.target, currentTarget: e.currentTarget })) closeAdminOverride();
+      {overrideSession ? (
+        <AdminDrawer
+          open={overrideOpen}
+          onOpenChange={(open) => {
+            if (!open) closeAdminOverride();
           }}
+          title="Close open session"
+          description="Record the corrected checkout time, explain why the change is needed, and decide whether the session should count toward totals."
         >
-          <div data-backdrop="true" className="absolute inset-0 bg-black/30 backdrop-blur-sm" />
-          <div className="relative h-full w-full max-w-md overflow-y-auto border-l bg-background/90 shadow-2xl ring-1 ring-black/5 backdrop-blur">
-            <div className="flex items-center justify-between border-b px-5 py-4">
-              <div>
-                <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-foreground/50">
-                  Admin override
-                </div>
-                <div className="text-lg font-semibold text-foreground">Close open session</div>
+          <div className="space-y-5 text-sm">
+            <div className="rounded-2xl border bg-foreground/[0.02] p-4 shadow-sm">
+              <div className="text-sm font-semibold">
+                {overrideSession.user_display_name || "Member"}
               </div>
-              <Button variant="ghost" size="sm" onClick={closeAdminOverride} className="h-8 px-2">
-                Close
-              </Button>
+              <div className="text-xs text-foreground/60">
+                {overrideSession.user_email || overrideSession.user_id}
+              </div>
+              <div className="mt-2 text-xs text-foreground/70">
+                Check-in: {formatTimeInTz(overrideSession.checkin_at, tz)} • {formatDateHeading(formatDateKeyInTz(overrideSession.checkin_at, tz), tz)}
+              </div>
             </div>
 
-            <div className="space-y-5 px-5 py-4 text-sm">
-              <div className="rounded-2xl border bg-foreground/[0.02] p-4 shadow-sm">
-                <div className="text-sm font-semibold">
-                  {overrideSession.user_display_name || "Member"}
-                </div>
-                <div className="text-xs text-foreground/60">
-                  {overrideSession.user_email || overrideSession.user_id}
-                </div>
-                <div className="mt-2 text-xs text-foreground/70">
-                  Check-in: {formatTimeInTz(overrideSession.checkin_at, tz)} • {formatDateHeading(formatDateKeyInTz(overrideSession.checkin_at, tz), tz)}
-                </div>
+            <label className="space-y-2">
+              <div className="text-xs font-semibold uppercase tracking-wider text-foreground/60">Checkout time</div>
+              <input
+                type="datetime-local"
+                min={overrideMinLocal}
+                max={overrideMaxLocal}
+                value={overrideCheckoutLocal}
+                onChange={(e) => setOverrideCheckoutLocal(e.target.value)}
+                className="h-11 w-full rounded-xl border bg-transparent px-3 text-sm shadow-sm"
+              />
+              <div className="text-xs text-foreground/60">Must be between check-in and now.</div>
+            </label>
+
+            <label className="space-y-2">
+              <div className="text-xs font-semibold uppercase tracking-wider text-foreground/60">Reason (required)</div>
+              <textarea
+                rows={3}
+                value={overrideReason}
+                onChange={(e) => setOverrideReason(e.target.value)}
+                className="w-full rounded-xl border bg-transparent px-3 py-2 text-sm shadow-sm"
+                placeholder="Short reason for the change"
+              />
+            </label>
+
+            <label className="flex items-center justify-between rounded-xl border bg-background/60 px-3 py-3 shadow-sm">
+              <div>
+                <div className="text-sm font-medium">Count hours</div>
+                <div className="text-xs text-foreground/60">Include this session in weekly totals.</div>
               </div>
+              <input
+                type="checkbox"
+                checked={!overrideExclude}
+                onChange={(e) => setOverrideExclude(!e.target.checked)}
+                className="h-4 w-4"
+              />
+            </label>
 
-              <label className="space-y-2">
-                <div className="text-xs font-semibold uppercase tracking-wider text-foreground/60">Checkout time</div>
-                <input
-                  type="datetime-local"
-                  min={overrideMinLocal}
-                  max={overrideMaxLocal}
-                  value={overrideCheckoutLocal}
-                  onChange={(e) => setOverrideCheckoutLocal(e.target.value)}
-                  className="h-11 w-full rounded-xl border bg-transparent px-3 text-sm shadow-sm"
-                />
-                <div className="text-xs text-foreground/60">Must be between check-in and now.</div>
-              </label>
-
-              <label className="space-y-2">
-                <div className="text-xs font-semibold uppercase tracking-wider text-foreground/60">Reason (required)</div>
-                <textarea
-                  rows={3}
-                  value={overrideReason}
-                  onChange={(e) => setOverrideReason(e.target.value)}
-                  className="w-full rounded-xl border bg-transparent px-3 py-2 text-sm shadow-sm"
-                  placeholder="Short reason for the change"
-                />
-              </label>
-
-              <label className="flex items-center justify-between rounded-xl border bg-background/60 px-3 py-3 shadow-sm">
+            <div className="rounded-xl border bg-foreground/[0.02] p-3 text-xs text-foreground/70">
+              {overridePreviewMinutes !== null ? (
                 <div>
-                  <div className="text-sm font-medium">Count hours</div>
-                  <div className="text-xs text-foreground/60">Include this session in weekly totals.</div>
+                  Estimated duration: <span className="font-semibold">{formatMinutes(overridePreviewMinutes)}</span>
                 </div>
-                <input
-                  type="checkbox"
-                  checked={!overrideExclude}
-                  onChange={(e) => setOverrideExclude(!e.target.checked)}
-                  className="h-4 w-4"
-                />
-              </label>
-
-              <div className="rounded-xl border bg-foreground/[0.02] p-3 text-xs text-foreground/70">
-                {overridePreviewMinutes !== null ? (
-                  <div>
-                    Estimated duration: <span className="font-semibold">{formatMinutes(overridePreviewMinutes)}</span>
-                  </div>
-                ) : (
-                  <div>Estimated duration will appear once a valid time is set.</div>
-                )}
-                <div className="mt-1">
-                  This change will <span className="font-medium">{overrideExclude ? "exclude" : "count"}</span> toward totals.
-                </div>
+              ) : (
+                <div>Estimated duration will appear once a valid time is set.</div>
+              )}
+              <div className="mt-1">
+                This change will <span className="font-medium">{overrideExclude ? "exclude" : "count"}</span> toward totals.
               </div>
+            </div>
 
-              {overrideMessage ? (
-                <div
-                  className={cn(
-                    "rounded-xl border px-3 py-2 text-xs",
-                    overrideMessageKind === "error" &&
-                      "border-red-500/30 bg-red-500/5 text-red-700 dark:text-red-300",
-                    overrideMessageKind === "warning" &&
-                      "border-amber-500/30 bg-amber-500/5 text-amber-800 dark:text-amber-300",
-                    (overrideMessageKind === "success" || overrideMessageKind === "") &&
-                      "border-emerald-500/30 bg-emerald-500/5 text-emerald-700 dark:text-emerald-300",
-                  )}
-                >
-                  {overrideMessage}
-                </div>
-              ) : null}
+            {overrideMessage ? (
+              <div
+                className={cn(
+                  "rounded-xl border px-3 py-2 text-xs",
+                  overrideMessageKind === "error" &&
+                    "border-red-500/30 bg-red-500/5 text-red-700 dark:text-red-300",
+                  overrideMessageKind === "warning" &&
+                    "border-amber-500/30 bg-amber-500/5 text-amber-800 dark:text-amber-300",
+                  (overrideMessageKind === "success" || overrideMessageKind === "") &&
+                    "border-emerald-500/30 bg-emerald-500/5 text-emerald-700 dark:text-emerald-300",
+                )}
+              >
+                {overrideMessage}
+              </div>
+            ) : null}
 
-              <div className="space-y-2">
-                <Button
-                  onClick={() => void submitAdminOverride()}
-                  disabled={!overrideCanSubmit}
-                  className="h-11 w-full rounded-xl"
-                >
-                  {overrideSubmitting ? "Updating…" : "Confirm update"}
-                </Button>
-                <Button variant="ghost" onClick={closeAdminOverride} className="h-10 w-full">
-                  Cancel
-                </Button>
-                <div className="text-xs text-foreground/60">
-                  The member will be notified by email. Changes are audit-logged.
-                </div>
+            <div className="space-y-2">
+              <Button
+                onClick={() => void submitAdminOverride()}
+                disabled={!overrideCanSubmit}
+                className="h-11 w-full rounded-xl"
+              >
+                {overrideSubmitting ? "Updating…" : "Confirm update"}
+              </Button>
+              <Button variant="ghost" onClick={closeAdminOverride} className="h-10 w-full">
+                Cancel
+              </Button>
+              <div className="text-xs text-foreground/60">
+                The member will be notified by email. Changes are audit-logged.
               </div>
             </div>
           </div>
-        </div>
+        </AdminDrawer>
       ) : null}
 
       <SelfieLightbox

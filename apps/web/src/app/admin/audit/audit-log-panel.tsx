@@ -1,6 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+
+import { AdminEmptyState } from "@/components/admin/admin-empty-state";
+import { AdminStatStrip } from "@/components/admin/admin-stat-strip";
+import { AdminSurface } from "@/components/admin/admin-surface";
+import { AdminToolbar } from "@/components/admin/admin-toolbar";
+import type { AdminStat } from "@/components/admin/admin-types";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 
@@ -208,6 +214,12 @@ export function AuditLogPanel() {
   }, [logs]);
 
   const summaryRange = summary.total ? `${formatDate(summary.oldest)} → ${formatDate(summary.newest)}` : "—";
+  const stats: AdminStat[] = [
+    { id: "audit-total", label: "Loaded entries", value: String(summary.total), detail: loading ? "Refreshing…" : "Current client-side result set" },
+    { id: "audit-actors", label: "Unique actors", value: String(summary.uniqueActors), detail: "People or systems represented in the loaded logs" },
+    { id: "audit-range", label: "Range", value: summary.total ? formatDate(summary.newest) : "—", detail: summaryRange },
+    { id: "audit-more", label: "More pages", value: hasMore ? "Available" : "Complete", detail: hasMore ? "Load more to extend the window" : "All loaded entries are visible" },
+  ];
 
   function handleExportCsv() {
     if (logs.length === 0) {
@@ -240,194 +252,223 @@ export function AuditLogPanel() {
   }
 
   return (
-    <div className="space-y-6">
-      {/* Filters */}
-      <div className="rounded-md border p-4 space-y-4">
-        <h2 className="text-lg font-semibold">Filters</h2>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-7">
-          <label className="space-y-1 text-sm">
-            <div className="text-foreground/70">Action</div>
-            <select
-              className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-              value={filterAction}
-              onChange={(e) => setFilterAction(e.target.value)}
-            >
-              <option value="">All actions</option>
-              {actionKeys.map((key) => (
-                <option key={key} value={key}>
-                  {key}
-                </option>
-              ))}
-            </select>
-          </label>
+    <div className="space-y-5">
+      <AdminStatStrip stats={stats} />
 
-          <label className="space-y-1 text-sm">
-            <div className="text-foreground/70">Actor</div>
-            <input
-              className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-              value={filterActor}
-              onChange={(e) => setFilterActor(e.target.value)}
-              placeholder="Name or email..."
-            />
-          </label>
-
-          <label className="space-y-1 text-sm">
-            <div className="text-foreground/70">Target type</div>
-            <select
-              className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-              value={filterTargetType}
-              onChange={(e) => setFilterTargetType(e.target.value)}
-            >
-              <option value="">All targets</option>
-              {targetTypes.map((type) => (
-                <option key={type} value={type}>
-                  {type}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="space-y-1 text-sm">
-            <div className="text-foreground/70">Target ID</div>
-            <input
-              className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-              value={filterTargetId}
-              onChange={(e) => setFilterTargetId(e.target.value)}
-              placeholder="Exact ID..."
-            />
-          </label>
-
-          <label className="space-y-1 text-sm">
-            <div className="text-foreground/70">Start date</div>
-            <input
-              type="date"
-              className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-              value={filterStartDate}
-              onChange={(e) => setFilterStartDate(e.target.value)}
-            />
-          </label>
-
-          <label className="space-y-1 text-sm">
-            <div className="text-foreground/70">End date</div>
-            <input
-              type="date"
-              className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-              value={filterEndDate}
-              onChange={(e) => setFilterEndDate(e.target.value)}
-            />
-          </label>
-
-          <div className="flex items-end gap-2">
-            <Button onClick={handleFilter} disabled={loading}>
-              Apply
-            </Button>
-            <Button variant="outline" onClick={handleClearFilters} disabled={loading}>
-              Clear
-            </Button>
-            <Button variant="ghost" onClick={handleRefresh} disabled={loading}>
-              Refresh
-            </Button>
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-foreground/60">
-          <span>
-            Loaded {summary.total} entries • Unique actors {summary.uniqueActors} • Range {summaryRange}
-          </span>
+      <AdminSurface
+        title="Filters"
+        description="Keep the filter wall tucked away until you need it, then save or share the exact slice you are reviewing."
+        action={
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="outline" size="sm" onClick={handleCopyFilterLink}>
               Copy filter link
             </Button>
-            <Button variant="outline" size="sm" onClick={handleExportCsv} disabled={logs.length === 0}>
-              Export CSV (loaded)
+            <Button variant="ghost" size="sm" onClick={handleExportCsv} disabled={logs.length === 0}>
+              Export CSV
             </Button>
           </div>
-        </div>
-      </div>
+        }
+      >
+        <details open={summary.total === 0}>
+          <summary className="px-1 py-1 text-sm font-medium text-foreground/72">
+            Show filters
+          </summary>
+          <div className="mt-4">
+            <AdminToolbar
+              primary={
+                <>
+                  <Button onClick={handleFilter} disabled={loading}>
+                    Apply
+                  </Button>
+                  <Button variant="outline" onClick={handleClearFilters} disabled={loading}>
+                    Clear
+                  </Button>
+                  <Button variant="ghost" onClick={handleRefresh} disabled={loading}>
+                    Refresh
+                  </Button>
+                </>
+              }
+            >
+              <label className="space-y-1 text-sm">
+                <div className="text-foreground/62">Action</div>
+                <select
+                  className="h-10 w-full rounded-xl border bg-transparent px-3 text-sm"
+                  value={filterAction}
+                  onChange={(e) => setFilterAction(e.target.value)}
+                >
+                  <option value="">All actions</option>
+                  {actionKeys.map((key) => (
+                    <option key={key} value={key}>
+                      {key}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="space-y-1 text-sm">
+                <div className="text-foreground/62">Actor</div>
+                <input
+                  className="h-10 w-full rounded-xl border bg-transparent px-3 text-sm"
+                  value={filterActor}
+                  onChange={(e) => setFilterActor(e.target.value)}
+                  placeholder="Name or email..."
+                />
+              </label>
+              <label className="space-y-1 text-sm">
+                <div className="text-foreground/62">Target type</div>
+                <select
+                  className="h-10 w-full rounded-xl border bg-transparent px-3 text-sm"
+                  value={filterTargetType}
+                  onChange={(e) => setFilterTargetType(e.target.value)}
+                >
+                  <option value="">All targets</option>
+                  {targetTypes.map((type) => (
+                    <option key={type} value={type}>
+                      {type}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="space-y-1 text-sm">
+                <div className="text-foreground/62">Target ID</div>
+                <input
+                  className="h-10 w-full rounded-xl border bg-transparent px-3 text-sm"
+                  value={filterTargetId}
+                  onChange={(e) => setFilterTargetId(e.target.value)}
+                  placeholder="Exact ID..."
+                />
+              </label>
+              <label className="space-y-1 text-sm">
+                <div className="text-foreground/62">Start date</div>
+                <input
+                  type="date"
+                  className="h-10 w-full rounded-xl border bg-transparent px-3 text-sm"
+                  value={filterStartDate}
+                  onChange={(e) => setFilterStartDate(e.target.value)}
+                />
+              </label>
+              <label className="space-y-1 text-sm">
+                <div className="text-foreground/62">End date</div>
+                <input
+                  type="date"
+                  className="h-10 w-full rounded-xl border bg-transparent px-3 text-sm"
+                  value={filterEndDate}
+                  onChange={(e) => setFilterEndDate(e.target.value)}
+                />
+              </label>
+            </AdminToolbar>
+          </div>
+        </details>
+      </AdminSurface>
 
-      {/* Log table */}
-      <div className="rounded-md border overflow-auto">
-        <table className="w-full text-sm">
-          <thead className="bg-muted/50">
-            <tr>
-              <th className="px-4 py-2 text-left font-medium">Time</th>
-              <th className="px-4 py-2 text-left font-medium">Action</th>
-              <th className="px-4 py-2 text-left font-medium">Actor</th>
-              <th className="px-4 py-2 text-left font-medium">Target</th>
-              <th className="px-4 py-2 text-left font-medium">Details</th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading && logs.length === 0 && (
-              <tr>
-                <td colSpan={5} className="px-4 py-8 text-center text-foreground/60">
-                  Loading audit log entries...
-                </td>
-              </tr>
-            )}
-            {logs.length === 0 && !loading && (
-              <tr>
-                <td colSpan={5} className="px-4 py-8 text-center text-foreground/60">
-                  No audit log entries found.
-                </td>
-              </tr>
-            )}
-            {logs.map((log) => (
-              <tr key={log.id} className="border-t">
-                <td className="px-4 py-2 whitespace-nowrap">{formatDate(log.occurred_at)}</td>
-                <td className="px-4 py-2">
-                  <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{log.action_key}</code>
-                </td>
-                <td className="px-4 py-2">
-                  {log.actor_display_name || log.actor_email || log.actor_user_id?.slice(0, 8) || (
-                    <span className="text-foreground/50">System</span>
-                  )}
-                </td>
-                <td className="px-4 py-2">
-                  {log.target_type && (
-                    <span className="text-foreground/70">
-                      {log.target_type}
-                      {log.target_id && (
-                        <span className="text-foreground/50"> / {log.target_id.slice(0, 8)}...</span>
-                      )}
-                    </span>
-                  )}
-                  {!log.target_type && <span className="text-foreground/50">—</span>}
-                </td>
-                <td className="px-4 py-2 max-w-xs">
+      <AdminSurface
+        title="Activity log"
+        description="Review the loaded activity set, then expand metadata only for the rows that matter."
+        action={
+          !loading && hasMore ? (
+            <Button variant="outline" onClick={() => loadLogs(false)} disabled={loading}>
+              Load more
+            </Button>
+          ) : null
+        }
+      >
+        {loading && logs.length === 0 ? (
+          <AdminEmptyState title="Loading audit log entries" description="The client is fetching the first page of activity." />
+        ) : logs.length === 0 ? (
+          <AdminEmptyState title="No audit log entries found" description="Adjust the filters or clear them to widen the search window." />
+        ) : (
+          <>
+            <div className="space-y-3 md:hidden">
+              {logs.map((log) => (
+                <div key={log.id} className="rounded-2xl border border-black/6 bg-[color:var(--admin-surface-raised)] p-4 dark:border-white/8">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-medium">{log.actor_display_name || log.actor_email || log.actor_user_id?.slice(0, 8) || "System"}</div>
+                      <div className="mt-1 text-xs text-foreground/60">{formatDate(log.occurred_at)}</div>
+                    </div>
+                    <code className="rounded-full bg-black/6 px-2.5 py-1 text-[0.7rem] dark:bg-white/8">{log.action_key}</code>
+                  </div>
+                  <div className="mt-3 text-xs text-foreground/65">
+                    {log.target_type ? `${log.target_type}${log.target_id ? ` / ${log.target_id.slice(0, 8)}...` : ""}` : "No target"}
+                  </div>
                   {Object.keys(log.metadata).length > 0 ? (
-                    <details className="cursor-pointer">
-                      <summary className="text-foreground/70 hover:text-foreground">
-                        View metadata
-                      </summary>
-                      <pre className="mt-2 rounded bg-muted p-2 text-xs overflow-auto max-h-40">
+                    <details className="mt-3">
+                      <summary className="text-xs font-medium text-foreground/72">View metadata</summary>
+                      <pre className="mt-2 max-h-40 overflow-auto rounded-xl bg-muted p-3 text-xs">
                         {formatMetadata(log.metadata)}
                       </pre>
                     </details>
-                  ) : (
-                    <span className="text-foreground/50">—</span>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
 
-      {/* Pagination */}
-      <div className="flex justify-center gap-4">
-        {loading && <div className="text-foreground/60">Loading...</div>}
-        {!loading && hasMore && (
-          <Button variant="outline" onClick={() => loadLogs(false)} disabled={loading}>
-            Load more
-          </Button>
+            <div className="hidden overflow-auto md:block">
+              <table className="w-full text-sm">
+                <thead className="bg-muted/50">
+                  <tr>
+                    <th className="px-4 py-2 text-left font-medium">Time</th>
+                    <th className="px-4 py-2 text-left font-medium">Action</th>
+                    <th className="px-4 py-2 text-left font-medium">Actor</th>
+                    <th className="px-4 py-2 text-left font-medium">Target</th>
+                    <th className="px-4 py-2 text-left font-medium">Details</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {logs.map((log) => (
+                    <tr key={log.id} className="border-t">
+                      <td className="px-4 py-2 whitespace-nowrap">{formatDate(log.occurred_at)}</td>
+                      <td className="px-4 py-2">
+                        <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{log.action_key}</code>
+                      </td>
+                      <td className="px-4 py-2">
+                        {log.actor_display_name || log.actor_email || log.actor_user_id?.slice(0, 8) || (
+                          <span className="text-foreground/50">System</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-2">
+                        {log.target_type ? (
+                          <span className="text-foreground/70">
+                            {log.target_type}
+                            {log.target_id ? (
+                              <span className="text-foreground/50"> / {log.target_id.slice(0, 8)}...</span>
+                            ) : null}
+                          </span>
+                        ) : (
+                          <span className="text-foreground/50">—</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-2 max-w-xs">
+                        {Object.keys(log.metadata).length > 0 ? (
+                          <details className="cursor-pointer">
+                            <summary className="text-foreground/70 hover:text-foreground">
+                              View metadata
+                            </summary>
+                            <pre className="mt-2 max-h-40 overflow-auto rounded bg-muted p-2 text-xs">
+                              {formatMetadata(log.metadata)}
+                            </pre>
+                          </details>
+                        ) : (
+                          <span className="text-foreground/50">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
-        {!loading && !hasMore && logs.length > 0 && (
-          <div className="text-foreground/60 text-sm">All entries loaded ({logs.length} total)</div>
-        )}
-        {!loading && logs.length > 0 && hasMore && (
-          <div className="text-foreground/60 text-sm">Loaded {logs.length} entries</div>
-        )}
-      </div>
+
+        <div className="mt-4 flex justify-center gap-4">
+          {loading ? <div className="text-foreground/60">Loading...</div> : null}
+          {!loading && !hasMore && logs.length > 0 ? (
+            <div className="text-foreground/60 text-sm">All entries loaded ({logs.length} total)</div>
+          ) : null}
+          {!loading && logs.length > 0 && hasMore ? (
+            <div className="text-foreground/60 text-sm">Loaded {logs.length} entries</div>
+          ) : null}
+        </div>
+      </AdminSurface>
     </div>
   );
 }
