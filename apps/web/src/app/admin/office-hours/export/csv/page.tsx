@@ -1,7 +1,6 @@
-import { redirect } from "next/navigation";
-
-import { PageShell } from "@/components/page-shell";
-import { getSupabaseServerComponentClient } from "@/lib/supabaseServerComponent";
+import { AdminHero } from "@/components/admin/admin-hero";
+import { AdminSectionNav } from "@/components/admin/admin-section-nav";
+import { requireAdminViewer } from "@/lib/admin/server";
 
 import { OfficeHoursCsvPanel } from "./office-hours-csv-panel";
 
@@ -13,24 +12,7 @@ export default async function OfficeHoursCsvPage({
 }: {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const supabase = await getSupabaseServerComponentClient();
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    redirect("/login?redirectTo=/admin/office-hours/export/csv");
-  }
-
-  const { data: tierData, error: tierErr } = await supabase.rpc("get_admin_tier", { _uid: user.id });
-  const tier = tierData?.tier as "full" | "partial" | "read-only" | null;
-  const isEvp = tierData?.is_evp as boolean ?? false;
-  const canAccess = (tier === "full" || isEvp) && tier !== "read-only";
-
-  if (tierErr || !tier || !canAccess) {
-    redirect("/unauthorized?reason=admin&redirectTo=/admin/office-hours/export/csv");
-  }
+  await requireAdminViewer({ redirectTo: "/admin/office-hours/export/csv", capability: "office_hours" });
 
   const resolvedSearchParams = await searchParams;
   const weekStart =
@@ -40,19 +22,26 @@ export default async function OfficeHoursCsvPage({
         ? resolvedSearchParams?.weekStart[0] ?? null
         : null;
 
-  const backHref = weekStart
-    ? `/admin/office-hours/export?weekStart=${encodeURIComponent(weekStart)}`
-    : "/admin/office-hours/export";
-
   return (
-    <PageShell
-      title="Office Hours Export"
-      description="Weekly report + CSV (table/raw) views."
-      containerClassName="max-w-7xl"
-      backHref={backHref}
-      backLabel="Back to Weekly Report"
-    >
+    <div className="admin-page space-y-6">
+      <AdminHero
+        eyebrow="Office Hours"
+        title="Raw CSV view"
+        description="Keep the raw export output separate from weekly summary review so the reporting workspace stays easier to read."
+      />
+
+      <AdminSectionNav
+        activeId="export"
+        items={[
+          { id: "overview", label: "Overview", href: "/admin/office-hours" },
+          { id: "sessions", label: "Sessions", href: "/admin/office-hours/sessions" },
+          { id: "requirements", label: "Requirements", href: "/admin/office-hours/requirements" },
+          { id: "config", label: "Config", href: "/admin/office-hours/config" },
+          { id: "export", label: "Export", href: weekStart ? `/admin/office-hours/export?weekStart=${encodeURIComponent(weekStart)}` : "/admin/office-hours/export" },
+        ]}
+      />
+
       <OfficeHoursCsvPanel initialWeekStart={weekStart} />
-    </PageShell>
+    </div>
   );
 }
