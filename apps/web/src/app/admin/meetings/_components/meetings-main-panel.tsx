@@ -7,6 +7,7 @@ import { AdminEmptyState } from "@/components/admin/admin-empty-state";
 import { AdminField } from "@/components/admin/admin-field";
 import { AdminInlineNotice } from "@/components/admin/admin-inline-notice";
 import { AdminSectionNav } from "@/components/admin/admin-section-nav";
+import { AdminStatusChip } from "@/components/admin/admin-status-chip";
 import { AdminSurface } from "@/components/admin/admin-surface";
 import { Button } from "@/components/ui/button";
 
@@ -252,7 +253,14 @@ export function MeetingsMainPanel({
         id="admin-meetings-upcoming"
         title="Upcoming queue"
         description="Scheduled meetings stay here until notice, agenda, and detail work are finished."
-        action={<span className="text-sm text-foreground/55">{upcomingMeetings.length} upcoming</span>}
+        action={
+          <AdminStatusChip
+            tone={upcomingMeetings.length > 0 ? "warning" : "good"}
+            icon={upcomingMeetings.length > 0 ? "clock" : "check"}
+            label={upcomingMeetings.length > 0 ? "Upcoming" : "Queue clear"}
+            count={upcomingMeetings.length}
+          />
+        }
       >
         {upcomingMeetings.length === 0 ? (
           <AdminEmptyState title="No upcoming meetings" description="Create a meeting above when the next item needs to get on the calendar." />
@@ -264,9 +272,9 @@ export function MeetingsMainPanel({
                   <div className="space-y-2">
                     <div className="flex flex-wrap items-center gap-2">
                       <h3 className="text-lg font-semibold tracking-[-0.03em] text-foreground">{meeting.title}</h3>
-                      <span className="admin-domain-badge">{formatMeetingTypeLabel(meeting.meeting_type)}</span>
-                      {meeting.notice_posted_at ? null : <span className="admin-domain-badge">Notice needed</span>}
-                      {meeting.agenda_posted_at ? null : <span className="admin-domain-badge">Agenda needed</span>}
+                      <AdminStatusChip tone="neutral" icon="dot" label={formatMeetingTypeLabel(meeting.meeting_type)} />
+                      {meeting.notice_posted_at ? null : <AdminStatusChip tone="critical" icon="triangle" label="Notice needed" />}
+                      {meeting.agenda_posted_at ? null : <AdminStatusChip tone="warning" icon="clock" label="Agenda needed" />}
                     </div>
                     <p className="text-sm leading-7 text-foreground/58">
                       {new Date(meeting.starts_at).toLocaleString()} to {new Date(meeting.ends_at).toLocaleString()}

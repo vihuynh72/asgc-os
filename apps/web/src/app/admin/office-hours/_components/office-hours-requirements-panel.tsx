@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 
 import { AdminField } from "@/components/admin/admin-field";
 import { AdminInlineNotice } from "@/components/admin/admin-inline-notice";
+import { AdminStatusChip } from "@/components/admin/admin-status-chip";
 import { AdminSurface } from "@/components/admin/admin-surface";
 import { Button } from "@/components/ui/button";
 import type { OfficeHourRequirementRow, TermRow } from "@/lib/admin/server";
@@ -101,20 +102,27 @@ export function OfficeHoursRequirementsPanel({
         title="Weekly requirements"
         description="Set the expected hours for each role without carrying live session review onto the same page."
         action={
-          <select
-            value={termId}
-            onChange={async (event) => {
-              const nextTermId = event.target.value;
-              setTermId(nextTermId);
-              await loadRequirements(nextTermId);
-            }}
-          >
-            {terms.map((term) => (
-              <option key={term.id} value={term.id}>
-                {term.name}
-              </option>
-            ))}
-          </select>
+          <div className="flex flex-wrap items-center gap-3">
+            <AdminStatusChip
+              tone={loading ? "warning" : "neutral"}
+              icon={loading ? "clock" : "dot"}
+              label={loading ? "Loading term" : selectedTerm?.name ?? "No term"}
+            />
+            <select
+              value={termId}
+              onChange={async (event) => {
+                const nextTermId = event.target.value;
+                setTermId(nextTermId);
+                await loadRequirements(nextTermId);
+              }}
+            >
+              {terms.map((term) => (
+                <option key={term.id} value={term.id}>
+                  {term.name}
+                </option>
+              ))}
+            </select>
+          </div>
         }
       >
         <form className="space-y-6" onSubmit={handleSave}>
@@ -144,7 +152,11 @@ export function OfficeHoursRequirementsPanel({
             <Button className="h-12 rounded-full px-5" type="submit" disabled={saving}>
               {saving ? "Saving..." : "Save requirements"}
             </Button>
-            <span className="text-sm text-foreground/55">{loading ? "Loading term requirements..." : selectedTerm?.name ?? "No term selected"}</span>
+            <AdminStatusChip
+              tone={loading ? "warning" : "neutral"}
+              icon={loading ? "clock" : "dot"}
+              label={loading ? "Loading term" : selectedTerm?.name ?? "No term"}
+            />
           </div>
         </form>
       </AdminSurface>

@@ -7,6 +7,7 @@ import { AdminEmptyState } from "@/components/admin/admin-empty-state";
 import { AdminField } from "@/components/admin/admin-field";
 import { AdminInlineNotice } from "@/components/admin/admin-inline-notice";
 import { AdminSectionNav } from "@/components/admin/admin-section-nav";
+import { AdminStatusChip } from "@/components/admin/admin-status-chip";
 import { AdminSurface } from "@/components/admin/admin-surface";
 import { Button } from "@/components/ui/button";
 import type {
@@ -396,7 +397,14 @@ export function PeopleInvitesPanel({
       <AdminSurface
         title="Pending invites"
         description="This is the main queue: exact invite entries that still need a first sign-in."
-        action={<span className="text-sm text-foreground/55">{pendingInvites.length} waiting</span>}
+        action={
+          <AdminStatusChip
+            tone={pendingInvites.length > 0 ? "warning" : "good"}
+            icon={pendingInvites.length > 0 ? "clock" : "check"}
+            label={pendingInvites.length > 0 ? "Invites pending" : "Invites clear"}
+            count={pendingInvites.length}
+          />
+        }
       >
         {exactInvites.length === 0 ? (
           <AdminEmptyState
@@ -415,7 +423,11 @@ export function PeopleInvitesPanel({
                     <div className="space-y-2">
                       <div className="flex flex-wrap items-center gap-2">
                         <h3 className="text-lg font-semibold tracking-[-0.03em] text-foreground">{invite.email}</h3>
-                        <span className="admin-domain-badge">{invite.is_active ? (isPending ? "Awaiting sign-in" : "Active") : "Paused"}</span>
+                        <AdminStatusChip
+                          tone={invite.is_active ? (isPending ? "warning" : "good") : "neutral"}
+                          icon={invite.is_active ? (isPending ? "clock" : "check") : "dot"}
+                          label={invite.is_active ? (isPending ? "Awaiting sign-in" : "Active") : "Paused"}
+                        />
                       </div>
                       <p className="text-sm leading-7 text-foreground/62">
                         {invite.notes?.trim()
@@ -454,7 +466,14 @@ export function PeopleInvitesPanel({
       <AdminSurface
         title="Role grants waiting"
         description="Queue a role before first sign-in, then keep the list short and current."
-        action={<span className="text-sm text-foreground/55">{activeGrants.length} waiting</span>}
+        action={
+          <AdminStatusChip
+            tone={activeGrants.length > 0 ? "warning" : "good"}
+            icon={activeGrants.length > 0 ? "clock" : "check"}
+            label={activeGrants.length > 0 ? "Grants pending" : "Grants clear"}
+            count={activeGrants.length}
+          />
+        }
       >
         <form className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_14rem_14rem_minmax(0,1fr)_auto]" onSubmit={handleGrantSubmit}>
           <AdminField label="Email">
@@ -497,7 +516,7 @@ export function PeopleInvitesPanel({
                   <div className="space-y-2">
                     <div className="flex flex-wrap items-center gap-2">
                       <h3 className="text-lg font-semibold tracking-[-0.03em] text-foreground">{grant.email}</h3>
-                      <span className="admin-domain-badge">{grant.role_key.replace("_", " ")}</span>
+                      <AdminStatusChip tone="neutral" icon="dot" label={grant.role_key.replace("_", " ")} />
                       <span className="text-sm text-foreground/56">{termLabel(grant.term_id, terms)}</span>
                     </div>
                     <p className="text-sm leading-7 text-foreground/62">{grant.notes?.trim() || "No note added."}</p>
