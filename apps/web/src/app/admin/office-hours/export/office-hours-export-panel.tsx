@@ -3,6 +3,11 @@
 import type { ChangeEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { AdminEmptyState } from "@/components/admin/admin-empty-state";
+import { AdminStatStrip } from "@/components/admin/admin-stat-strip";
+import { AdminSurface } from "@/components/admin/admin-surface";
+import { AdminToolbar } from "@/components/admin/admin-toolbar";
+import type { AdminStat } from "@/components/admin/admin-types";
 import { Button } from "@/components/ui/button";
 import { addDaysDateOnly, normalizeDateOnlyString, startOfWeekMondayDateOnly, todayDateString } from "@/lib/dateOnly";
 import {
@@ -246,6 +251,33 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
   }, [visibleRows]);
 
   const filtersActive = rowSearch.trim().length > 0 || missingOnly;
+  const stats: AdminStat[] = [
+    {
+      id: "export-members",
+      label: "Members",
+      value: String(summary.total),
+      detail: `${summary.vacant} vacant • ${summary.noShow} no show`,
+    },
+    {
+      id: "export-compliance",
+      label: "Complete",
+      value: String(summary.complete),
+      detail: `${summary.behind + summary.missing} behind or missing`,
+    },
+    {
+      id: "export-required",
+      label: "Required",
+      value: formatHours(summary.requiredTotal),
+      detail: "Target this week",
+    },
+    {
+      id: "export-missing",
+      label: "Missing",
+      value: formatHours(summary.missingTotal),
+      detail: status ? status : actionStatus || "Current visible rows",
+      tone: summary.missingTotal > 0 ? "warning" : "default",
+    },
+  ];
 
   function resetFilters() {
     setRowSearch("");
@@ -253,140 +285,108 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
   }
 
   return (
-    <div className="space-y-4">
-      <div className="rounded-xl border bg-gradient-to-br from-slate-50 via-white to-emerald-50/60 p-4 shadow-sm">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div className="space-y-1">
-            <div className="text-sm font-semibold tracking-tight">Office Hours Weekly Report</div>
-            <div className="text-xs text-foreground/70">
-              Week starts {weekStartResolved ?? "—"} • Blank-name roles are marked as Vacant.
-            </div>
-          </div>
+    <div className="space-y-5">
+      <AdminStatStrip stats={stats} />
 
-          <div className="flex flex-wrap items-end gap-2">
-            <Button variant="outline" size="sm" onClick={() => setAnchorDate((d) => addDaysDateOnly(d, -7) ?? todayDateString())}>
-              Prev
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => setAnchorDate(todayDateString())}>
-              This week
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => setAnchorDate((d) => addDaysDateOnly(d, 7) ?? todayDateString())}>
-              Next
-            </Button>
-
-            <label className="space-y-1 text-sm">
-              <div className="text-foreground/70">Quick week</div>
-              <select
-                className="h-9 w-48 rounded-md border bg-transparent px-2 text-sm"
-                value={weekStartResolved ?? ""}
-                onChange={(e: ChangeEvent<HTMLSelectElement>) =>
-                  setAnchorDate(normalizeDateOnlyString(e.target.value) ?? todayDateString())
-                }
-              >
-                {quickWeekOptions.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="space-y-1 text-sm">
-              <div className="text-foreground/70">Week of (any date)</div>
-              <input
-                type="date"
-                className="h-9 w-56 rounded-md border bg-transparent px-2 text-sm"
-                value={anchorDate}
-                onChange={(e: ChangeEvent<HTMLInputElement>) =>
-                  setAnchorDate(normalizeDateOnlyString(e.target.value) ?? todayDateString())
-                }
-              />
-            </label>
-
+      <AdminSurface
+        title="Week selection"
+        description={`Week starts ${weekStartResolved ?? "—"} • Blank-name roles are marked as Vacant.`}
+        action={
+          <div className="flex flex-wrap items-center gap-2">
             <Button variant="outline" onClick={() => window.location.assign("/admin/office-hours")}>
               Calendar view
             </Button>
-            <Button variant="outline" onClick={openCsvView}>
+            <Button variant="ghost" onClick={openCsvView}>
               CSV preview
             </Button>
             <Button onClick={downloadCsv}>Download CSV</Button>
           </div>
-        </div>
-      </div>
-
-      <div className="rounded-xl border bg-white p-4 shadow-sm">
-        <div className="grid gap-2 md:grid-cols-4">
-          <div className="rounded-lg border bg-foreground/[0.02] px-3 py-2">
-            <div className="text-[11px] uppercase tracking-wide text-foreground/60">Members</div>
-            <div className="text-xl font-semibold">{summary.total}</div>
-            <div className="text-xs text-foreground/60">
-              {summary.vacant} vacant • {summary.noShow} no show
-            </div>
-          </div>
-          <div className="rounded-lg border bg-foreground/[0.02] px-3 py-2">
-            <div className="text-[11px] uppercase tracking-wide text-foreground/60">Compliance</div>
-            <div className="text-xl font-semibold">{summary.complete}</div>
-            <div className="text-xs text-foreground/60">{summary.behind + summary.missing} behind or missing</div>
-          </div>
-          <div className="rounded-lg border bg-foreground/[0.02] px-3 py-2">
-            <div className="text-[11px] uppercase tracking-wide text-foreground/60">Required</div>
-            <div className="font-mono text-xl font-semibold">{formatHours(summary.requiredTotal)}</div>
-            <div className="text-xs text-foreground/60">Target this week</div>
-          </div>
-          <div className="rounded-lg border bg-foreground/[0.02] px-3 py-2">
-            <div className="text-[11px] uppercase tracking-wide text-foreground/60">Completed / Missing</div>
-            <div className="font-mono text-xl font-semibold">{formatHours(summary.completedTotal)}</div>
-            <div className="text-xs text-foreground/60">Missing {formatHours(summary.missingTotal)}</div>
-          </div>
-        </div>
-
-        <div className="mt-4 flex flex-wrap items-end justify-between gap-3 border-t pt-3">
-          <div className="flex flex-wrap items-end gap-2">
-            <label className="space-y-1 text-xs">
-              <div className="text-foreground/70">Search</div>
-              <input
-                type="text"
-                className="h-9 w-72 rounded-md border bg-transparent px-2 text-sm"
-                value={rowSearch}
-                onChange={(e: ChangeEvent<HTMLInputElement>) => setRowSearch(e.target.value)}
-                placeholder="Search name, email, or role..."
-              />
-            </label>
-            <Button variant="ghost" size="sm" onClick={() => setRowSearch("")} disabled={!rowSearch.trim()}>
-              Clear
-            </Button>
-            <label className="flex items-center gap-2 text-xs">
-              <input
-                type="checkbox"
-                checked={missingOnly}
-                onChange={(e: ChangeEvent<HTMLInputElement>) => setMissingOnly(e.target.checked)}
-              />
-              <span className="text-foreground/70">Show missing only</span>
-            </label>
-            <Button variant="ghost" size="sm" onClick={resetFilters} disabled={!filtersActive}>
-              Reset
-            </Button>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <Button variant="outline" size="sm" onClick={() => void handleCopyEmails("missing")} disabled={summary.total === 0}>
-              Copy missing emails
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => void handleCopyEmails("all")} disabled={summary.total === 0}>
-              Copy all emails
-            </Button>
-          </div>
-        </div>
-      </div>
-
-      {actionStatus ? <div className="text-xs text-foreground/70">{actionStatus}</div> : null}
-      {status ? <div className="text-sm text-foreground/70">{status}</div> : null}
+        }
+      >
+        <AdminToolbar
+          primary={
+            <>
+              <Button variant="outline" size="sm" onClick={() => setAnchorDate((d) => addDaysDateOnly(d, -7) ?? todayDateString())}>
+                Prev
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => setAnchorDate(todayDateString())}>
+                This week
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => setAnchorDate((d) => addDaysDateOnly(d, 7) ?? todayDateString())}>
+                Next
+              </Button>
+            </>
+          }
+          secondary={
+            <>
+              <Button variant="outline" size="sm" onClick={() => void handleCopyEmails("missing")} disabled={summary.total === 0}>
+                Copy missing emails
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => void handleCopyEmails("all")} disabled={summary.total === 0}>
+                Copy all emails
+              </Button>
+            </>
+          }
+        >
+          <label className="space-y-1 text-sm">
+            <div className="text-foreground/62">Quick week</div>
+            <select
+              className="h-10 w-full rounded-xl border bg-transparent px-3 text-sm"
+              value={weekStartResolved ?? ""}
+              onChange={(e: ChangeEvent<HTMLSelectElement>) =>
+                setAnchorDate(normalizeDateOnlyString(e.target.value) ?? todayDateString())
+              }
+            >
+              {quickWeekOptions.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="space-y-1 text-sm">
+            <div className="text-foreground/62">Week of</div>
+            <input
+              type="date"
+              className="h-10 w-full rounded-xl border bg-transparent px-3 text-sm"
+              value={anchorDate}
+              onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                setAnchorDate(normalizeDateOnlyString(e.target.value) ?? todayDateString())
+              }
+            />
+          </label>
+          <label className="space-y-1 text-sm">
+            <div className="text-foreground/62">Search</div>
+            <input
+              type="text"
+              className="h-10 w-full rounded-xl border bg-transparent px-3 text-sm"
+              value={rowSearch}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => setRowSearch(e.target.value)}
+              placeholder="Search name, email, or role..."
+            />
+          </label>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={missingOnly}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => setMissingOnly(e.target.checked)}
+            />
+            <span className="text-foreground/70">Show missing only</span>
+          </label>
+          <Button variant="ghost" size="sm" onClick={resetFilters} disabled={!filtersActive}>
+            Reset
+          </Button>
+        </AdminToolbar>
+        {actionStatus ? <div className="mt-4 text-xs text-foreground/70">{actionStatus}</div> : null}
+        {status ? <div className="mt-2 text-sm text-foreground/70">{status}</div> : null}
+      </AdminSurface>
 
       <div className="space-y-4">
         {groups.length === 0 ? (
-          <div className="rounded-xl border border-dashed px-4 py-8 text-center text-sm text-foreground/60">
-            {filtersActive ? "No rows match the current filters." : "No rows returned for this week."}
-          </div>
+          <AdminEmptyState
+            title={filtersActive ? "No rows match the current filters" : "No rows returned for this week"}
+            description="Try a different week or clear the active filters."
+          />
         ) : null}
 
         {groups.map((g) => (

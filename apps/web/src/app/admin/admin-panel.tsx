@@ -5,7 +5,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 
+import { AdminDomainSwitch } from "@/components/admin/admin-domain-switch";
+import { AdminEmptyState } from "@/components/admin/admin-empty-state";
+import { AdminShell } from "@/components/admin/admin-shell";
+import { AdminStatStrip } from "@/components/admin/admin-stat-strip";
+import { AdminSurface } from "@/components/admin/admin-surface";
+import { AdminToolbar } from "@/components/admin/admin-toolbar";
+import type { AdminDomainId, AdminDomainMeta, AdminStat, AdminSubsectionId } from "@/components/admin/admin-types";
 import { Button } from "@/components/ui/button";
+import { getVisibleAdminDomains, normalizeAdminLocation } from "@/lib/admin-navigation.mjs";
 import { copyTextWithFallback } from "@/lib/clipboard";
 import { addDaysDateOnly, normalizeDateOnlyString, startOfWeekMondayDateOnly, todayDateString } from "@/lib/dateOnly";
 import { allowlistKeysForNormalizedEmail } from "@/lib/invitesAllowlist";
@@ -223,6 +231,18 @@ const WEEKDAY_LABELS: Record<number, string> = {
   7: "Sunday",
 };
 const COMMITTEE_KEY_PATTERN = /^[a-z0-9][a-z0-9_-]*$/i;
+const PEOPLE_SECTIONS: Array<{ id: AdminSubsectionId; label: string }> = [
+  { id: "invites", label: "Invites" },
+  { id: "assignments", label: "Assignments" },
+  { id: "terms", label: "Terms" },
+  { id: "audit", label: "Access audit" },
+];
+const MEETING_SECTIONS: Array<{ id: AdminSubsectionId; label: string; anchor: string }> = [
+  { id: "create", label: "Create", anchor: "#admin-meetings-create" },
+  { id: "upcoming", label: "Upcoming", anchor: "#admin-meetings-existing" },
+  { id: "committees", label: "Committees", anchor: "#admin-meetings-committees" },
+  { id: "existing", label: "Existing", anchor: "#admin-meetings-existing" },
+];
 
 function normalizeEmailKey(raw: string | null | undefined): string {
   return raw?.trim().toLowerCase() ?? "";
@@ -617,8 +637,6 @@ export function AdminPanel({
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const canEdit = tier !== "read-only";
   const canSeeAccessTab = tier === "full";
-  const canSeeRolesTab = tier === "full";
-  const canSeeOfficeConfig = (tier === "full" || isEvp) && tier !== "read-only";
   const canManageCommittees = tier === "full";
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -626,33 +644,42 @@ export function AdminPanel({
   const [terms, setTerms] = useState<TermRow[]>(initialTerms);
   const [users, setUsers] = useState<UserRow[]>(initialUsers);
   const [selectedTermId, setSelectedTermId] = useState<string>(initialSelectedTermId);
-  // Default tab based on permissions
-  const defaultTab = canSeeAccessTab ? "access" : canSeeOfficeConfig ? "office_hours" : "meetings";
   const requestedTab = searchParams.get("tab");
-  const isTabAllowed = useCallback(
-    (tab: string | null) => {
-      if (!tab) return false;
-      if (tab === "access") return canSeeAccessTab;
-      if (tab === "office_hours") return canSeeOfficeConfig;
-      if (tab === "roles") return canSeeRolesTab;
-      if (tab === "meetings") return true;
-      return false;
-    },
-    [canSeeAccessTab, canSeeOfficeConfig, canSeeRolesTab],
+  const requestedSection = searchParams.get("section");
+  const initialLocation = normalizeAdminLocation({
+    tab: requestedTab,
+    section: requestedSection,
+    tier,
+    isEvp,
+  });
+  const [adminTab, setAdminTab] = useState<AdminDomainId>(initialLocation.tab as AdminDomainId);
+  const [adminSection, setAdminSection] = useState<AdminSubsectionId>(initialLocation.section as AdminSubsectionId);
+  const adminDomains = useMemo<AdminDomainMeta[]>(
+    () =>
+      getVisibleAdminDomains({ tier, isEvp }).map((id) => {
+        const domainId = id as AdminDomainId;
+        if (domainId === "people") {
+          return {
+            id: domainId,
+            label: "People",
+            description: "Invites, assignments, terms, and access checks.",
+          };
+        }
+        if (domainId === "office_hours") {
+          return {
+            id: domainId,
+            label: "Office Hours",
+            description: "Current status, requirements, and specialist tools.",
+          };
+        }
+        return {
+          id: domainId,
+          label: "Meetings",
+          description: "Create meetings, review committees, and manage schedules.",
+        };
+      }),
+    [tier, isEvp],
   );
-  const initialTab = (isTabAllowed(requestedTab) ? requestedTab : defaultTab) as
-    | "access"
-    | "office_hours"
-    | "roles"
-    | "meetings";
-  const [adminTab, setAdminTab] = useState<"access" | "office_hours" | "roles" | "meetings">(initialTab);
-
-  useEffect(() => {
-    if (!requestedTab) return;
-    if (isTabAllowed(requestedTab) && requestedTab !== adminTab) {
-      setAdminTab(requestedTab as "access" | "office_hours" | "roles" | "meetings");
-    }
-  }, [requestedTab, adminTab, isTabAllowed]);
 
   const [globalAdvisorAssignments, setGlobalAdvisorAssignments] = useState<AssignmentRow[]>(
     initialGlobalAdvisorAssignments,
@@ -685,11 +712,42 @@ export function AdminPanel({
   const [roleGrantTermId, setRoleGrantTermId] = useState<string>(initialSelectedTermId);
   const [roleGrantApplyNow, setRoleGrantApplyNow] = useState<boolean>(false);
   const [roleGrantDisplayTitle, setRoleGrantDisplayTitle] = useState<string>("");
-  function onSelectAdminTab(nextTab: typeof adminTab) {
-    if (nextTab !== "access") setRoleGrantInviteId(null);
+
+  useEffect(() => {
+    const nextLocation = normalizeAdminLocation({
+      tab: requestedTab,
+      section: requestedSection,
+      tier,
+      isEvp,
+    });
+    const nextTab = nextLocation.tab as AdminDomainId;
+    const nextSection = nextLocation.section as AdminSubsectionId;
+
+    if (nextTab !== adminTab) {
+      setAdminTab(nextTab);
+    }
+    if (nextSection !== adminSection) {
+      setAdminSection(nextSection);
+    }
+
+    if (!requestedTab && !requestedSection) return;
+
+    if (requestedTab !== nextTab || requestedSection !== nextSection) {
+      const params = new URLSearchParams(searchParams.toString());
+      params.set("tab", nextTab);
+      params.set("section", nextSection);
+      router.replace(`?${params.toString()}`);
+    }
+  }, [requestedTab, requestedSection, tier, isEvp, adminTab, adminSection, router, searchParams]);
+
+  function onSelectAdminLocation(nextTab: AdminDomainId, nextSection?: AdminSubsectionId) {
+    const resolvedSection = nextSection ?? (nextTab === "people" ? "invites" : nextTab === "office_hours" ? "summary" : "upcoming");
+    if (nextTab !== "people") setRoleGrantInviteId(null);
     setAdminTab(nextTab);
+    setAdminSection(resolvedSection);
     const params = new URLSearchParams(searchParams.toString());
     params.set("tab", nextTab);
+    params.set("section", resolvedSection);
     router.replace(`?${params.toString()}`);
     if (nextTab === "meetings") {
       void loadMeetings();
@@ -723,6 +781,7 @@ export function AdminPanel({
   const [committeeDrafts, setCommitteeDrafts] = useState<Record<string, CommitteeDraft>>({});
   const [committeeSavingId, setCommitteeSavingId] = useState<string | null>(null);
   const [committeeDeletingId, setCommitteeDeletingId] = useState<string | null>(null);
+  const [committeesLoaded, setCommitteesLoaded] = useState<boolean>(false);
 
   const [newTermName, setNewTermName] = useState<string>("");
   const [newTermStart, setNewTermStart] = useState<string>("");
@@ -906,6 +965,68 @@ export function AdminPanel({
     setOfficeHoursExtraDate("");
     setStatus("Office config changes reverted.");
     toast.success("Office config reverted");
+  }
+
+  async function onSaveOfficeConfig() {
+    if (!officeLocation || !officeConfig) return;
+    if (officeConfigError) {
+      toast.error(officeConfigError);
+      setStatus(officeConfigError);
+      return;
+    }
+
+    const lat = officeLatValue;
+    const lon = officeLonValue;
+
+    setStatus("Saving office config...");
+    try {
+      const payload = {
+        name: officeLocation.name,
+        timezone: officeLocation.timezone,
+        lat,
+        lon,
+        radius_m: officeLocation.radius_m,
+        grace_radius_m: officeLocation.grace_radius_m,
+        active: officeLocation.active,
+        quiet_hours_enabled: officeConfig.quiet_hours_enabled,
+        quiet_hours_start_local: officeConfig.quiet_hours_start_local.slice(0, 5),
+        quiet_hours_end_local: officeConfig.quiet_hours_end_local.slice(0, 5),
+        office_hours_allow_weekends: officeConfig.office_hours_allow_weekends,
+        office_hours_allowed_weekdays: officeConfig.office_hours_allowed_weekdays,
+        office_hours_extra_allowed_dates: officeConfig.office_hours_extra_allowed_dates,
+        weekly_hours_reminder_enabled: officeConfig.weekly_hours_reminder_enabled,
+        weekly_hours_reminder_weekday: officeConfig.weekly_hours_reminder_weekday,
+        weekly_hours_reminder_time_local: officeConfig.weekly_hours_reminder_time_local.slice(0, 5),
+      };
+
+      const data = await fetchJson<{ officeConfig: OfficeConfigRow; officeLocation: OfficeLocationRow }>(
+        "/api/admin/office-config",
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        },
+      );
+
+      const nextLatText = typeof data.officeLocation.lat === "number" ? String(data.officeLocation.lat) : "";
+      const nextLonText = typeof data.officeLocation.lon === "number" ? String(data.officeLocation.lon) : "";
+      setOfficeConfig(data.officeConfig);
+      setOfficeLocation(data.officeLocation);
+      setOfficeLatText(nextLatText);
+      setOfficeLonText(nextLonText);
+      officeConfigBaselineRef.current = buildOfficeConfigBaseline(
+        data.officeLocation,
+        data.officeConfig,
+        nextLatText,
+        nextLonText,
+      );
+      setStatus("");
+      toast.success("Office config saved");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Failed to save office config";
+      setStatus(msg);
+      toast.error(msg);
+    }
   }
 
   async function onSendTestEmail() {
@@ -1593,6 +1714,7 @@ export function AdminPanel({
     try {
       const { committees: rows } = await fetchJson<{ committees: CommitteeRow[] }>("/api/admin/committees");
       setCommittees(rows ?? []);
+      setCommitteesLoaded(true);
     } catch (e) {
       setStatus(e instanceof Error ? e.message : "Failed to load committees");
     }
@@ -2896,6 +3018,20 @@ export function AdminPanel({
     return Number.isNaN(ts) ? 0 : ts;
   })();
 
+  useEffect(() => {
+    if (adminTab === "meetings") {
+      if (!meetingsLastLoadedAt) {
+        void loadMeetings();
+      }
+      if (!committeesLoaded) {
+        void loadCommittees();
+      }
+    }
+    if (adminTab === "office_hours" && !officeConfig) {
+      void loadOfficeConfig();
+    }
+  }, [adminTab, meetingsLastLoadedAt, committeesLoaded, officeConfig]);
+
   const filteredMeetings = (() => {
     const query = meetingSearch.trim().toLowerCase();
     const startFilterTs = meetingStartDateFilter
@@ -3360,58 +3496,152 @@ export function AdminPanel({
     toast.success("Meetings CSV downloaded");
   }
 
+  const pendingInvitesCount = invitesAllowlist.filter(
+    (invite) =>
+      invite.is_active &&
+      !invite.email_normalized.startsWith("@") &&
+      !usersByEmail.get(invite.email_normalized),
+  ).length;
+  const peopleStats: AdminStat[] = [
+    {
+      id: "allowlist",
+      label: "Allowed entries",
+      value: String(invitesAllowlist.length),
+      detail: `${invitesAllowlist.filter((invite) => invite.is_active).length} active`,
+    },
+    {
+      id: "pending",
+      label: "Pending sign-ins",
+      value: String(pendingInvitesCount),
+      detail: "Exact-email invites not yet tied to an account",
+      tone: pendingInvitesCount > 0 ? "warning" : "default",
+    },
+    {
+      id: "assignments",
+      label: "Active roles",
+      value: String(globalAdvisorAssignments.length + termAssignments.length),
+      detail: showAllTermAssignments ? "Global + all term roles" : `Global + ${termAssignmentsLabel}`,
+    },
+    {
+      id: "bans",
+      label: "Blocked entries",
+      value: String(invitesBlocklist.filter((ban) => ban.is_active).length),
+      detail: `${invitesBlocklist.length} total blocklist patterns`,
+    },
+  ];
+  const officeHoursConfiguredRoles = OFFICE_HOUR_ROLE_KEYS.filter((roleKey) => (reqRows.get(roleKey)?.weekly_total_hours ?? 0) > 0).length;
+  const officeHoursStats: AdminStat[] = [
+    {
+      id: "requirements",
+      label: "Configured roles",
+      value: `${officeHoursConfiguredRoles}/${OFFICE_HOUR_ROLE_KEYS.length}`,
+      detail: selectedTermId ? `${termNameById.get(selectedTermId) ?? "Selected term"} requirements` : "Select a term",
+      tone: officeHoursConfiguredRoles === OFFICE_HOUR_ROLE_KEYS.length ? "positive" : "default",
+    },
+    {
+      id: "export",
+      label: "Weekly preview",
+      value: exportPreviewRows ? String(exportPreviewRows.length) : "On demand",
+      detail: exportPreviewRows ? `Rows loaded for ${exportWeekStartResolved ?? exportWeekStart}` : "Preview loads only when requested",
+    },
+    {
+      id: "geofence",
+      label: "Office config",
+      value: officeConfig ? "Ready" : "Loading",
+      detail: officeLocation ? `${officeLocation.name} • ${geofenceSummary}` : "Primary office not loaded",
+      tone: officeConfig ? "positive" : "warning",
+    },
+    {
+      id: "reminder",
+      label: "Reminder",
+      value: officeConfig?.weekly_hours_reminder_enabled ? "Enabled" : "Off",
+      detail: reminderSummary,
+    },
+  ];
+  const meetingStats: AdminStat[] = [
+    {
+      id: "meetings-total",
+      label: "Loaded meetings",
+      value: meetingsLastLoadedAt ? String(adminMeetings.length) : "On demand",
+      detail: meetingsLastLoadedAt ? `Last refreshed ${formatShortDateTime(meetingsLastLoadedAt)}` : "Open Meetings to load",
+    },
+    {
+      id: "meetings-upcoming",
+      label: "Scheduled",
+      value: String(filteredMeetingStatusCounts.scheduled),
+      detail: filteredMeetings.length > 0 ? `${filteredMeetings.length} shown in current view` : "Adjust filters or refresh",
+    },
+    {
+      id: "meetings-notice",
+      label: "Missing notice",
+      value: String(filteredMeetingMissingCounts.notice),
+      detail: "Meetings still missing public notice",
+      tone: filteredMeetingMissingCounts.notice > 0 ? "warning" : "default",
+    },
+    {
+      id: "meetings-agenda",
+      label: "Missing agenda/minutes",
+      value: `${filteredMeetingMissingCounts.agenda}/${filteredMeetingMissingCounts.minutes}`,
+      detail: "Agenda first, then minutes after the meeting",
+    },
+  ];
+  const domainStats = adminTab === "people" ? peopleStats : adminTab === "office_hours" ? officeHoursStats : meetingStats;
+  const commandCenterDomains = adminDomains.map((domain) => {
+    if (domain.id === "people") {
+      return { ...domain, badge: String(peopleStats[1]?.value ?? "0") };
+    }
+    if (domain.id === "office_hours") {
+      return { ...domain, badge: officeConfigDirty ? "draft" : officeConfig ? "ready" : "load" };
+    }
+    return { ...domain, badge: meetingsLastLoadedAt ? String(adminMeetings.length) : null };
+  });
+
   return (
-    <div className="space-y-6">
-      {tier === "read-only" && (
-        <div className="rounded-md border border-yellow-500/50 bg-yellow-500/10 px-3 py-2 text-sm text-yellow-700 dark:text-yellow-400" role="alert">
-          <strong>Read-only mode</strong> — You can view admin settings but cannot make changes.
+    <AdminShell
+      title="Admin Command Center"
+      description="A quieter workspace for people, office hours, and meetings. Primary actions stay visible; everything else stays out of the way until you need it."
+      actions={
+        <>
+          {adminTab === "office_hours" ? (
+            <>
+              <a href="/admin/office-hours">
+                <Button variant="outline">Calendar workspace</Button>
+              </a>
+              <a href="/admin/office-hours/export">
+                <Button variant="ghost">Weekly export</Button>
+              </a>
+            </>
+          ) : null}
+          {adminTab === "people" && canSeeAccessTab ? (
+            <a href="/admin/audit">
+              <Button variant="ghost">Audit log</Button>
+            </a>
+          ) : null}
+        </>
+      }
+    >
+      {tier === "read-only" ? (
+        <div className="rounded-2xl border border-yellow-500/30 bg-yellow-500/10 px-4 py-3 text-sm text-yellow-800 dark:text-yellow-300" role="alert">
+          <strong>Read-only mode</strong> You can review admin information, but save actions are disabled.
         </div>
-      )}
+      ) : null}
 
       {status ? (
-        <div className="rounded-md border px-3 py-2 text-sm text-foreground/80" role="status" aria-live="polite">
+        <div className="rounded-2xl border border-black/6 bg-[color:var(--admin-surface-raised)] px-4 py-3 text-sm text-foreground/80 dark:border-white/8" role="status" aria-live="polite">
           {status}
         </div>
       ) : null}
 
-      <div className="rounded-md border p-3 sticky top-0 z-40 bg-background">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-2">
-            {canSeeAccessTab && (
-              <Button variant={adminTab === "access" ? "default" : "outline"} onClick={() => onSelectAdminTab("access")}>
-                Access
-              </Button>
-            )}
-            {canSeeOfficeConfig && (
-              <Button
-                variant={adminTab === "office_hours" ? "default" : "outline"}
-                onClick={() => onSelectAdminTab("office_hours")}
-              >
-                Office Hours
-              </Button>
-            )}
-            {canSeeRolesTab && (
-              <Button variant={adminTab === "roles" ? "default" : "outline"} onClick={() => onSelectAdminTab("roles")}>
-                Roles
-              </Button>
-            )}
-            <Button variant={adminTab === "meetings" ? "default" : "outline"} onClick={() => onSelectAdminTab("meetings")}>
-              Meetings
-            </Button>
-            {canSeeAccessTab && (
-              <a href="/admin/audit">
-                <Button variant="ghost" className="text-foreground/70">
-                  Audit Log →
-                </Button>
-              </a>
-            )}
-          </div>
+      <AdminDomainSwitch domains={commandCenterDomains} activeDomain={adminTab} onSelect={(nextTab) => onSelectAdminLocation(nextTab)} />
+      <AdminStatStrip stats={domainStats} />
 
-          <div className="flex flex-wrap items-end gap-3">
-            <label className="space-y-1 text-sm">
-              <div className="text-foreground/70">Selected term</div>
+      <AdminToolbar
+        primary={
+          <>
+            <label className="min-w-[12rem] flex-1 space-y-1 text-sm">
+              <div className="text-foreground/62">Selected term</div>
               <select
-                className="h-9 rounded-md border bg-transparent px-2 text-sm"
+                className="h-10 w-full rounded-xl border bg-transparent px-3 text-sm"
                 value={selectedTermId}
                 onChange={(e: ChangeEvent<HTMLSelectElement>) => void onSelectTerm(e.target.value)}
               >
@@ -3423,15 +3653,76 @@ export function AdminPanel({
                 ))}
               </select>
             </label>
-
-            <Button onClick={onSetCurrentTerm} disabled={!selectedTermId || selectedTermId === currentTermId}>
+            <Button variant="outline" onClick={onSetCurrentTerm} disabled={!selectedTermId || selectedTermId === currentTermId}>
               Set current
             </Button>
-          </div>
-        </div>
-      </div>
+          </>
+        }
+        secondary={
+          <>
+            {adminTab === "people" ? (
+              <Button variant="ghost" onClick={() => onSelectAdminLocation("people", "invites")}>
+                Reset People view
+              </Button>
+            ) : null}
+            {adminTab === "meetings" ? (
+              <Button variant="ghost" onClick={() => void loadMeetings()}>
+                Refresh meetings
+              </Button>
+            ) : null}
+            {adminTab === "office_hours" ? (
+              <Button variant="ghost" onClick={() => void loadOfficeConfig()}>
+                Refresh office data
+              </Button>
+            ) : null}
+          </>
+        }
+      >
+        {adminTab === "people" ? (
+          PEOPLE_SECTIONS.map((section) => (
+            <Button
+              key={section.id}
+              variant={adminSection === section.id ? "default" : "ghost"}
+              size="sm"
+              onClick={() => onSelectAdminLocation("people", section.id)}
+            >
+              {section.label}
+            </Button>
+          ))
+        ) : adminTab === "meetings" ? (
+          MEETING_SECTIONS.map((section) => (
+            <a
+              key={section.id}
+              href={section.anchor}
+              onClick={() => onSelectAdminLocation("meetings", section.id)}
+            >
+              <Button variant={adminSection === section.id ? "default" : "ghost"} size="sm">
+                {section.label}
+              </Button>
+            </a>
+          ))
+        ) : (
+          <>
+            <a href="/admin/office-hours">
+              <Button variant="default" size="sm">
+                Open calendar workspace
+              </Button>
+            </a>
+            <a href="/admin/office-hours/export">
+              <Button variant="ghost" size="sm">
+                Open export table
+              </Button>
+            </a>
+            <a href="/admin/office-hours/export/csv">
+              <Button variant="ghost" size="sm">
+                View raw CSV
+              </Button>
+            </a>
+          </>
+        )}
+      </AdminToolbar>
 
-      {adminTab === "roles" ? (
+      {adminTab === "people" && adminSection === "terms" ? (
         <>
       <section id="admin-meetings-notifications" className="space-y-3">
         <div className="space-y-1">
@@ -3548,7 +3839,7 @@ export function AdminPanel({
         </>
       ) : null}
 
-      {adminTab === "access" ? (
+      {adminTab === "people" && adminSection === "invites" ? (
       <section className="space-y-3">
         <div className="space-y-1">
           <h2 className="text-lg font-semibold">Invites / allowlist</h2>
@@ -4384,870 +4675,590 @@ export function AdminPanel({
 
       {adminTab === "office_hours" ? (
         <>
-      <section className="space-y-3">
-        <div className="space-y-1">
-          <h2 className="text-lg font-semibold">Office Hours Export (CSV)</h2>
-          <p className="text-sm text-foreground/70">
-            Exports weekly totals/deficits for all active users.
-          </p>
-        </div>
-
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setExportWeekStart((prev) => addDaysDateOnly(prev, -7) ?? todayDateString())}
-            >
-              Prev
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => setExportWeekStart(todayDateString())}>
-              This week
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setExportWeekStart((prev) => addDaysDateOnly(prev, 7) ?? todayDateString())}
-            >
-              Next
-            </Button>
-          </div>
-
-          <label className="space-y-1 text-sm">
-            <div className="text-foreground/70">Week of (any date)</div>
-            <input
-              type="date"
-              className="h-9 w-56 rounded-md border bg-transparent px-2 text-sm"
-              value={exportWeekStart}
-              onChange={(e: ChangeEvent<HTMLInputElement>) =>
-                setExportWeekStart(normalizeDateOnlyString(e.target.value) ?? todayDateString())
-              }
-            />
-          </label>
-
-          {exportWeekStartResolved ? (
-            <div className="text-xs text-foreground/60">
-              Week starts <span className="font-mono">{exportWeekStartResolved}</span>
-            </div>
-          ) : null}
-        </div>
-
-        <div className="flex flex-wrap items-end gap-2">
-          <Button onClick={previewWeeklyHours}>Preview</Button>
-          <Button variant="outline" onClick={openWeeklyHoursPreviewPage}>
-            Open table view
-          </Button>
-          <Button variant="outline" onClick={openWeeklyHoursCsvView}>
-            View CSV
-          </Button>
-          <Button variant="outline" onClick={() => window.location.assign("/admin/office-hours")}>
-            Calendar view
-          </Button>
-          <Button variant="outline" onClick={downloadWeeklyHoursCsv}>
-            Download CSV
-          </Button>
-          {exportPreviewRows ? (
-            <Button variant="ghost" onClick={clearWeeklyHoursPreview}>
-              Clear
-            </Button>
-          ) : null}
-        </div>
-
-        {exportPreviewActionStatus ? (
-          <div className="rounded-md border px-3 py-2 text-sm text-foreground/80" role="status" aria-live="polite">
-            {exportPreviewActionStatus}
-          </div>
-        ) : null}
-
-        {exportPreviewRows ? (
-          <div className="rounded-md border">
-            <div className="flex flex-wrap items-center justify-between gap-3 px-3 py-2 text-sm">
-              <div className="text-foreground/70">
-                Rows: {exportPreviewSummary.totalRows} of {exportPreviewRows.length}
-              </div>
+          <AdminSurface
+            title="Weekly status"
+            description="Keep the command center focused. Review the calendar, sessions, and overrides in the dedicated Office Hours workspace."
+            action={
               <div className="flex flex-wrap items-center gap-2">
-                <label className="space-y-1 text-xs">
-                  <div className="text-foreground/70">Search</div>
-                  <input
-                    type="search"
-                    className="h-8 w-full rounded-md border bg-transparent px-2 text-xs sm:w-48"
-                    value={exportPreviewSearch}
-                    onChange={(e: ChangeEvent<HTMLInputElement>) => setExportPreviewSearch(e.target.value)}
-                    placeholder="Name or email..."
-                  />
-                </label>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setExportPreviewSearch("")}
-                  disabled={!exportPreviewSearch.trim()}
-                >
-                  Clear search
+                <Button variant="outline" size="sm" onClick={() => setExportWeekStart((prev) => addDaysDateOnly(prev, -7) ?? todayDateString())}>
+                  Prev
                 </Button>
-                <label className="flex items-center gap-2 text-xs">
-                  <input
-                    type="checkbox"
-                    checked={exportPreviewDeficitOnly}
-                    onChange={(e: ChangeEvent<HTMLInputElement>) => setExportPreviewDeficitOnly(e.target.checked)}
-                  />
-                  <span className="text-foreground/70">Deficit only</span>
-                </label>
-                <label className="space-y-1 text-xs">
-                  <div className="text-foreground/70">Sort</div>
-                  <select
-                    className="h-8 w-full rounded-md border bg-transparent px-2 text-xs sm:w-44"
-                    value={exportPreviewSortKey}
-                    onChange={(e: ChangeEvent<HTMLSelectElement>) =>
-                      setExportPreviewSortKey(e.target.value as "name" | "total" | "deficit")
-                    }
-                  >
-                    <option value="name">Name (A-Z)</option>
-                    <option value="total">Total (high to low)</option>
-                    <option value="deficit">Deficit (high to low)</option>
-                  </select>
-                </label>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={resetExportPreviewFilters}
-                  disabled={!exportPreviewFiltersActive}
-                >
-                  Reset filters
+                <Button variant="outline" size="sm" onClick={() => setExportWeekStart(todayDateString())}>
+                  This week
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => setExportWeekStart((prev) => addDaysDateOnly(prev, 7) ?? todayDateString())}>
+                  Next
                 </Button>
               </div>
-            </div>
-            <div className="flex flex-wrap items-center gap-3 border-t px-3 py-2 text-xs text-foreground/70">
-              <span>Deficit: {exportPreviewSummary.deficitCount}</span>
-              <span>Total deficit: {formatHoursValue(exportPreviewSummary.totalDeficit)}</span>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => void copyExportPreviewEmails("all")}
-                disabled={exportPreviewSummary.totalRows === 0}
-              >
-                Copy emails
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => void copyExportPreviewEmails("deficit")}
-                disabled={exportPreviewSummary.totalRows === 0}
-              >
-                Copy deficit emails
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={downloadExportPreviewCsv}
-                disabled={exportPreviewSummary.totalRows === 0}
-              >
-                Download filtered CSV
-              </Button>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[760px] text-sm">
-                <thead className="border-t bg-foreground/5 text-left text-xs text-foreground/70">
-                  <tr>
-                    <th className="px-3 py-2">Role</th>
-                    <th className="px-3 py-2">Name</th>
-                    <th className="px-3 py-2">Email</th>
-                    <th className="px-3 py-2">Status</th>
-                    <th className="px-3 py-2 text-right">Completed</th>
-                    <th className="px-3 py-2 text-right">Missing</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {exportPreviewFilteredRows.map((r) => {
-                    const deficit = parseMinutesValue(r.missing_hours) ?? 0;
-                    const highlight = deficit > 0;
-                    return (
-                      <tr key={`${r.user_id}:${r.week_start}`} className={highlight ? "bg-red-500/5" : undefined}>
-                        <td className="px-3 py-2">{r.role || "—"}</td>
-                        <td className="px-3 py-2">{r.name || "—"}</td>
-                        <td className="px-3 py-2">{r.email || "—"}</td>
-                        <td className="px-3 py-2">
-                          {formatRosterStatus(r.member_status)}
-                        </td>
-                        <td className="px-3 py-2 text-right font-mono">{formatHoursValue(r.total_hours)}</td>
-                        <td className="px-3 py-2 text-right font-mono">{formatHoursValue(r.missing_hours)}</td>
-                      </tr>
-                    );
-                  })}
-                  {exportPreviewFilteredRows.length === 0 ? (
-                    <tr>
-                      <td className="px-3 py-3 text-sm text-foreground/60" colSpan={6}>
-                        {exportPreviewFiltersActive ? "No rows match the current filters." : "No rows returned."}
-                      </td>
-                    </tr>
-                  ) : null}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        ) : null}
-      </section>
-
-      <section className="space-y-3">
-        <div className="space-y-1">
-          <h2 className="text-lg font-semibold">Office Hour Shifts</h2>
-          <p className="text-sm text-foreground/70">
-            Admin can schedule shifts; members can see their weekly shifts on the Office Hours page. Weekdays only (Mon-Fri).
-          </p>
-        </div>
-
-        {shiftStatus ? (
-          <div className="rounded-md border px-3 py-2 text-sm text-foreground/80" role="status" aria-live="polite">
-            {shiftStatus}
-          </div>
-        ) : null}
-
-        <div className="grid gap-3 md:grid-cols-4">
-          <label className="space-y-1 text-sm md:col-span-2">
-            <div className="text-foreground/70">Search users</div>
-            <input
-              className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-              value={shiftUserSearch}
-              onChange={(e: ChangeEvent<HTMLInputElement>) => setShiftUserSearch(e.target.value)}
-              placeholder="Filter by name or email…"
-            />
-          </label>
-
-          <label className="space-y-1 text-sm md:col-span-2">
-            <div className="text-foreground/70">User</div>
-            <select
-              className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-              value={shiftUserId}
-              onChange={(e: ChangeEvent<HTMLSelectElement>) => setShiftUserId(e.target.value)}
-            >
-              <option value="">Select a user…</option>
-              {shiftUsers.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {formatUserLabel(u)}
-                </option>
-              ))}
-            </select>
-            {selectedShiftUser ? (
-              <div className="text-xs text-foreground/60">Selected: {formatUserLabel(selectedShiftUser)}</div>
-            ) : null}
-          </label>
-
-          <label className="space-y-1 text-sm">
-            <div className="text-foreground/70">Starts</div>
-            <input
-              type="datetime-local"
-              className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-              value={shiftStartsAtLocal}
-              onChange={(e: ChangeEvent<HTMLInputElement>) => setShiftStartsAtLocal(e.target.value)}
-            />
-          </label>
-
-          <label className="space-y-1 text-sm">
-            <div className="text-foreground/70">Ends</div>
-            <input
-              type="datetime-local"
-              className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-              value={shiftEndsAtLocal}
-              onChange={(e: ChangeEvent<HTMLInputElement>) => setShiftEndsAtLocal(e.target.value)}
-            />
-          </label>
-
-          <label className="space-y-1 text-sm md:col-span-2">
-            <div className="text-foreground/70">Office location id (optional)</div>
-            <input
-              className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-              value={shiftOfficeLocationId}
-              onChange={(e: ChangeEvent<HTMLInputElement>) => setShiftOfficeLocationId(e.target.value)}
-              placeholder={officeConfig?.primary_office_location_id || ""}
-            />
-          </label>
-
-          <div className="flex items-end">
-            <Button onClick={onCreateShift} disabled={!shiftUserId}>
-              Create shift
-            </Button>
-          </div>
-        </div>
-      </section>
-
-      <section className="space-y-3">
-        <div className="space-y-1">
-          <h2 className="text-lg font-semibold">Office Hour Requirements</h2>
-          <p className="text-sm text-foreground/70">
-            Configure weekly required hours for the selected term.
-          </p>
-        </div>
-
-        <div className="rounded-md border p-3">
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-            {OFFICE_HOUR_ROLE_KEYS.map((roleKey) => {
-              const row = reqRows.get(roleKey);
-              const total = row?.weekly_total_hours ?? 0;
-
-              return (
-                <div key={roleKey} className="space-y-2">
-                  <div className="text-sm font-medium">{roleKey}</div>
-
-                  <label className="block text-sm">
-                    <div className="text-foreground/70">Weekly total hours</div>
+            }
+          >
+            <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
+              <div className="space-y-4">
+                <div className="admin-toolbar">
+                  <label className="space-y-1 text-sm">
+                    <div className="text-foreground/62">Week of</div>
                     <input
-                      className="mt-1 h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-                      type="number"
-                      min={0}
-                      step={1}
-                      value={total}
-                      onChange={(e) => {
-                        const next = Math.max(0, Math.floor(Number(e.target.value || 0)));
-                        updateRequirement(roleKey, { weekly_total_hours: next });
-                      }}
+                      type="date"
+                      className="h-10 rounded-xl border bg-transparent px-3 text-sm"
+                      value={exportWeekStart}
+                      onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                        setExportWeekStart(normalizeDateOnlyString(e.target.value) ?? todayDateString())
+                      }
                     />
                   </label>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button onClick={previewWeeklyHours}>Preview</Button>
+                    <Button variant="outline" onClick={downloadWeeklyHoursCsv}>
+                      Download CSV
+                    </Button>
+                    <Button variant="ghost" onClick={openWeeklyHoursPreviewPage}>
+                      Table view
+                    </Button>
+                    <Button variant="ghost" onClick={openWeeklyHoursCsvView}>
+                      View CSV
+                    </Button>
+                    {exportPreviewRows ? (
+                      <Button variant="ghost" onClick={clearWeeklyHoursPreview}>
+                        Clear
+                      </Button>
+                    ) : null}
+                  </div>
+                  <div className="text-sm text-foreground/62">
+                    {exportWeekStartResolved ? `Week starts ${exportWeekStartResolved}` : "Select a week to preview totals and deficits."}
+                  </div>
                 </div>
-              );
-            })}
-          </div>
 
-          <div className="mt-3 flex flex-wrap gap-2">
-            <Button onClick={() => void loadOfficeHourRequirements(selectedTermId)} disabled={!selectedTermId}>
-              Reload
-            </Button>
-            <Button onClick={() => void onSaveOfficeHourRequirements()} disabled={!selectedTermId}>
-              Save requirements
-            </Button>
-          </div>
-        </div>
-      </section>
+                {exportPreviewActionStatus ? (
+                  <div className="rounded-2xl border border-black/6 bg-[color:var(--admin-surface-raised)] px-4 py-3 text-sm text-foreground/80 dark:border-white/8">
+                    {exportPreviewActionStatus}
+                  </div>
+                ) : null}
 
-      <section className="space-y-3">
-        <div className="space-y-1">
-          <div className="flex items-center justify-between gap-3">
-            <h2 className="text-lg font-semibold">Office Hours Config</h2>
-            {officeConfigDirty ? (
-              <span className="text-xs font-medium text-orange-600">Unsaved changes</span>
-            ) : null}
-          </div>
-          <p className="text-sm text-foreground/70">
-            Single office settings and quiet hours (times are evaluated in the configured timezone).
-          </p>
-        </div>
-
-        {officeLocation && officeConfig ? (
-          <div className="grid gap-3 md:grid-cols-4">
-            <label className="space-y-1 text-sm md:col-span-2">
-              <div className="text-foreground/70">Office name</div>
-              <input
-                className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-                value={officeLocation.name}
-                onChange={(e: ChangeEvent<HTMLInputElement>) =>
-                  setOfficeLocation({ ...officeLocation, name: e.target.value })
-                }
-              />
-              {officeNameError ? (
-                <div className="text-xs text-red-600">{officeNameError}</div>
-              ) : null}
-            </label>
-
-            <label className="space-y-1 text-sm md:col-span-2">
-              <div className="flex items-center justify-between text-foreground/70">
-                <span>Timezone</span>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  className="h-7 px-2 text-xs"
-                  onClick={() => {
-                    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-                    if (!tz) {
-                      const msg = "Could not detect browser timezone.";
-                      setStatus(msg);
-                      toast.error(msg);
-                      return;
-                    }
-                    setOfficeLocation({ ...officeLocation, timezone: tz });
-                    toast.success("Timezone set to browser timezone");
-                  }}
-                >
-                  Use browser timezone
-                </Button>
-              </div>
-              <input
-                className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-                value={officeLocation.timezone}
-                onChange={(e: ChangeEvent<HTMLInputElement>) =>
-                  setOfficeLocation({ ...officeLocation, timezone: e.target.value })
-                }
-                placeholder="America/Los_Angeles"
-              />
-              {officeTimezoneError ? (
-                <div className="text-xs text-red-600">{officeTimezoneError}</div>
-              ) : null}
-            </label>
-
-            <label className="space-y-1 text-sm">
-              <div className="text-foreground/70">Latitude</div>
-              <input
-                type="number"
-                min={-90}
-                max={90}
-                step={0.000001}
-                className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-                value={officeLatText}
-                onChange={(e: ChangeEvent<HTMLInputElement>) => setOfficeLatText(e.target.value)}
-                inputMode="decimal"
-                placeholder="32.81..."
-                aria-invalid={!!officeLatError}
-              />
-              {officeLatError ? (
-                <div className="text-xs text-red-600">{officeLatError}</div>
-              ) : null}
-            </label>
-
-            <label className="space-y-1 text-sm">
-              <div className="text-foreground/70">Longitude</div>
-              <input
-                type="number"
-                min={-180}
-                max={180}
-                step={0.000001}
-                className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-                value={officeLonText}
-                onChange={(e: ChangeEvent<HTMLInputElement>) => setOfficeLonText(e.target.value)}
-                inputMode="decimal"
-                placeholder="-117.00..."
-                aria-invalid={!!officeLonError}
-              />
-              {officeLonError ? (
-                <div className="text-xs text-red-600">{officeLonError}</div>
-              ) : null}
-            </label>
-
-            <label className="space-y-1 text-sm">
-              <div className="text-foreground/70">Radius (m)</div>
-              <input
-                type="number"
-                min={0}
-                step={1}
-                className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-                value={officeLocation.radius_m ?? ""}
-                onChange={(e: ChangeEvent<HTMLInputElement>) => {
-                  const v = e.target.value;
-                  setOfficeLocation({ ...officeLocation, radius_m: v.trim() ? Number(v) : null });
-                }}
-                placeholder="20"
-                aria-invalid={!!officeRadiusError}
-              />
-              {officeRadiusError ? (
-                <div className="text-xs text-red-600">{officeRadiusError}</div>
-              ) : null}
-            </label>
-
-            <label className="space-y-1 text-sm">
-              <div className="text-foreground/70">Grace radius (m)</div>
-              <input
-                type="number"
-                min={0}
-                step={1}
-                className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-                value={officeLocation.grace_radius_m ?? ""}
-                onChange={(e: ChangeEvent<HTMLInputElement>) => {
-                  const v = e.target.value;
-                  setOfficeLocation({ ...officeLocation, grace_radius_m: v.trim() ? Number(v) : null });
-                }}
-                placeholder="40"
-                aria-invalid={!!officeGraceRadiusError}
-              />
-              {officeGraceRadiusError ? (
-                <div className="text-xs text-red-600">{officeGraceRadiusError}</div>
-              ) : null}
-            </label>
-
-            <div className="text-xs text-foreground/60 md:col-span-2">
-              Geofence: {geofenceSummary}.
-              {officeMapUrl ? (
-                <>
-                  {" "}
-                  <a
-                    className="underline underline-offset-2"
-                    href={officeMapUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    View map
-                  </a>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    className="ml-2 h-7 px-2 text-xs"
-                    onClick={() => {
-                      setOfficeLatText("");
-                      setOfficeLonText("");
-                      setOfficeLocation({ ...officeLocation, lat: null, lon: null });
-                    }}
-                    disabled={!officeLatText.trim() && !officeLonText.trim()}
-                  >
-                    Clear coordinates
-                  </Button>
-                </>
-              ) : (
-                " Add coordinates to enable the map link."
-              )}
-            </div>
-
-            <label className="flex items-center gap-2 text-sm md:col-span-2">
-              <input
-                type="checkbox"
-                checked={officeLocation.active}
-                onChange={(e: ChangeEvent<HTMLInputElement>) =>
-                  setOfficeLocation({ ...officeLocation, active: e.target.checked })
-                }
-              />
-              <span>Office active</span>
-            </label>
-
-            <label className="flex items-center gap-2 text-sm md:col-span-2">
-              <input
-                type="checkbox"
-                checked={officeConfig.quiet_hours_enabled}
-                onChange={(e: ChangeEvent<HTMLInputElement>) =>
-                  setOfficeConfig({ ...officeConfig, quiet_hours_enabled: e.target.checked })
-                }
-              />
-              <span>Quiet hours enabled</span>
-            </label>
-
-            <label className="space-y-1 text-sm">
-              <div className="text-foreground/70">Quiet hours start</div>
-              <input
-                type="time"
-                className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-                value={officeConfig.quiet_hours_start_local.slice(0, 5)}
-                onChange={(e: ChangeEvent<HTMLInputElement>) =>
-                  setOfficeConfig({ ...officeConfig, quiet_hours_start_local: e.target.value })
-                }
-                disabled={!officeConfig.quiet_hours_enabled}
-              />
-            </label>
-
-            <label className="space-y-1 text-sm">
-              <div className="text-foreground/70">Quiet hours end</div>
-              <input
-                type="time"
-                className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-                value={officeConfig.quiet_hours_end_local.slice(0, 5)}
-                onChange={(e: ChangeEvent<HTMLInputElement>) =>
-                  setOfficeConfig({ ...officeConfig, quiet_hours_end_local: e.target.value })
-                }
-                disabled={!officeConfig.quiet_hours_enabled}
-              />
-            </label>
-
-            <div className="text-xs text-foreground/60 md:col-span-2">
-              Quiet hours: {quietHoursSummary}
-              {officeTimezoneLabel ? ` (${officeTimezoneLabel})` : ""}
-            </div>
-            {quietHoursError ? (
-              <div className="text-xs text-red-600 md:col-span-2">{quietHoursError}</div>
-            ) : null}
-
-            <div className="md:col-span-4 border-t border-foreground/10 pt-3">
-              <div className="text-sm font-medium">Office hours availability</div>
-              <div className="text-xs text-foreground/60">
-                Controls which days members can check in. Default is Monday–Friday. For testing, allow weekends or add specific dates.
-              </div>
-            </div>
-
-            <label className="flex items-center gap-2 text-sm md:col-span-2">
-              <input
-                type="checkbox"
-                checked={officeConfig.office_hours_allow_weekends}
-                onChange={(e: ChangeEvent<HTMLInputElement>) =>
-                  setOfficeConfig({ ...officeConfig, office_hours_allow_weekends: e.target.checked })
-                }
-                disabled={isReadOnly}
-              />
-              <span>Allow weekends (testing)</span>
-            </label>
-
-            <div className="text-xs text-foreground/60 md:col-span-2">
-              Shortcut to enable Saturday/Sunday without adding extra dates.
-            </div>
-
-            <div className="md:col-span-4">
-              <div className="text-sm font-medium">Allowed weekdays</div>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {[
-                  { d: 1, short: "Mon" },
-                  { d: 2, short: "Tue" },
-                  { d: 3, short: "Wed" },
-                  { d: 4, short: "Thu" },
-                  { d: 5, short: "Fri" },
-                  { d: 6, short: "Sat" },
-                  { d: 7, short: "Sun" },
-                ].map(({ d, short }) => {
-                  const enabled = officeConfig.office_hours_allowed_weekdays?.includes(d) ?? false;
-                  return (
-                    <button
-                      key={d}
-                      type="button"
-                      className={cn(
-                        "h-8 rounded-full border px-3 text-xs transition-colors",
-                        enabled ? "border-primary/30 bg-primary/10 text-primary" : "border-foreground/10 bg-background hover:bg-foreground/5",
-                        isReadOnly && "opacity-50 pointer-events-none",
-                      )}
-                      aria-pressed={enabled}
-                      title={WEEKDAY_LABELS[d] ?? short}
-                      onClick={() => {
-                        const prev = Array.isArray(officeConfig.office_hours_allowed_weekdays)
-                          ? officeConfig.office_hours_allowed_weekdays
-                          : [1, 2, 3, 4, 5];
-                        const set = new Set(prev.filter((n) => typeof n === "number" && Number.isFinite(n)));
-                        if (set.has(d)) {
-                          if (set.size <= 1) return;
-                          set.delete(d);
-                        } else {
-                          set.add(d);
-                        }
-                        setOfficeConfig({
-                          ...officeConfig,
-                          office_hours_allowed_weekdays: Array.from(set).sort((a, b) => a - b),
-                        });
-                      }}
-                    >
-                      {short}
-                    </button>
-                  );
-                })}
-              </div>
-              <div className="mt-1 text-xs text-foreground/60">
-                Members can check in on these weekdays (unless disabled by policy). Use extra dates for one-off exceptions.
-              </div>
-            </div>
-
-            <div className="md:col-span-4">
-              <div className="text-sm font-medium">Extra allowed dates</div>
-              <div className="mt-2 flex flex-wrap items-center gap-2">
-                <input
-                  type="date"
-                  className="h-9 rounded-md border bg-transparent px-2 text-sm"
-                  value={officeHoursExtraDate}
-                  onChange={(e: ChangeEvent<HTMLInputElement>) => setOfficeHoursExtraDate(e.target.value)}
-                  disabled={isReadOnly}
-                />
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => {
-                    const raw = officeHoursExtraDate.trim();
-                    if (!raw) return;
-                    if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return;
-                    const prev = Array.isArray(officeConfig.office_hours_extra_allowed_dates)
-                      ? officeConfig.office_hours_extra_allowed_dates
-                      : [];
-                    const next = Array.from(new Set([...prev, raw])).sort();
-                    setOfficeConfig({ ...officeConfig, office_hours_extra_allowed_dates: next });
-                    setOfficeHoursExtraDate("");
-                  }}
-                  disabled={isReadOnly || !officeHoursExtraDate.trim()}
-                >
-                  Add date
-                </Button>
-              </div>
-              {officeConfig.office_hours_extra_allowed_dates?.length ? (
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {officeConfig.office_hours_extra_allowed_dates.slice().sort().map((d) => (
-                    <div key={d} className="inline-flex items-center gap-2 rounded-full border border-foreground/10 bg-background px-3 py-1 text-xs">
-                      <span className="font-mono">{d}</span>
-                      <button
-                        type="button"
-                        className={cn("text-foreground/60 hover:text-foreground", isReadOnly && "pointer-events-none opacity-50")}
-                        onClick={() => {
-                          const prev = officeConfig.office_hours_extra_allowed_dates ?? [];
-                          setOfficeConfig({ ...officeConfig, office_hours_extra_allowed_dates: prev.filter((x) => x !== d) });
-                        }}
-                        aria-label={`Remove ${d}`}
-                      >
-                        ×
-                      </button>
+                {exportPreviewRows ? (
+                  <div className="space-y-3">
+                    <div className="flex flex-wrap items-center gap-3 text-xs text-foreground/65">
+                      <span>Rows: {exportPreviewSummary.totalRows}</span>
+                      <span>Deficits: {exportPreviewSummary.deficitCount}</span>
+                      <span>Total deficit: {formatHoursValue(exportPreviewSummary.totalDeficit)}</span>
                     </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="mt-1 text-xs text-foreground/60">No extra dates. Add one to temporarily enable a specific day (ex: weekend testing).</div>
-              )}
-            </div>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      {exportPreviewFilteredRows.slice(0, 6).map((row) => {
+                        const missingHours = formatHoursValue(row.missing_hours);
+                        const totalHours = formatHoursValue(row.total_hours);
+                        const highlight = (parseMinutesValue(row.missing_hours) ?? 0) > 0;
+                        return (
+                          <div
+                            key={`${row.user_id}:${row.week_start}`}
+                            className={cn(
+                              "rounded-2xl border px-4 py-3",
+                              highlight
+                                ? "border-amber-400/35 bg-amber-500/8"
+                                : "border-black/6 bg-[color:var(--admin-surface-raised)] dark:border-white/8",
+                            )}
+                          >
+                            <div className="text-sm font-medium">{row.name || "Unassigned member"}</div>
+                            <div className="mt-1 text-xs text-foreground/60">{row.role || "No role"} • {row.email || "No email"}</div>
+                            <div className="mt-3 flex flex-wrap gap-3 text-xs text-foreground/70">
+                              <span>Completed: {totalHours}</span>
+                              <span>Missing: {missingHours}</span>
+                              <span>Status: {formatRosterStatus(row.member_status)}</span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button variant="outline" size="sm" onClick={() => void copyExportPreviewEmails("all")} disabled={exportPreviewSummary.totalRows === 0}>
+                        Copy emails
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={() => void copyExportPreviewEmails("deficit")} disabled={exportPreviewSummary.totalRows === 0}>
+                        Copy deficit emails
+                      </Button>
+                      <Button variant="ghost" size="sm" onClick={downloadExportPreviewCsv} disabled={exportPreviewSummary.totalRows === 0}>
+                        Download filtered CSV
+                      </Button>
+                      <Button variant="ghost" size="sm" onClick={resetExportPreviewFilters} disabled={!exportPreviewFiltersActive}>
+                        Reset filters
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <AdminEmptyState
+                    title="Weekly preview loads on demand"
+                    description="Generate the weekly report only when you need it. The command center stays light; the full export table remains available in the specialist workspace."
+                    action={
+                      <Button variant="outline" onClick={openWeeklyHoursPreviewPage}>
+                        Open full export table
+                      </Button>
+                    }
+                  />
+                )}
+              </div>
 
-            <div className="md:col-span-4 border-t border-foreground/10 pt-3">
-              <div className="text-sm font-medium">Weekly hours reminder</div>
-              <div className="text-xs text-foreground/60">
-                Sends a reminder to members with remaining hours. Uses current term dates.
-                {currentTerm
-                  ? ` Current term: ${currentTerm.name} (${currentTerm.start_date ?? "no start"} - ${currentTerm.end_date ?? "no end"}).`
-                  : " No current term set."}
+              <div className="space-y-4">
+                <div className="admin-stat-card">
+                  <div className="text-sm font-medium">Quick links</div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <a href="/admin/office-hours">
+                      <Button variant="default" size="sm">
+                        Calendar + sessions
+                      </Button>
+                    </a>
+                    <a href="/admin/office-hours/export">
+                      <Button variant="ghost" size="sm">
+                        Export workspace
+                      </Button>
+                    </a>
+                    <a href="/admin/office-hours/export/csv">
+                      <Button variant="ghost" size="sm">
+                        Raw CSV
+                      </Button>
+                    </a>
+                  </div>
+                </div>
+
+                <div className="admin-stat-card">
+                  <div className="text-sm font-medium">Current snapshot</div>
+                  <div className="mt-3 space-y-2 text-sm text-foreground/70">
+                    <div>{officeLocation ? `${officeLocation.name} • ${geofenceSummary}` : "Office location is still loading."}</div>
+                    <div>Quiet hours: {quietHoursSummary}</div>
+                    <div>Reminder: {reminderSummary}</div>
+                    <div>{officeConfigDirty ? "There are unsaved office config edits in this session." : "No unsaved office config edits."}</div>
+                  </div>
+                </div>
               </div>
             </div>
+          </AdminSurface>
 
-            <label className="flex items-center gap-2 text-sm md:col-span-2">
-              <input
-                type="checkbox"
-                checked={officeConfig.weekly_hours_reminder_enabled}
-                onChange={(e: ChangeEvent<HTMLInputElement>) =>
-                  setOfficeConfig({ ...officeConfig, weekly_hours_reminder_enabled: e.target.checked })
-                }
-              />
-              <span>Enable weekly reminder</span>
-            </label>
+          <AdminSurface
+            title="Requirement snapshot"
+            description="Weekly hour expectations stay visible here, but editing moves into the dedicated Office Hours admin workspace."
+          >
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {OFFICE_HOUR_ROLE_KEYS.map((roleKey) => {
+                const row = reqRows.get(roleKey);
+                return (
+                  <div key={roleKey} className="admin-stat-card">
+                    <div className="text-sm font-medium">{ROLE_LABEL_BY_KEY[roleKey] ?? roleKey}</div>
+                    <div className="mt-3 text-2xl font-semibold tracking-[-0.03em]">
+                      {row?.weekly_total_hours ?? 0}h
+                    </div>
+                    <div className="mt-2 text-sm text-foreground/62">
+                      {selectedTermId ? termNameById.get(selectedTermId) ?? "Selected term" : "No selected term"}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </AdminSurface>
 
-            <label className="space-y-1 text-sm">
-              <div className="text-foreground/70">Reminder day</div>
-              <select
-                className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-                value={officeConfig.weekly_hours_reminder_weekday}
-                onChange={(e: ChangeEvent<HTMLSelectElement>) =>
-                  setOfficeConfig({ ...officeConfig, weekly_hours_reminder_weekday: Number(e.target.value) })
-                }
-                disabled={!officeConfig.weekly_hours_reminder_enabled}
-              >
-                <option value={1}>Monday</option>
-                <option value={2}>Tuesday</option>
-                <option value={3}>Wednesday</option>
-                <option value={4}>Thursday</option>
-                <option value={5}>Friday</option>
-              </select>
-            </label>
-
-            <label className="space-y-1 text-sm">
-              <div className="text-foreground/70">Reminder time (local)</div>
-              <input
-                type="time"
-                className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-                value={officeConfig.weekly_hours_reminder_time_local.slice(0, 5)}
-                onChange={(e: ChangeEvent<HTMLInputElement>) =>
-                  setOfficeConfig({ ...officeConfig, weekly_hours_reminder_time_local: e.target.value })
-                }
-                disabled={!officeConfig.weekly_hours_reminder_enabled}
-              />
-              {reminderTimeError ? (
-                <div className="text-xs text-red-600">{reminderTimeError}</div>
+          <AdminSurface
+            title="Advanced tools"
+            description="These controls stay collapsed by default. Use the specialist workspace for longer office-hours sessions."
+          >
+            <div className="space-y-3">
+              {shiftStatus ? (
+                <div className="rounded-2xl border border-black/6 bg-[color:var(--admin-surface-raised)] px-4 py-3 text-sm text-foreground/80 dark:border-white/8">
+                  {shiftStatus}
+                </div>
               ) : null}
-            </label>
 
-            <div className="text-xs text-foreground/60 md:col-span-2">
-              Reminder schedule: {reminderSummary}
+              <details>
+                <summary className="flex items-center justify-between gap-3 px-4 py-3 text-sm font-medium">
+                  <span>Shift scheduler</span>
+                  <span className="text-xs text-foreground/55">Collapsed by default</span>
+                </summary>
+                <div className="grid gap-3 border-t border-black/6 px-4 py-4 md:grid-cols-4 dark:border-white/8">
+                  <label className="space-y-1 text-sm md:col-span-2">
+                    <div className="text-foreground/62">Search users</div>
+                    <input
+                      className="h-10 w-full rounded-xl border bg-transparent px-3 text-sm"
+                      value={shiftUserSearch}
+                      onChange={(e: ChangeEvent<HTMLInputElement>) => setShiftUserSearch(e.target.value)}
+                      placeholder="Filter by name or email…"
+                    />
+                  </label>
+                  <label className="space-y-1 text-sm md:col-span-2">
+                    <div className="text-foreground/62">User</div>
+                    <select
+                      className="h-10 w-full rounded-xl border bg-transparent px-3 text-sm"
+                      value={shiftUserId}
+                      onChange={(e: ChangeEvent<HTMLSelectElement>) => setShiftUserId(e.target.value)}
+                    >
+                      <option value="">Select a user…</option>
+                      {shiftUsers.map((u) => (
+                        <option key={u.id} value={u.id}>
+                          {formatUserLabel(u)}
+                        </option>
+                      ))}
+                    </select>
+                    {selectedShiftUser ? (
+                      <div className="text-xs text-foreground/60">Selected: {formatUserLabel(selectedShiftUser)}</div>
+                    ) : null}
+                  </label>
+                  <label className="space-y-1 text-sm">
+                    <div className="text-foreground/62">Starts</div>
+                    <input
+                      type="datetime-local"
+                      className="h-10 w-full rounded-xl border bg-transparent px-3 text-sm"
+                      value={shiftStartsAtLocal}
+                      onChange={(e: ChangeEvent<HTMLInputElement>) => setShiftStartsAtLocal(e.target.value)}
+                    />
+                  </label>
+                  <label className="space-y-1 text-sm">
+                    <div className="text-foreground/62">Ends</div>
+                    <input
+                      type="datetime-local"
+                      className="h-10 w-full rounded-xl border bg-transparent px-3 text-sm"
+                      value={shiftEndsAtLocal}
+                      onChange={(e: ChangeEvent<HTMLInputElement>) => setShiftEndsAtLocal(e.target.value)}
+                    />
+                  </label>
+                  <label className="space-y-1 text-sm md:col-span-2">
+                    <div className="text-foreground/62">Office location id (optional)</div>
+                    <input
+                      className="h-10 w-full rounded-xl border bg-transparent px-3 text-sm"
+                      value={shiftOfficeLocationId}
+                      onChange={(e: ChangeEvent<HTMLInputElement>) => setShiftOfficeLocationId(e.target.value)}
+                      placeholder={officeConfig?.primary_office_location_id || ""}
+                    />
+                  </label>
+                  <div className="md:col-span-4">
+                    <Button onClick={onCreateShift} disabled={!shiftUserId}>
+                      Create shift
+                    </Button>
+                  </div>
+                </div>
+              </details>
+
+              <details>
+                <summary className="flex items-center justify-between gap-3 px-4 py-3 text-sm font-medium">
+                  <span>Requirement editor</span>
+                  <span className="text-xs text-foreground/55">{selectedTermId ? termNameById.get(selectedTermId) ?? "Selected term" : "Select a term"}</span>
+                </summary>
+                <div className="space-y-4 border-t border-black/6 px-4 py-4 dark:border-white/8">
+                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                    {OFFICE_HOUR_ROLE_KEYS.map((roleKey) => {
+                      const row = reqRows.get(roleKey);
+                      const total = row?.weekly_total_hours ?? 0;
+                      return (
+                        <label key={roleKey} className="space-y-1 text-sm">
+                          <div className="text-foreground/62">{ROLE_LABEL_BY_KEY[roleKey] ?? roleKey}</div>
+                          <input
+                            className="h-10 w-full rounded-xl border bg-transparent px-3 text-sm"
+                            type="number"
+                            min={0}
+                            step={1}
+                            value={total}
+                            onChange={(e) => {
+                              const next = Math.max(0, Math.floor(Number(e.target.value || 0)));
+                              updateRequirement(roleKey, { weekly_total_hours: next });
+                            }}
+                          />
+                        </label>
+                      );
+                    })}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button variant="outline" onClick={() => void loadOfficeHourRequirements(selectedTermId)} disabled={!selectedTermId}>
+                      Reload
+                    </Button>
+                    <Button onClick={() => void onSaveOfficeHourRequirements()} disabled={!selectedTermId}>
+                      Save requirements
+                    </Button>
+                  </div>
+                </div>
+              </details>
+
+              <details>
+                <summary className="flex items-center justify-between gap-3 px-4 py-3 text-sm font-medium">
+                  <span>Office config editor</span>
+                  <span className="text-xs text-foreground/55">{officeConfigDirty ? "Unsaved changes" : "No unsaved changes"}</span>
+                </summary>
+                <div className="space-y-4 border-t border-black/6 px-4 py-4 dark:border-white/8">
+                  {officeLocation && officeConfig ? (
+                    <>
+                      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                        <label className="space-y-1 text-sm xl:col-span-2">
+                          <div className="text-foreground/62">Office name</div>
+                          <input
+                            className="h-10 w-full rounded-xl border bg-transparent px-3 text-sm"
+                            value={officeLocation.name}
+                            onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                              setOfficeLocation({ ...officeLocation, name: e.target.value })
+                            }
+                          />
+                        </label>
+                        <label className="space-y-1 text-sm xl:col-span-2">
+                          <div className="text-foreground/62">Timezone</div>
+                          <input
+                            className="h-10 w-full rounded-xl border bg-transparent px-3 text-sm"
+                            value={officeLocation.timezone}
+                            onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                              setOfficeLocation({ ...officeLocation, timezone: e.target.value })
+                            }
+                            placeholder="America/Los_Angeles"
+                          />
+                        </label>
+                        <label className="space-y-1 text-sm">
+                          <div className="text-foreground/62">Latitude</div>
+                          <input
+                            type="number"
+                            min={-90}
+                            max={90}
+                            step={0.000001}
+                            className="h-10 w-full rounded-xl border bg-transparent px-3 text-sm"
+                            value={officeLatText}
+                            onChange={(e: ChangeEvent<HTMLInputElement>) => setOfficeLatText(e.target.value)}
+                          />
+                        </label>
+                        <label className="space-y-1 text-sm">
+                          <div className="text-foreground/62">Longitude</div>
+                          <input
+                            type="number"
+                            min={-180}
+                            max={180}
+                            step={0.000001}
+                            className="h-10 w-full rounded-xl border bg-transparent px-3 text-sm"
+                            value={officeLonText}
+                            onChange={(e: ChangeEvent<HTMLInputElement>) => setOfficeLonText(e.target.value)}
+                          />
+                        </label>
+                        <label className="space-y-1 text-sm">
+                          <div className="text-foreground/62">Radius (m)</div>
+                          <input
+                            type="number"
+                            min={0}
+                            step={1}
+                            className="h-10 w-full rounded-xl border bg-transparent px-3 text-sm"
+                            value={officeLocation.radius_m ?? ""}
+                            onChange={(e: ChangeEvent<HTMLInputElement>) => {
+                              const v = e.target.value;
+                              setOfficeLocation({ ...officeLocation, radius_m: v.trim() ? Number(v) : null });
+                            }}
+                          />
+                        </label>
+                        <label className="space-y-1 text-sm">
+                          <div className="text-foreground/62">Grace radius (m)</div>
+                          <input
+                            type="number"
+                            min={0}
+                            step={1}
+                            className="h-10 w-full rounded-xl border bg-transparent px-3 text-sm"
+                            value={officeLocation.grace_radius_m ?? ""}
+                            onChange={(e: ChangeEvent<HTMLInputElement>) => {
+                              const v = e.target.value;
+                              setOfficeLocation({ ...officeLocation, grace_radius_m: v.trim() ? Number(v) : null });
+                            }}
+                          />
+                        </label>
+                      </div>
+
+                      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                        <label className="flex items-center gap-2 text-sm">
+                          <input
+                            type="checkbox"
+                            checked={officeLocation.active}
+                            onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                              setOfficeLocation({ ...officeLocation, active: e.target.checked })
+                            }
+                          />
+                          <span>Office active</span>
+                        </label>
+                        <label className="flex items-center gap-2 text-sm">
+                          <input
+                            type="checkbox"
+                            checked={officeConfig.quiet_hours_enabled}
+                            onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                              setOfficeConfig({ ...officeConfig, quiet_hours_enabled: e.target.checked })
+                            }
+                          />
+                          <span>Quiet hours enabled</span>
+                        </label>
+                        <label className="flex items-center gap-2 text-sm">
+                          <input
+                            type="checkbox"
+                            checked={officeConfig.office_hours_allow_weekends}
+                            onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                              setOfficeConfig({ ...officeConfig, office_hours_allow_weekends: e.target.checked })
+                            }
+                          />
+                          <span>Allow weekends</span>
+                        </label>
+                        <label className="flex items-center gap-2 text-sm">
+                          <input
+                            type="checkbox"
+                            checked={officeConfig.weekly_hours_reminder_enabled}
+                            onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                              setOfficeConfig({ ...officeConfig, weekly_hours_reminder_enabled: e.target.checked })
+                            }
+                          />
+                          <span>Weekly reminder</span>
+                        </label>
+                        <label className="space-y-1 text-sm">
+                          <div className="text-foreground/62">Quiet hours start</div>
+                          <input
+                            type="time"
+                            className="h-10 w-full rounded-xl border bg-transparent px-3 text-sm"
+                            value={officeConfig.quiet_hours_start_local.slice(0, 5)}
+                            onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                              setOfficeConfig({ ...officeConfig, quiet_hours_start_local: e.target.value })
+                            }
+                            disabled={!officeConfig.quiet_hours_enabled}
+                          />
+                        </label>
+                        <label className="space-y-1 text-sm">
+                          <div className="text-foreground/62">Quiet hours end</div>
+                          <input
+                            type="time"
+                            className="h-10 w-full rounded-xl border bg-transparent px-3 text-sm"
+                            value={officeConfig.quiet_hours_end_local.slice(0, 5)}
+                            onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                              setOfficeConfig({ ...officeConfig, quiet_hours_end_local: e.target.value })
+                            }
+                            disabled={!officeConfig.quiet_hours_enabled}
+                          />
+                        </label>
+                        <label className="space-y-1 text-sm">
+                          <div className="text-foreground/62">Reminder day</div>
+                          <select
+                            className="h-10 w-full rounded-xl border bg-transparent px-3 text-sm"
+                            value={officeConfig.weekly_hours_reminder_weekday}
+                            onChange={(e: ChangeEvent<HTMLSelectElement>) =>
+                              setOfficeConfig({ ...officeConfig, weekly_hours_reminder_weekday: Number(e.target.value) })
+                            }
+                            disabled={!officeConfig.weekly_hours_reminder_enabled}
+                          >
+                            <option value={1}>Monday</option>
+                            <option value={2}>Tuesday</option>
+                            <option value={3}>Wednesday</option>
+                            <option value={4}>Thursday</option>
+                            <option value={5}>Friday</option>
+                          </select>
+                        </label>
+                        <label className="space-y-1 text-sm">
+                          <div className="text-foreground/62">Reminder time</div>
+                          <input
+                            type="time"
+                            className="h-10 w-full rounded-xl border bg-transparent px-3 text-sm"
+                            value={officeConfig.weekly_hours_reminder_time_local.slice(0, 5)}
+                            onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                              setOfficeConfig({ ...officeConfig, weekly_hours_reminder_time_local: e.target.value })
+                            }
+                            disabled={!officeConfig.weekly_hours_reminder_enabled}
+                          />
+                        </label>
+                      </div>
+
+                      <div className="space-y-3">
+                        <div className="text-sm text-foreground/65">
+                          {officeMapUrl ? (
+                            <>
+                              Map:{" "}
+                              <a className="underline underline-offset-2" href={officeMapUrl} target="_blank" rel="noreferrer">
+                                Open office location
+                              </a>
+                            </>
+                          ) : (
+                            "Add coordinates to enable the map link."
+                          )}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <input
+                            type="date"
+                            className="h-10 rounded-xl border bg-transparent px-3 text-sm"
+                            value={officeHoursExtraDate}
+                            onChange={(e: ChangeEvent<HTMLInputElement>) => setOfficeHoursExtraDate(e.target.value)}
+                          />
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              const raw = officeHoursExtraDate.trim();
+                              if (!raw || !/^\d{4}-\d{2}-\d{2}$/.test(raw)) return;
+                              const prev = Array.isArray(officeConfig.office_hours_extra_allowed_dates)
+                                ? officeConfig.office_hours_extra_allowed_dates
+                                : [];
+                              const next = Array.from(new Set([...prev, raw])).sort();
+                              setOfficeConfig({ ...officeConfig, office_hours_extra_allowed_dates: next });
+                              setOfficeHoursExtraDate("");
+                            }}
+                            disabled={!officeHoursExtraDate.trim()}
+                          >
+                            Add extra date
+                          </Button>
+                        </div>
+                        {officeConfig.office_hours_extra_allowed_dates?.length ? (
+                          <div className="flex flex-wrap gap-2">
+                            {officeConfig.office_hours_extra_allowed_dates.slice().sort().map((d) => (
+                              <div key={d} className="inline-flex items-center gap-2 rounded-full border border-black/6 bg-[color:var(--admin-surface-raised)] px-3 py-1 text-xs dark:border-white/8">
+                                <span className="font-mono">{d}</span>
+                                <button
+                                  type="button"
+                                  className="text-foreground/60 hover:text-foreground"
+                                  onClick={() => {
+                                    const prev = officeConfig.office_hours_extra_allowed_dates ?? [];
+                                    setOfficeConfig({ ...officeConfig, office_hours_extra_allowed_dates: prev.filter((x) => x !== d) });
+                                  }}
+                                  aria-label={`Remove ${d}`}
+                                >
+                                  ×
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+
+                      {officeConfigError ? <div className="text-sm text-red-600">{officeConfigError}</div> : null}
+
+                      <div className="flex flex-wrap gap-2">
+                        <Button onClick={() => void onSaveOfficeConfig()} disabled={!canSaveOfficeConfig} title={officeConfigSaveDisabledReason || "Save office config"}>
+                          Save office config
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          onClick={() => {
+                            if (!canRevertOfficeConfig) return;
+                            revertOfficeConfigChanges();
+                          }}
+                          disabled={!canRevertOfficeConfig}
+                          title={officeConfigRevertDisabledReason || "Revert changes"}
+                        >
+                          Revert
+                        </Button>
+                        <Button variant="ghost" onClick={() => void loadOfficeConfig()}>
+                          Reload
+                        </Button>
+                      </div>
+                    </>
+                  ) : (
+                    <AdminEmptyState
+                      title="Office config is loading"
+                      description="Wait for the current office configuration, then expand this section again to edit it."
+                    />
+                  )}
+                </div>
+              </details>
             </div>
-
-            <div className="flex items-end gap-3 md:col-span-4">
-              <Button
-                onClick={async () => {
-                  if (officeConfigError) {
-                    toast.error(officeConfigError);
-                    setStatus(officeConfigError);
-                    return;
-                  }
-                  const lat = officeLatValue;
-                  const lon = officeLonValue;
-
-                  setStatus("Saving office config...");
-                  try {
-                    const payload = {
-                      name: officeLocation.name,
-                      timezone: officeLocation.timezone,
-                      lat,
-                      lon,
-                      radius_m: officeLocation.radius_m,
-                      grace_radius_m: officeLocation.grace_radius_m,
-                      active: officeLocation.active,
-                      quiet_hours_enabled: officeConfig.quiet_hours_enabled,
-                      quiet_hours_start_local: officeConfig.quiet_hours_start_local.slice(0, 5),
-                      quiet_hours_end_local: officeConfig.quiet_hours_end_local.slice(0, 5),
-                      office_hours_allow_weekends: officeConfig.office_hours_allow_weekends,
-                      office_hours_allowed_weekdays: officeConfig.office_hours_allowed_weekdays,
-                      office_hours_extra_allowed_dates: officeConfig.office_hours_extra_allowed_dates,
-                      weekly_hours_reminder_enabled: officeConfig.weekly_hours_reminder_enabled,
-                      weekly_hours_reminder_weekday: officeConfig.weekly_hours_reminder_weekday,
-                      weekly_hours_reminder_time_local: officeConfig.weekly_hours_reminder_time_local.slice(0, 5),
-                    };
-
-                    const data = await fetchJson<{ officeConfig: OfficeConfigRow; officeLocation: OfficeLocationRow }>(
-                      "/api/admin/office-config",
-                      {
-                        method: "PUT",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify(payload),
-                      },
-                    );
-
-                    const nextLatText = typeof data.officeLocation.lat === "number" ? String(data.officeLocation.lat) : "";
-                    const nextLonText = typeof data.officeLocation.lon === "number" ? String(data.officeLocation.lon) : "";
-                    setOfficeConfig(data.officeConfig);
-                    setOfficeLocation(data.officeLocation);
-                    setOfficeLatText(nextLatText);
-                    setOfficeLonText(nextLonText);
-                    officeConfigBaselineRef.current = buildOfficeConfigBaseline(
-                      data.officeLocation,
-                      data.officeConfig,
-                      nextLatText,
-                      nextLonText,
-                    );
-                    setStatus("");
-                    toast.success("Office config saved");
-                  } catch (e) {
-                    const msg = e instanceof Error ? e.message : "Failed to save office config";
-                    setStatus(msg);
-                    toast.error(msg);
-                  }
-                }}
-                disabled={!canSaveOfficeConfig}
-                title={officeConfigSaveDisabledReason || "Save office config"}
-              >
-                Save office config
-              </Button>
-
-              <Button
-                variant="ghost"
-                onClick={() => {
-                  if (!canRevertOfficeConfig) return;
-                  revertOfficeConfigChanges();
-                }}
-                disabled={!canRevertOfficeConfig}
-                title={officeConfigRevertDisabledReason || "Revert changes"}
-              >
-                Revert changes
-              </Button>
-
-              <Button variant="ghost" onClick={() => void loadOfficeConfig()}>
-                Reload from server
-              </Button>
-            </div>
-          </div>
-        ) : (
-          <div className="rounded-md border px-3 py-2 text-sm text-foreground/70">
-            Loading office config...
-          </div>
-        )}
-      </section>
+          </AdminSurface>
         </>
       ) : null}
 
       {adminTab === "meetings" ? (
         <>
-      <nav className="sticky top-16 z-30 rounded-md border bg-background/95 px-3 py-2 text-sm backdrop-blur">
-        <div className="text-xs text-foreground/60">Jump to</div>
-        <div className="mt-2 flex flex-wrap gap-2">
-          <a className="rounded-full border border-foreground/10 bg-background px-3 py-1 text-xs" href="#admin-meetings-notifications">
-            Notifications
-          </a>
-          <a className="rounded-full border border-foreground/10 bg-background px-3 py-1 text-xs" href="#admin-meetings-create">
-            Create meeting
-          </a>
-          <a className="rounded-full border border-foreground/10 bg-background px-3 py-1 text-xs" href="#admin-meetings-committees">
-            Committees
-          </a>
-          <a className="rounded-full border border-foreground/10 bg-background px-3 py-1 text-xs" href="#admin-meetings-existing">
-            Existing meetings
-          </a>
-        </div>
-      </nav>
+          <AdminSurface title="Meeting shortcuts" description="Jump between the few places you need most.">
+            <div className="flex flex-wrap gap-2">
+              {MEETING_SECTIONS.map((section) => (
+                <a key={section.id} href={section.anchor} onClick={() => onSelectAdminLocation("meetings", section.id)}>
+                  <Button variant={adminSection === section.id ? "default" : "ghost"} size="sm">
+                    {section.label}
+                  </Button>
+                </a>
+              ))}
+            </div>
+          </AdminSurface>
 
       <section className="space-y-3">
         <div className="space-y-1">
@@ -6536,7 +6547,7 @@ export function AdminPanel({
         </>
       ) : null}
 
-      {adminTab === "roles" ? (
+      {adminTab === "people" && adminSection === "assignments" ? (
         <>
       <section className="space-y-3">
         <div className="space-y-1">
@@ -6767,6 +6778,11 @@ export function AdminPanel({
         </div>
       </section>
 
+        </>
+      ) : null}
+
+      {adminTab === "people" && adminSection === "audit" ? (
+        <>
       <section className="space-y-3">
         <div className="space-y-1">
           <h2 className="text-lg font-semibold">Admin access audit</h2>
@@ -6888,6 +6904,6 @@ export function AdminPanel({
       </section>
         </>
       ) : null}
-    </div>
+    </AdminShell>
   );
 }
