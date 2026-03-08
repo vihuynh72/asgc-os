@@ -6,6 +6,7 @@ import { useMemo, useState } from "react";
 import { AdminEmptyState } from "@/components/admin/admin-empty-state";
 import { AdminField } from "@/components/admin/admin-field";
 import { AdminInlineNotice } from "@/components/admin/admin-inline-notice";
+import { AdminStatusChip } from "@/components/admin/admin-status-chip";
 import { AdminSurface } from "@/components/admin/admin-surface";
 import { Button } from "@/components/ui/button";
 import type { AssignmentRow, TermRow, UserRow } from "@/lib/admin/server";
@@ -198,7 +199,12 @@ export function PeopleAssignmentsPanel({
         description="Keep the current term in view, with global advisors separated so the roster reads cleanly."
         action={
           <div className="flex items-center gap-3">
-            <span className="text-sm text-foreground/55">{loadingAssignments ? "Refreshing..." : `${termAssignments.length + globalAssignments.length} active`}</span>
+            <AdminStatusChip
+              tone={loadingAssignments ? "neutral" : "good"}
+              icon={loadingAssignments ? "clock" : "check"}
+              label={loadingAssignments ? "Refreshing" : "Active roles"}
+              count={termAssignments.length + globalAssignments.length}
+            />
             <select
               value={selectedTermId}
               onChange={async (event) => {

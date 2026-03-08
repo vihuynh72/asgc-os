@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 
 import { AdminField } from "@/components/admin/admin-field";
 import { AdminInlineNotice } from "@/components/admin/admin-inline-notice";
+import { AdminStatusChip } from "@/components/admin/admin-status-chip";
 import { AdminSurface } from "@/components/admin/admin-surface";
 import { Button } from "@/components/ui/button";
 import type { TermRow } from "@/lib/admin/server";
@@ -127,7 +128,7 @@ export function PeopleTermsPanel({ initialTerms }: { initialTerms: TermRow[] }) 
                 <div className="space-y-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <h3 className="text-lg font-semibold text-foreground">{term.name}</h3>
-                    {term.is_current ? <span className="admin-domain-badge">Current</span> : null}
+                    {term.is_current ? <AdminStatusChip tone="good" icon="check" label="Current" /> : null}
                   </div>
                   <p className="text-sm leading-7 text-foreground/58">
                     {term.start_date || "No start date"} to {term.end_date || "No end date"}

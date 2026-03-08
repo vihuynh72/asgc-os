@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { AdminEmptyState } from "@/components/admin/admin-empty-state";
 import { AdminStatStrip } from "@/components/admin/admin-stat-strip";
+import { AdminStatusChip } from "@/components/admin/admin-status-chip";
 import { AdminSurface } from "@/components/admin/admin-surface";
 import { AdminToolbar } from "@/components/admin/admin-toolbar";
 import type { AdminStat } from "@/components/admin/admin-types";
@@ -72,11 +73,11 @@ async function copyToClipboard(text: string): Promise<boolean> {
   return ok;
 }
 
-function statusPill(statusKey: string): { label: string; className: string } {
-  if (statusKey === "complete") return { label: "Complete", className: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300" };
-  if (statusKey === "missing") return { label: "Missing", className: "bg-red-500/15 text-red-700 dark:text-red-300" };
-  if (statusKey === "behind") return { label: "Behind", className: "bg-amber-500/15 text-amber-700 dark:text-amber-300" };
-  return { label: "Not required", className: "bg-foreground/10 text-foreground/70" };
+function statusPill(statusKey: string): { label: string; tone: "critical" | "warning" | "neutral" | "good"; icon: "triangle" | "clock" | "dot" | "check" } {
+  if (statusKey === "complete") return { label: "Complete", tone: "good", icon: "check" };
+  if (statusKey === "missing") return { label: "Missing", tone: "critical", icon: "triangle" };
+  if (statusKey === "behind") return { label: "Behind", tone: "warning", icon: "clock" };
+  return { label: "Not required", tone: "neutral", icon: "dot" };
 }
 
 export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart: string | null }) {
@@ -435,22 +436,16 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
                           <span className="text-sm font-semibold">{r.role || "—"}</span>
                           <span className="text-xs text-foreground/60">•</span>
                           <span className="text-sm">{r.name || "—"}</span>
-                          <span className={`rounded-full px-2 py-0.5 text-xs ${pill.className}`}>{pill.label}</span>
+                          <AdminStatusChip tone={pill.tone} icon={pill.icon} label={pill.label} />
                           {r.member_status === "vacant" || r.member_status === "no_show" ? (
-                            <span
-                              className={
-                                r.member_status === "vacant"
-                                  ? "rounded-full bg-slate-500/15 px-2 py-0.5 text-xs text-slate-700 dark:text-slate-300"
-                                  : "rounded-full bg-rose-500/15 px-2 py-0.5 text-xs text-rose-700 dark:text-rose-300"
-                              }
-                            >
-                              {rosterStatusLabel(r.member_status)}
-                            </span>
+                            <AdminStatusChip
+                              tone={r.member_status === "vacant" ? "neutral" : "warning"}
+                              icon={r.member_status === "vacant" ? "dot" : "clock"}
+                              label={rosterStatusLabel(r.member_status)}
+                            />
                           ) : null}
                           {needsReview > 0 ? (
-                            <span className="rounded-full bg-indigo-500/15 px-2 py-0.5 text-xs text-indigo-700 dark:text-indigo-300">
-                              Needs review ({needsReview})
-                            </span>
+                            <AdminStatusChip tone="warning" icon="clock" label="Needs review" count={needsReview} />
                           ) : null}
                         </div>
                         <div className="text-xs text-foreground/60">
