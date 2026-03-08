@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { AdminEmptyState } from "@/components/admin/admin-empty-state";
 import { AdminFilterTray } from "@/components/admin/admin-filter-tray";
+import { AdminStatusChip } from "@/components/admin/admin-status-chip";
 import { AdminStatStrip } from "@/components/admin/admin-stat-strip";
 import { AdminSurface } from "@/components/admin/admin-surface";
 import { AdminToolbar } from "@/components/admin/admin-toolbar";
@@ -365,11 +366,19 @@ export function AuditLogPanel() {
         title="Activity log"
         description="Review the loaded activity set, then expand metadata only for the rows that matter."
         action={
-          !loading && hasMore ? (
-            <Button variant="outline" onClick={() => loadLogs(false)} disabled={loading}>
-              Load more
-            </Button>
-          ) : null
+          <div className="flex flex-wrap items-center gap-2">
+            <AdminStatusChip
+              tone={hasMore ? "warning" : "good"}
+              icon={hasMore ? "clock" : "check"}
+              label={hasMore ? "More available" : "Loaded"}
+              count={logs.length}
+            />
+            {!loading && hasMore ? (
+              <Button variant="outline" onClick={() => loadLogs(false)} disabled={loading}>
+                Load more
+              </Button>
+            ) : null}
+          </div>
         }
       >
         {loading && logs.length === 0 ? (
@@ -386,7 +395,7 @@ export function AuditLogPanel() {
                       <div className="text-sm font-medium">{log.actor_display_name || log.actor_email || log.actor_user_id?.slice(0, 8) || "System"}</div>
                       <div className="mt-1 text-xs text-foreground/60">{formatDate(log.occurred_at)}</div>
                     </div>
-                    <code className="rounded-full bg-black/6 px-2.5 py-1 text-[0.7rem] dark:bg-white/8">{log.action_key}</code>
+                    <AdminStatusChip tone="neutral" icon="dot" label={log.action_key.replace(/_/g, " ")} />
                   </div>
                   <div className="mt-3 text-xs text-foreground/65">
                     {log.target_type ? `${log.target_type}${log.target_id ? ` / ${log.target_id.slice(0, 8)}...` : ""}` : "No target"}
@@ -419,7 +428,7 @@ export function AuditLogPanel() {
                     <tr key={log.id} className="border-t">
                       <td className="px-4 py-2 whitespace-nowrap">{formatDate(log.occurred_at)}</td>
                       <td className="px-4 py-2">
-                        <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{log.action_key}</code>
+                        <AdminStatusChip tone="neutral" icon="dot" label={log.action_key.replace(/_/g, " ")} />
                       </td>
                       <td className="px-4 py-2">
                         {log.actor_display_name || log.actor_email || log.actor_user_id?.slice(0, 8) || (

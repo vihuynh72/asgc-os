@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 
 import { AdminEmptyState } from "@/components/admin/admin-empty-state";
 import { AdminInlineNotice } from "@/components/admin/admin-inline-notice";
+import { AdminStatusChip } from "@/components/admin/admin-status-chip";
 import { AdminSurface } from "@/components/admin/admin-surface";
 
 import { PeopleSectionNav } from "./people-section-nav";
@@ -93,7 +94,19 @@ export function PeopleAccessAuditPanel() {
             rows: data?.invalid_assignments ?? [],
           },
         ].map((section) => (
-          <AdminSurface key={section.title} title={section.title} description={section.description}>
+          <AdminSurface
+            key={section.title}
+            title={section.title}
+            description={section.description}
+            action={
+              <AdminStatusChip
+                tone={section.rows.length > 0 ? "warning" : "good"}
+                icon={section.rows.length > 0 ? "clock" : "check"}
+                label={section.rows.length > 0 ? "Review" : "Clear"}
+                count={section.rows.length}
+              />
+            }
+          >
             {loading ? (
               <p className="text-sm text-foreground/58">Loading…</p>
             ) : section.rows.length === 0 ? (
