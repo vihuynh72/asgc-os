@@ -8,6 +8,7 @@ export type AdminSubsectionId =
   | "terms"
   | "audit"
   | "summary"
+  | "queue"
   | "create"
   | "upcoming"
   | "committees"
@@ -46,5 +47,24 @@ export type AdminStat = {
 export type AdminCardMetric = {
   label: string;
   value: string;
+  tone?: "default" | "positive" | "warning";
+};
+
+export type AdminHomeCard = {
+  id: AdminDomainId;
+  href: string;
+  title: string;
+  status: string;
+  description?: string | null;
+  badge?: string | null;
+  primaryLabel?: string;
+};
+
+export type AdminIssueItem = {
+  id: string;
+  domainId: AdminDomainId;
+  href: string;
+  label: string;
+  message: string;
   tone?: "default" | "positive" | "warning";
 };
