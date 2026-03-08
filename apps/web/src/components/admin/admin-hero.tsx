@@ -4,13 +4,13 @@ import type { ReactNode } from "react";
 import { motion, useReducedMotion } from "motion/react";
 
 export function AdminHero({
-  eyebrow = "Admin",
+  eyebrow,
   title,
   description,
   actions,
   children,
 }: {
-  eyebrow?: string;
+  eyebrow?: string | null;
   title: string;
   description: string;
   actions?: ReactNode;
@@ -26,10 +26,10 @@ export function AdminHero({
       transition={{ duration: 0.34, ease: "easeOut" }}
     >
       <div className="space-y-4">
-        <div className="admin-eyebrow">{eyebrow}</div>
+        {eyebrow ? <div className="admin-eyebrow">{eyebrow}</div> : null}
         <div className="space-y-2">
-          <h1 className="text-3xl font-semibold tracking-[-0.04em] text-foreground sm:text-4xl">{title}</h1>
-          <p className="max-w-3xl text-sm leading-6 text-foreground/66 sm:text-[0.97rem]">{description}</p>
+          <h1 className="text-[2rem] font-semibold tracking-[-0.05em] text-foreground sm:text-[2.55rem]">{title}</h1>
+          <p className="max-w-4xl text-base leading-8 text-foreground/66">{description}</p>
         </div>
         {children}
       </div>

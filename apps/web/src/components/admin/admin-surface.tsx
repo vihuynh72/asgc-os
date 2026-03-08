@@ -1,4 +1,4 @@
-import type { ElementType, ReactNode } from "react";
+import type { ComponentPropsWithoutRef, ElementType, ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
 
@@ -10,6 +10,7 @@ export function AdminSurface({
   children,
   className,
   contentClassName,
+  ...props
 }: {
   as?: ElementType;
   title: ReactNode;
@@ -18,9 +19,9 @@ export function AdminSurface({
   children?: ReactNode;
   className?: string;
   contentClassName?: string;
-}) {
+} & ComponentPropsWithoutRef<"section">) {
   return (
-    <Comp className={cn("admin-surface", className)}>
+    <Comp className={cn("admin-surface", className)} {...props}>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="space-y-1">
           <h2 className="text-lg font-semibold tracking-[-0.02em] text-foreground">{title}</h2>
