@@ -291,7 +291,7 @@ export default async function AdminPage() {
   }
 
   return (
-    <PageShell title="Admin" description="Manage terms and role assignments.">
+    <PageShell title="Admin Command Center" showHeader={false} containerClassName="max-w-7xl">
       <AdminPanel
         tier={tier}
         isEvp={isEvp}
