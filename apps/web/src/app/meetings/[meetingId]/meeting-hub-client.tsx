@@ -290,7 +290,7 @@ export function MeetingHubClient({
 
   const breadcrumbs = isAdmin
     ? [
-        { href: "/admin?tab=meetings", label: "Admin" },
+        { href: "/admin/meetings", label: "Admin" },
         { href: "/meetings", label: "Meetings" },
       ]
     : [{ href: "/meetings", label: "Meetings" }];

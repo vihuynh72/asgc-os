@@ -1203,7 +1203,7 @@ export function AgendaItemsPanel({
           ) : null}
           {meetingIsCancelled && isAdmin ? (
             <div className="mt-2">
-              <ButtonLink href="/admin?tab=meetings#admin-meetings-create" size="sm" variant="outline">
+              <ButtonLink href="/admin/meetings#admin-meetings-create" size="sm" variant="outline">
                 Reschedule meeting
               </ButtonLink>
             </div>
