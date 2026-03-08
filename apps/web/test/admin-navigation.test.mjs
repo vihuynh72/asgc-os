@@ -2,46 +2,49 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  getDefaultAdminLocation,
+  buildAdminHref,
+  getAdminSectionNav,
+  getDefaultAdminPath,
   getVisibleAdminDomains,
-  normalizeAdminLocation,
-} from "../src/lib/admin-navigation.mjs";
+  normalizeAdminRoute,
+} from "../src/lib/admin/navigation.mjs";
 
-test("normalizeAdminLocation maps legacy access tab to People invites", () => {
-  const result = normalizeAdminLocation({ tab: "access", tier: "full", isEvp: false });
+test("normalizeAdminRoute maps legacy access tab to the People invites route", () => {
+  const result = normalizeAdminRoute({ pathname: "/admin", tab: "access", tier: "full", isEvp: false });
 
   assert.deepEqual(result, {
-    tab: "people",
-    section: "invites",
+    pathname: "/admin/people/invites",
+    hash: "",
     requestedTab: "access",
     requestedSection: null,
   });
 });
 
-test("normalizeAdminLocation maps legacy roles tab to People assignments", () => {
-  const result = normalizeAdminLocation({ tab: "roles", tier: "full", isEvp: false });
+test("normalizeAdminRoute maps legacy roles tab to the People assignments route", () => {
+  const result = normalizeAdminRoute({ pathname: "/admin", tab: "roles", tier: "full", isEvp: false });
 
   assert.deepEqual(result, {
-    tab: "people",
-    section: "assignments",
+    pathname: "/admin/people/assignments",
+    hash: "",
     requestedTab: "roles",
     requestedSection: null,
   });
 });
 
-test("normalizeAdminLocation falls back to visible default when requested tab is not allowed", () => {
-  const result = normalizeAdminLocation({ tab: "people", tier: "partial", isEvp: false });
+test("normalizeAdminRoute falls back to the visible default when the requested route is not allowed", () => {
+  const result = normalizeAdminRoute({ pathname: "/admin/people", tier: "partial", isEvp: false });
 
   assert.deepEqual(result, {
-    tab: "meetings",
-    section: "upcoming",
-    requestedTab: "people",
+    pathname: "/admin/meetings",
+    hash: "",
+    requestedTab: null,
     requestedSection: null,
   });
 });
 
-test("normalizeAdminLocation honors valid subsection overrides", () => {
-  const result = normalizeAdminLocation({
+test("normalizeAdminRoute converts meeting sections into stable anchors", () => {
+  const result = normalizeAdminRoute({
+    pathname: "/admin",
     tab: "meetings",
     section: "existing",
     tier: "read-only",
@@ -49,8 +52,8 @@ test("normalizeAdminLocation honors valid subsection overrides", () => {
   });
 
   assert.deepEqual(result, {
-    tab: "meetings",
-    section: "existing",
+    pathname: "/admin/meetings",
+    hash: "#admin-meetings-existing",
     requestedTab: "meetings",
     requestedSection: "existing",
   });
@@ -63,17 +66,34 @@ test("getVisibleAdminDomains merges People for full admins and hides office hour
   assert.deepEqual(getVisibleAdminDomains({ tier: "read-only", isEvp: true }), ["meetings"]);
 });
 
-test("getDefaultAdminLocation prefers People, then Office Hours, then Meetings", () => {
-  assert.deepEqual(getDefaultAdminLocation({ tier: "full", isEvp: false }), {
-    tab: "people",
-    section: "invites",
-  });
-  assert.deepEqual(getDefaultAdminLocation({ tier: "partial", isEvp: true }), {
-    tab: "office_hours",
-    section: "summary",
-  });
-  assert.deepEqual(getDefaultAdminLocation({ tier: "read-only", isEvp: false }), {
-    tab: "meetings",
-    section: "upcoming",
-  });
+test("getDefaultAdminPath prefers People, then Office Hours, then Meetings", () => {
+  assert.equal(getDefaultAdminPath({ tier: "full", isEvp: false }), "/admin/people");
+  assert.equal(getDefaultAdminPath({ tier: "partial", isEvp: true }), "/admin/office-hours");
+  assert.equal(getDefaultAdminPath({ tier: "read-only", isEvp: false }), "/admin/meetings");
+});
+
+test("getAdminSectionNav returns route-based People links", () => {
+  assert.deepEqual(getAdminSectionNav("people"), [
+    { id: "overview", label: "Overview", href: "/admin/people" },
+    { id: "invites", label: "Invites", href: "/admin/people/invites" },
+    { id: "assignments", label: "Assignments", href: "/admin/people/assignments" },
+    { id: "terms", label: "Terms", href: "/admin/people/terms" },
+    { id: "access_audit", label: "Access Audit", href: "/admin/people/access-audit" },
+  ]);
+});
+
+test("getAdminSectionNav returns office-hours specialist links", () => {
+  assert.deepEqual(getAdminSectionNav("office_hours"), [
+    { id: "overview", label: "Overview", href: "/admin/office-hours" },
+    { id: "sessions", label: "Sessions", href: "/admin/office-hours/sessions" },
+    { id: "requirements", label: "Requirements", href: "/admin/office-hours/requirements" },
+    { id: "config", label: "Config", href: "/admin/office-hours/config" },
+    { id: "export", label: "Export", href: "/admin/office-hours/export" },
+  ]);
+});
+
+test("buildAdminHref returns canonical People, Office Hours, and Meetings destinations", () => {
+  assert.equal(buildAdminHref("people", "terms"), "/admin/people/terms");
+  assert.equal(buildAdminHref("office_hours", "config"), "/admin/office-hours/config");
+  assert.equal(buildAdminHref("meetings", "existing"), "/admin/meetings#admin-meetings-existing");
 });

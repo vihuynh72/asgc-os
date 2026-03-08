@@ -1,33 +1,33 @@
-import { PageShell } from "@/components/page-shell";
-import { getSupabaseServerComponentClient } from "@/lib/supabaseServerComponent";
-import { redirect } from "next/navigation";
+import { AdminHero } from "@/components/admin/admin-hero";
+import { AdminSectionNav } from "@/components/admin/admin-section-nav";
+import { requireAdminViewer } from "@/lib/admin/server";
+
 import { AuditLogPanel } from "./audit-log-panel";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export default async function AuditLogPage() {
-  const supabase = await getSupabaseServerComponentClient();
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    redirect("/login");
-  }
-
-  // Only full admins can see audit logs
-  const { data: tierData, error: tierErr } = await supabase.rpc("get_admin_tier", { _uid: user.id });
-  const tier = tierData?.tier as "full" | "partial" | "read-only" | null;
-
-  if (tierErr || tier !== "full") {
-    redirect("/unauthorized?reason=admin&redirectTo=/admin/audit");
-  }
+  await requireAdminViewer({ redirectTo: "/admin/audit", capability: "audit" });
 
   return (
-    <PageShell title="Audit Log" description="View system activity and changes." backHref="/admin" backLabel="Back to Admin">
+    <div className="admin-page space-y-6">
+      <AdminHero
+        eyebrow="Audit"
+        title="System activity and admin traceability"
+        description="Audit logs stay separate from People operations so filter-heavy review does not crowd everyday admin tasks."
+      />
+
+      <AdminSectionNav
+        activeId="audit"
+        items={[
+          { id: "overview", label: "Overview", href: "/admin" },
+          { id: "people", label: "People", href: "/admin/people" },
+          { id: "audit", label: "Audit Log", href: "/admin/audit" },
+        ]}
+      />
+
       <AuditLogPanel />
-    </PageShell>
+    </div>
   );
 }

@@ -692,7 +692,7 @@ export default function MeetingsPage() {
                 Calendar feed
               </Button>
               {isAdmin ? (
-                <ButtonLink href="/admin?tab=meetings#admin-meetings-create" variant="outline" size="sm">
+                <ButtonLink href="/admin/meetings#admin-meetings-create" variant="outline" size="sm">
                   Create meeting
                 </ButtonLink>
               ) : null}
