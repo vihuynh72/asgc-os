@@ -3,6 +3,7 @@
 import type { ChangeEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { KioskNotice, KioskStatusChip } from "@/components/office-hours/kiosk";
 import { Button } from "@/components/ui/button";
 import { addDaysDateOnly, normalizeDateOnlyString, todayDateString } from "@/lib/dateOnly";
 
@@ -183,9 +184,7 @@ export function KioskPhotoReviewPanel() {
     const ids = Array.from(selectedIds);
     setTransientActionStatus(mode === "active" ? `Quarantining ${ids.length}…` : `Restoring ${ids.length}…`);
     for (const id of ids) {
-      // eslint-disable-next-line no-await-in-loop
       if (mode === "active") await quarantineOne(id, bulkReason);
-      // eslint-disable-next-line no-await-in-loop
       else await restoreOne(id);
     }
     setBulkReason("");
@@ -197,193 +196,245 @@ export function KioskPhotoReviewPanel() {
 
   return (
     <div className="space-y-4">
-      <div className="rounded-md border p-3">
+      <section className="kiosk-section space-y-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="space-y-1">
-            <div className="text-sm font-medium">Kiosk selfies</div>
-            <div className="text-xs text-foreground/70">Only allowlisted members are shown. {tz ? `Times shown in ${tz}.` : ""}</div>
+            <p className="text-xs font-medium uppercase tracking-[0.12em] text-[var(--admin-label)]">
+              Review queue
+            </p>
+            <p className="text-sm text-foreground/75">
+              {tz ? `Times in ${tz}` : "Times in local timezone"}
+            </p>
           </div>
 
-          <div className="flex items-center gap-2">
-            <div className="inline-flex overflow-hidden rounded-full border bg-background/60">
-              <button
-                type="button"
-                className={`px-3 py-1.5 text-xs font-medium ${mode === "active" ? "bg-foreground/5" : "text-foreground/70 hover:bg-foreground/5"}`}
-                onClick={() => setMode("active")}
-              >
-                Active
-              </button>
-              <button
-                type="button"
-                className={`px-3 py-1.5 text-xs font-medium ${mode === "quarantine" ? "bg-foreground/5" : "text-foreground/70 hover:bg-foreground/5"}`}
-                onClick={() => setMode("quarantine")}
-              >
-                Quarantine
-              </button>
-            </div>
+          <div className="inline-flex overflow-hidden rounded-full border border-[var(--admin-border-soft)] bg-white/70">
+            <button
+              type="button"
+              className={`h-11 px-4 text-sm font-medium ${
+                mode === "active" ? "bg-white text-foreground" : "text-foreground/65 hover:bg-white/70"
+              }`}
+              onClick={() => setMode("active")}
+            >
+              Active
+            </button>
+            <button
+              type="button"
+              className={`h-11 px-4 text-sm font-medium ${
+                mode === "quarantine"
+                  ? "bg-white text-foreground"
+                  : "text-foreground/65 hover:bg-white/70"
+              }`}
+              onClick={() => setMode("quarantine")}
+            >
+              Quarantine
+            </button>
           </div>
         </div>
 
-        <div className="mt-3 grid gap-3 border-t pt-3 md:grid-cols-[1fr_auto] md:items-end">
-          <div className="flex flex-wrap items-end gap-2">
-            <label className="space-y-1 text-sm">
-              <div className="text-foreground/70">Start</div>
+        <div className="grid gap-3 lg:grid-cols-2">
+          <div className="grid gap-2 sm:grid-cols-2">
+            <label className="space-y-1">
+              <span className="kiosk-control-label">Start</span>
               <input
                 type="date"
-                className="h-9 w-44 rounded-md border bg-transparent px-2 text-sm"
+                className="kiosk-input h-12 rounded-xl px-3 text-sm"
                 value={startResolved}
-                onChange={(e: ChangeEvent<HTMLInputElement>) => setStartDate(normalizeDateOnlyString(e.target.value) ?? todayDateString())}
+                onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                  setStartDate(
+                    normalizeDateOnlyString(event.target.value) ?? todayDateString(),
+                  )
+                }
               />
             </label>
-            <label className="space-y-1 text-sm">
-              <div className="text-foreground/70">End</div>
+
+            <label className="space-y-1">
+              <span className="kiosk-control-label">End</span>
               <input
                 type="date"
-                className="h-9 w-44 rounded-md border bg-transparent px-2 text-sm"
+                className="kiosk-input h-12 rounded-xl px-3 text-sm"
                 value={endResolved}
-                onChange={(e: ChangeEvent<HTMLInputElement>) => setEndDate(normalizeDateOnlyString(e.target.value) ?? todayDateString())}
+                onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                  setEndDate(
+                    normalizeDateOnlyString(event.target.value) ?? todayDateString(),
+                  )
+                }
               />
             </label>
-            <Button variant="outline" size="sm" onClick={() => {
-              setStartDate(addDaysDateOnly(todayDateString(), -7) ?? todayDateString());
-              setEndDate(addDaysDateOnly(todayDateString(), 1) ?? todayDateString());
-            }}>
-              Last 7 days
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => {
-              setStartDate(addDaysDateOnly(todayDateString(), -30) ?? todayDateString());
-              setEndDate(addDaysDateOnly(todayDateString(), 1) ?? todayDateString());
-            }}>
-              Last 30 days
-            </Button>
+
+            <div className="flex gap-2 sm:col-span-2">
+              <Button
+                variant="outline"
+                className="h-11 rounded-xl px-4"
+                onClick={() => {
+                  setStartDate(addDaysDateOnly(todayDateString(), -7) ?? todayDateString());
+                  setEndDate(addDaysDateOnly(todayDateString(), 1) ?? todayDateString());
+                }}
+              >
+                Last 7 days
+              </Button>
+              <Button
+                variant="outline"
+                className="h-11 rounded-xl px-4"
+                onClick={() => {
+                  setStartDate(addDaysDateOnly(todayDateString(), -30) ?? todayDateString());
+                  setEndDate(addDaysDateOnly(todayDateString(), 1) ?? todayDateString());
+                }}
+              >
+                Last 30 days
+              </Button>
+            </div>
           </div>
 
-          <div className="flex items-end justify-between gap-2">
-            <label className="space-y-1 text-sm">
-              <div className="text-foreground/70">Search</div>
+          <div className="grid gap-2">
+            <label className="space-y-1">
+              <span className="kiosk-control-label">Search</span>
               <input
                 type="text"
-                className="h-9 w-72 rounded-md border bg-transparent px-2 text-sm"
+                className="kiosk-input h-12 rounded-xl px-3 text-sm"
                 value={search}
-                onChange={(e: ChangeEvent<HTMLInputElement>) => setSearch(e.target.value)}
-                placeholder="Search name, email, location..."
+                onChange={(event: ChangeEvent<HTMLInputElement>) => setSearch(event.target.value)}
+                placeholder="Name, email, location"
               />
             </label>
-            <div className="text-xs text-foreground/70">
-              {filtered.length} session{filtered.length === 1 ? "" : "s"}
+            <div className="flex items-center justify-between gap-2">
+              <KioskStatusChip
+                tone={mode === "active" ? "warning" : "neutral"}
+                icon={mode === "active" ? "clock" : "dot"}
+                label={mode === "active" ? "Needs review" : "Quarantined"}
+                count={filtered.length}
+              />
+              <label className="flex items-center gap-2 text-xs text-foreground/65">
+                <input
+                  type="checkbox"
+                  checked={allChecked}
+                  onChange={(event) => {
+                    if (event.target.checked) setSelectedIds(new Set(filtered.map((s) => s.id)));
+                    else setSelectedIds(new Set());
+                  }}
+                />
+                Select all
+              </label>
             </div>
           </div>
         </div>
 
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t pt-3">
-          <label className="flex items-center gap-2 text-xs text-foreground/70">
+        <div className="grid gap-2 border-t border-[var(--admin-border-soft)] pt-3 md:grid-cols-[1fr_auto] md:items-center">
+          {mode === "active" ? (
             <input
-              type="checkbox"
-              checked={allChecked}
-              onChange={(e) => {
-                if (e.target.checked) setSelectedIds(new Set(filtered.map((s) => s.id)));
-                else setSelectedIds(new Set());
-              }}
+              type="text"
+              className="kiosk-input h-12 rounded-xl px-3 text-sm"
+              value={bulkReason}
+              onChange={(event: ChangeEvent<HTMLInputElement>) => setBulkReason(event.target.value)}
+              placeholder="Quarantine reason (optional)"
             />
-            Select all
-          </label>
+          ) : (
+            <p className="text-xs text-foreground/65">Restore selected sessions to active review.</p>
+          )}
 
           <div className="flex flex-wrap items-center gap-2">
-            {mode === "active" ? (
-              <input
-                type="text"
-                className="h-9 w-56 rounded-md border bg-transparent px-2 text-sm"
-                value={bulkReason}
-                onChange={(e: ChangeEvent<HTMLInputElement>) => setBulkReason(e.target.value)}
-                placeholder="Quarantine reason (optional)"
-              />
-            ) : null}
             <Button
               variant="outline"
-              size="sm"
+              className="h-11 rounded-xl px-4"
               onClick={() => void bulkAction()}
               disabled={selectedCount === 0}
             >
               {mode === "active" ? `Quarantine (${selectedCount})` : `Restore (${selectedCount})`}
             </Button>
-            <Button variant="ghost" size="sm" onClick={clearSelection} disabled={selectedCount === 0}>
+            <Button
+              variant="ghost"
+              className="h-11 rounded-xl px-4"
+              onClick={clearSelection}
+              disabled={selectedCount === 0}
+            >
               Clear
             </Button>
           </div>
         </div>
-      </div>
+      </section>
 
-      {actionStatus ? <div className="text-xs text-foreground/70">{actionStatus}</div> : null}
-      {status ? <div className="text-sm text-foreground/70">{status}</div> : null}
+      {actionStatus ? <KioskNotice tone="neutral">{actionStatus}</KioskNotice> : null}
+      {status ? (
+        <KioskNotice tone={status.startsWith("Loading") ? "neutral" : "warning"}>
+          {status}
+        </KioskNotice>
+      ) : null}
 
       <div className="space-y-3">
         {filtered.map((s) => {
           const expanded = expandedId === s.id;
           const photoUrl = photoUrlById.get(s.id) ?? null;
           const checked = selectedIds.has(s.id);
+          const statusLabel = s.status.replaceAll("_", " ");
+          const tone =
+            mode === "quarantine"
+              ? "neutral"
+              : s.within_radius === false
+                ? "warning"
+                : "good";
+
           return (
-            <div key={s.id} className="rounded-lg border p-3">
-              <div className="flex flex-wrap items-start justify-between gap-2">
-                <label className="flex items-start gap-3 min-w-0">
+            <article key={s.id} className="kiosk-section space-y-3">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <label className="flex min-w-0 items-start gap-3">
                   <input
                     type="checkbox"
-                    className="mt-1"
+                    className="mt-1.5"
                     checked={checked}
-                    onChange={(e) => {
+                    onChange={(event) => {
                       setSelectedIds((prev) => {
                         const next = new Set(prev);
-                        if (e.target.checked) next.add(s.id);
+                        if (event.target.checked) next.add(s.id);
                         else next.delete(s.id);
                         return next;
                       });
                     }}
                   />
-                <div className="min-w-0">
-                  <div className="font-medium truncate">{s.user_display_name || "—"}</div>
-                  <div className="text-xs text-foreground/60 truncate">{s.user_email}</div>
-                  <div className="mt-1 text-xs text-foreground/70">
-                    Check-in: <span className="font-mono">{formatWhen(s.checkin_at, tz)}</span>
-                    {s.checkout_at ? (
-                      <>
-                        {" "}• Check-out: <span className="font-mono">{formatWhen(s.checkout_at, tz)}</span>
-                      </>
-                    ) : null}
+                  <div className="min-w-0 space-y-2">
+                    <div>
+                      <p className="truncate text-base font-medium">{s.user_display_name || "—"}</p>
+                      <p className="truncate text-xs text-foreground/65">{s.user_email}</p>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <KioskStatusChip
+                        tone={tone}
+                        icon={tone === "warning" ? "triangle" : tone === "good" ? "check" : "dot"}
+                        label={statusLabel}
+                      />
+                      {typeof s.distance_m_at_checkin === "number" ? (
+                        <KioskStatusChip tone="neutral" icon="dot" label={`${s.distance_m_at_checkin}m`} />
+                      ) : null}
+                      {s.office_location_name ? (
+                        <KioskStatusChip tone="neutral" icon="dot" label={s.office_location_name} />
+                      ) : null}
+                      {mode === "quarantine" && s.quarantined_at ? (
+                        <KioskStatusChip
+                          tone="neutral"
+                          icon="clock"
+                          label={`Quarantined ${formatWhen(s.quarantined_at, tz)}`}
+                        />
+                      ) : null}
+                    </div>
+
+                    <p className="text-xs text-foreground/65">
+                      In {formatWhen(s.checkin_at, tz)}
+                      {s.checkout_at ? ` • Out ${formatWhen(s.checkout_at, tz)}` : ""}
+                    </p>
                   </div>
-                  <div className="mt-2 flex flex-wrap items-center gap-2">
-                    <span className="rounded-full bg-foreground/10 px-2 py-0.5 text-xs text-foreground/70">
-                      {s.status.replace("_", " ")}
-                    </span>
-                    {typeof s.distance_m_at_checkin === "number" ? (
-                      <span className="rounded-full bg-foreground/10 px-2 py-0.5 text-xs text-foreground/70">
-                        {s.distance_m_at_checkin}m
-                      </span>
-                    ) : null}
-                    {s.within_radius === false ? (
-                      <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
-                        Outside
-                      </span>
-                    ) : null}
-                    {s.office_location_name ? (
-                      <span className="rounded-full bg-foreground/10 px-2 py-0.5 text-xs text-foreground/70">
-                        {s.office_location_name}
-                      </span>
-                    ) : null}
-                    {mode === "quarantine" && s.quarantined_at ? (
-                      <span className="rounded-full bg-foreground/10 px-2 py-0.5 text-xs text-foreground/70">
-                        Quarantined {formatWhen(s.quarantined_at, tz)}
-                      </span>
-                    ) : null}
-                  </div>
-                </div>
                 </label>
-                <div className="flex items-center gap-2">
-                  <Button variant="outline" size="sm" onClick={() => void togglePhoto(s.id)}>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    variant="outline"
+                    className="h-10 rounded-xl px-3"
+                    onClick={() => void togglePhoto(s.id)}
+                  >
                     {expanded ? "Hide selfie" : "View selfie"}
                   </Button>
                   {mode === "active" ? (
                     <Button
                       variant="outline"
-                      size="sm"
+                      className="h-10 rounded-xl px-3"
                       onClick={() => {
                         const reason = window.prompt("Quarantine reason (optional):", "");
                         void quarantineOne(s.id, reason ?? undefined);
@@ -392,46 +443,56 @@ export function KioskPhotoReviewPanel() {
                       Quarantine
                     </Button>
                   ) : (
-                    <Button variant="outline" size="sm" onClick={() => void restoreOne(s.id)}>
+                    <Button
+                      variant="outline"
+                      className="h-10 rounded-xl px-3"
+                      onClick={() => void restoreOne(s.id)}
+                    >
                       Restore
                     </Button>
                   )}
                 </div>
               </div>
+
               {expanded ? (
-                <div className="mt-3">
+                <div className="space-y-2 border-t border-[var(--admin-border-soft)] pt-3">
                   {photoUrl ? (
-                    <div className="mb-2 flex flex-wrap items-center gap-2">
-                      <Button variant="outline" size="sm" onClick={() => window.open(photoUrl, "_blank", "noopener,noreferrer")}>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button
+                        variant="outline"
+                        className="h-10 rounded-xl px-3"
+                        onClick={() => window.open(photoUrl, "_blank", "noopener,noreferrer")}
+                      >
                         Open full
                       </Button>
                     </div>
                   ) : null}
+
                   {photoUrl ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
                       src={photoUrl}
                       alt="Kiosk check-in selfie"
-                      className="w-full max-w-4xl max-h-[70vh] rounded-xl border bg-black/5 object-contain shadow-sm cursor-zoom-in"
+                      className="max-h-[70vh] w-full max-w-4xl cursor-zoom-in rounded-xl border border-[var(--admin-border-soft)] bg-black/5 object-contain shadow-sm"
                       loading="lazy"
                       onClick={() => window.open(photoUrl, "_blank", "noopener,noreferrer")}
                     />
                   ) : (
-                    <div className="text-sm text-foreground/70">Loading selfie…</div>
+                    <p className="text-sm text-foreground/65">Loading selfie…</p>
                   )}
-                  <div className="mt-2 text-xs text-foreground/60">
-                    Links expire after a few minutes. If the image fails to load, close and reopen.
-                  </div>
+                  <p className="text-xs text-foreground/55">Image links expire quickly. Reopen if needed.</p>
                 </div>
               ) : null}
-            </div>
+            </article>
           );
         })}
 
         {filtered.length === 0 ? (
-          <div className="rounded-md border p-6 text-center text-sm text-foreground/60">
-            {mode === "active" ? "No active kiosk selfies found for this range." : "No quarantined kiosk selfies found for this range."}
-          </div>
+          <section className="kiosk-section p-8 text-center">
+            <p className="text-sm text-foreground/65">
+              {mode === "active" ? "No active selfies in this range." : "No quarantined selfies in this range."}
+            </p>
+          </section>
         ) : null}
       </div>
     </div>

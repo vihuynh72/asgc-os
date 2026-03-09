@@ -1,0 +1,30 @@
+"use client";
+
+import type { ReactNode } from "react";
+import { motion, useReducedMotion } from "motion/react";
+
+import { cn } from "@/lib/utils";
+
+export function KioskShell({
+  children,
+  className,
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  const reduceMotion = useReducedMotion();
+
+  return (
+    <div className="kiosk-shell">
+      <div aria-hidden className="kiosk-shell-backdrop" />
+      <motion.main
+        initial={reduceMotion ? false : { opacity: 0, y: 8 }}
+        animate={reduceMotion ? undefined : { opacity: 1, y: 0 }}
+        transition={{ duration: 0.26, ease: "easeOut" }}
+        className={cn("kiosk-shell-main", className)}
+      >
+        {children}
+      </motion.main>
+    </div>
+  );
+}
