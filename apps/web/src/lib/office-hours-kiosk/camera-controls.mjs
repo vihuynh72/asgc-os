@@ -62,6 +62,16 @@ export function pickNextCameraTarget({
   return { deviceId: null, facingMode: toggledFacingMode };
 }
 
+export function resolveKioskCameraSurface({
+  hasValue,
+  canUseCamera,
+  cameraState,
+}) {
+  if (hasValue) return "preview";
+  if (!canUseCamera) return "unavailable";
+  return cameraState === "ready" ? "live" : "prompt";
+}
+
 export function shapeCameraControlState({
   canEnumerateDevices,
   devices,
