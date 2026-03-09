@@ -757,11 +757,9 @@ export default function OfficeHoursKioskPage() {
                 disabled={false}
                 onActivate={() => setFocusedStep("action")}
               >
-                <p className="text-sm text-foreground/75">
-                  Complete the previous steps, then submit your check-in.
-                </p>
+                <p className="text-sm text-foreground/75">Ready when you are.</p>
                 {!status?.user_exists ? (
-                  <KioskNotice tone="neutral">A new account is created on first check-in.</KioskNotice>
+                  <KioskNotice tone="neutral">First kiosk check-in creates your account.</KioskNotice>
                 ) : null}
                 <KioskActionBar
                   primary={
@@ -774,7 +772,7 @@ export default function OfficeHoursKioskPage() {
                       {loading ? "Checking in…" : canSubmitCheckIn ? "Check in" : "Complete steps"}
                     </Button>
                   }
-                  hint="Check-in requires a selfie and an in-range location."
+                  hint="Selfie + in-range location required."
                 />
               </StepCard>
             </>
@@ -792,7 +790,7 @@ export default function OfficeHoursKioskPage() {
               onActivate={() => undefined}
             >
               <p className="text-sm text-foreground/75">
-                Opened {openSession ? formatWhen(openSession.checkin_at) : "earlier"}. Finish with check-out.
+                Opened {openSession ? formatWhen(openSession.checkin_at) : "earlier"}.
               </p>
               <KioskActionBar
                 primary={
@@ -802,10 +800,10 @@ export default function OfficeHoursKioskPage() {
                     onClick={() => void onCheckOut()}
                     disabled={loading || !emailReady}
                   >
-                    {loading ? "Checking out…" : "Check out"}
-                  </Button>
-                }
-                hint="Checkout closes the active session for this email."
+                      {loading ? "Checking out…" : "Check out"}
+                    </Button>
+                  }
+                hint="Closes the active session for this email."
               />
             </StepCard>
           ) : null}

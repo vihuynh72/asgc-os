@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { shapeCameraControlState } from "../src/lib/office-hours-kiosk/camera-controls.mjs";
+import {
+  pickNextCameraTarget,
+  shapeCameraControlState,
+} from "../src/lib/office-hours-kiosk/camera-controls.mjs";
 import { shapeLocationCheckResult } from "../src/lib/office-hours-kiosk/location-check.mjs";
 
 test("shapeCameraControlState exposes progressive controls by capability", () => {
@@ -39,6 +42,39 @@ test("shapeCameraControlState exposes progressive controls by capability", () =>
       canTorch: false,
       facingMode: "user",
       cameraCount: 0,
+    },
+  );
+});
+
+test("pickNextCameraTarget prefers the opposite facing camera over the next raw device", () => {
+  assert.deepEqual(
+    pickNextCameraTarget({
+      devices: [
+        { deviceId: "front", kind: "videoinput", label: "Front Camera" },
+        { deviceId: "back-wide", kind: "videoinput", label: "Back Wide Camera" },
+        { deviceId: "back-ultra", kind: "videoinput", label: "Back Ultra Wide Camera" },
+      ],
+      selectedDeviceId: "back-wide",
+      facingMode: "environment",
+    }),
+    {
+      deviceId: "front",
+      facingMode: "user",
+    },
+  );
+
+  assert.deepEqual(
+    pickNextCameraTarget({
+      devices: [
+        { deviceId: "cam-a", kind: "videoinput", label: "" },
+        { deviceId: "cam-b", kind: "videoinput", label: "" },
+      ],
+      selectedDeviceId: "cam-a",
+      facingMode: "user",
+    }),
+    {
+      deviceId: "cam-b",
+      facingMode: "environment",
     },
   );
 });

@@ -2,7 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { shapeCameraControlState } from "@/lib/office-hours-kiosk/camera-controls.mjs";
+import {
+  inferCameraFacing,
+  pickNextCameraTarget,
+  shapeCameraControlState,
+} from "@/lib/office-hours-kiosk/camera-controls.mjs";
 
 type CaptureQuality = "balanced" | "high";
 type FacingMode = "user" | "environment";
@@ -14,14 +18,6 @@ function supportsCameraCapture(): boolean {
 
 function qualityToCompression(quality: CaptureQuality): number {
   return quality === "high" ? 0.92 : 0.82;
-}
-
-function detectFacingMode(device: MediaDeviceInfo | undefined): FacingMode | null {
-  if (!device?.label) return null;
-  const label = device.label.toLowerCase();
-  if (label.includes("back") || label.includes("rear") || label.includes("environment")) return "environment";
-  if (label.includes("front") || label.includes("facetime") || label.includes("user")) return "user";
-  return null;
 }
 
 function fileFromBlob(blob: Blob): File {
@@ -149,7 +145,7 @@ export function useKioskCamera({
         if (deviceId) {
           setSelectedDeviceId(deviceId);
         }
-        const inferredFacing = detectFacingMode(devices.find((device) => device.deviceId === deviceId)) ?? nextFacingMode;
+        const inferredFacing = inferCameraFacing(devices.find((device) => device.deviceId === deviceId)) ?? nextFacingMode;
         setFacingMode(inferredFacing);
 
         const trackCapabilities = typeof track.getCapabilities === "function" ? (track.getCapabilities() as Record<string, unknown>) : {};
@@ -186,19 +182,16 @@ export function useKioskCamera({
   );
 
   const rotateCamera = useCallback(async () => {
-    if (devices.length > 1 && selectedDeviceId) {
-      const currentIndex = devices.findIndex((device) => device.deviceId === selectedDeviceId);
-      const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % devices.length : 0;
-      const nextDevice = devices[nextIndex];
-      setSelectedDeviceId(nextDevice.deviceId);
-      setFacingMode(detectFacingMode(nextDevice) ?? (facingMode === "user" ? "environment" : "user"));
-      await start({ deviceId: nextDevice.deviceId });
-      return;
-    }
+    const nextTarget = pickNextCameraTarget({
+      devices,
+      selectedDeviceId,
+      facingMode,
+    });
+    const resolvedFacingMode = nextTarget.facingMode as FacingMode;
 
-    const toggledFacingMode = facingMode === "user" ? "environment" : "user";
-    setFacingMode(toggledFacingMode);
-    await start({ deviceId: null, facingMode: toggledFacingMode });
+    setSelectedDeviceId(nextTarget.deviceId);
+    setFacingMode(resolvedFacingMode);
+    await start({ deviceId: nextTarget.deviceId, facingMode: resolvedFacingMode });
   }, [devices, facingMode, selectedDeviceId, start]);
 
   const setZoomLevel = useCallback(

@@ -849,6 +849,23 @@ body {
   border-radius: 0.95rem;
 }
 
+.kiosk-camera-pill {
+  justify-content: center;
+  border-color: rgb(23 24 26 / 0.14);
+  background: rgb(255 255 255 / 0.86);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.45);
+  font-size: 0.92rem;
+}
+
+.kiosk-camera-primary {
+  box-shadow: 0 12px 26px -20px rgb(0 104 94 / 0.5);
+}
+
+.kiosk-camera-secondary {
+  border-color: rgb(23 24 26 / 0.14);
+  background: rgb(255 255 255 / 0.9);
+}
+
 .kiosk-action-hint {
   font-size: 0.78rem;
   line-height: 1.4;
@@ -955,6 +972,9 @@ body {
 
 .kiosk-control-row-compact select {
   min-width: 8rem;
+  border-color: rgb(23 24 26 / 0.14);
+  background: rgb(255 255 255 / 0.92);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.45);
 }
 
 .kiosk-shell-main-inline {
