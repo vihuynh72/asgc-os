@@ -10,7 +10,6 @@ import {
 
 type CaptureQuality = "balanced" | "high";
 type FacingMode = "user" | "environment";
-type CaptureMode = "camera" | "file";
 
 function supportsCameraCapture(): boolean {
   return typeof navigator !== "undefined" && Boolean(navigator.mediaDevices?.getUserMedia);
@@ -56,7 +55,6 @@ export function useKioskCamera({
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
-  const [mode, setMode] = useState<CaptureMode>(() => (canUseCamera ? "camera" : "file"));
   const [cameraState, setCameraState] = useState<"idle" | "starting" | "ready">("idle");
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [videoReady, setVideoReady] = useState(false);
@@ -175,7 +173,6 @@ export function useKioskCamera({
           setCameraError("Camera permission required");
         }
         stop();
-        setMode("file");
       }
     },
     [canUseCamera, devices, facingMode, refreshDevices, selectedDeviceId, stop],
@@ -243,15 +240,15 @@ export function useKioskCamera({
   }, [refreshDevices]);
 
   useEffect(() => {
-    if (mode !== "camera" || cameraState !== "ready") return;
+    if (cameraState !== "ready") return;
     attachVideo();
-  }, [attachVideo, cameraState, mode]);
+  }, [attachVideo, cameraState]);
 
   useEffect(() => {
-    if (mode !== "camera" || disabled) {
+    if (disabled) {
       stop();
     }
-  }, [disabled, mode, stop]);
+  }, [disabled, stop]);
 
   useEffect(() => {
     if (cameraState !== "starting") return;
@@ -285,8 +282,6 @@ export function useKioskCamera({
   return {
     canUseCamera,
     videoRef,
-    mode,
-    setMode,
     cameraState,
     cameraError,
     videoReady,

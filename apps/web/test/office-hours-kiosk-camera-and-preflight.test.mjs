@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   pickNextCameraTarget,
+  resolveKioskCameraSurface,
   shapeCameraControlState,
 } from "../src/lib/office-hours-kiosk/camera-controls.mjs";
 import { shapeLocationCheckResult } from "../src/lib/office-hours-kiosk/location-check.mjs";
@@ -76,6 +77,28 @@ test("pickNextCameraTarget prefers the opposite facing camera over the next raw 
       deviceId: "cam-b",
       facingMode: "environment",
     },
+  );
+});
+
+test("resolveKioskCameraSurface is camera-only and never routes to file upload", () => {
+  assert.equal(
+    resolveKioskCameraSurface({ hasValue: true, canUseCamera: true, cameraState: "ready" }),
+    "preview",
+  );
+
+  assert.equal(
+    resolveKioskCameraSurface({ hasValue: false, canUseCamera: true, cameraState: "ready" }),
+    "live",
+  );
+
+  assert.equal(
+    resolveKioskCameraSurface({ hasValue: false, canUseCamera: true, cameraState: "idle" }),
+    "prompt",
+  );
+
+  assert.equal(
+    resolveKioskCameraSurface({ hasValue: false, canUseCamera: false, cameraState: "idle" }),
+    "unavailable",
   );
 });
 
