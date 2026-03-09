@@ -9,9 +9,11 @@ import { cn } from "@/lib/utils";
 export function KioskShell({
   children,
   className,
+  topNav,
 }: {
   children: ReactNode;
   className?: string;
+  topNav?: ReactNode;
 }) {
   const reduceMotion = useReducedMotion();
 
@@ -34,7 +36,10 @@ export function KioskShell({
         transition={{ duration: 0.26, ease: "easeOut" }}
         className={cn("kiosk-shell-main", className)}
       >
-        {children}
+        <div className="kiosk-shell-stack">
+          {topNav ? <div className="kiosk-shell-top-nav">{topNav}</div> : null}
+          {children}
+        </div>
       </motion.main>
     </div>
   );

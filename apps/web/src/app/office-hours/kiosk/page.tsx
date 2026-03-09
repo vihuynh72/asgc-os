@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { motion, useReducedMotion } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { z } from "zod";
@@ -12,6 +11,7 @@ import {
   KioskShell,
   KioskStatusChip,
   KioskStepHeader,
+  KioskTopNav,
 } from "@/components/office-hours/kiosk";
 import { Button } from "@/components/ui/button";
 import {
@@ -611,7 +611,7 @@ export default function OfficeHoursKioskPage() {
       : "Type your GCCCD email to continue.";
 
   return (
-    <KioskShell className="kiosk-shell-main-inline">
+    <KioskShell className="kiosk-shell-main-inline" topNav={<KioskTopNav />}>
       <h1 className="sr-only">Office Hours Kiosk</h1>
 
       <div className="kiosk-panel kiosk-page-stack">
@@ -621,22 +621,6 @@ export default function OfficeHoursKioskPage() {
           subtitle={headerSubtitle}
           step={headerStep}
           totalSteps={headerTotalSteps}
-          actions={
-            <>
-              <Link
-                href="/"
-                className="inline-flex h-10 items-center justify-center rounded-full border border-[var(--admin-border-soft)] bg-white px-3 text-xs font-medium text-foreground/80"
-              >
-                Home
-              </Link>
-              <Link
-                href="/login"
-                className="inline-flex h-10 items-center justify-center rounded-full border border-[var(--admin-border-soft)] bg-white px-3 text-xs font-medium text-foreground/80"
-              >
-                Sign in
-              </Link>
-            </>
-          }
         />
 
         <motion.div
