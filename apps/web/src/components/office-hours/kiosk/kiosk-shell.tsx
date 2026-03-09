@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import type { ReactNode } from "react";
 import { motion, useReducedMotion } from "motion/react";
 
@@ -13,6 +14,16 @@ export function KioskShell({
   className?: string;
 }) {
   const reduceMotion = useReducedMotion();
+
+  useEffect(() => {
+    const html = document.documentElement;
+    const previous = html.getAttribute("data-kiosk");
+    html.setAttribute("data-kiosk", "true");
+    return () => {
+      if (previous === null) html.removeAttribute("data-kiosk");
+      else html.setAttribute("data-kiosk", previous);
+    };
+  }, []);
 
   return (
     <div className="kiosk-shell">

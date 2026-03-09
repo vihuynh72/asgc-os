@@ -6,11 +6,11 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
-  KioskActionBar,
   KioskNotice,
   KioskShell,
   KioskStatusChip,
   KioskStepHeader,
+  KioskStickyAction,
 } from "@/components/office-hours/kiosk";
 import { Button } from "@/components/ui/button";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
@@ -186,7 +186,7 @@ export default function OfficeHoursCheckInPage() {
 
   return (
     <KioskShell>
-      <div className="kiosk-panel space-y-4">
+      <div className="kiosk-panel kiosk-panel-with-sticky kiosk-page-stack">
         <KioskStepHeader
           eyebrow="Office Hours"
           title="Check in"
@@ -243,53 +243,6 @@ export default function OfficeHoursCheckInPage() {
           ) : null}
         </motion.section>
 
-        <motion.section
-          className="kiosk-section"
-          initial={reduceMotion ? false : { opacity: 0, y: 8 }}
-          animate={reduceMotion ? undefined : { opacity: 1, y: 0 }}
-          transition={{ duration: 0.22, ease: "easeOut", delay: reduceMotion ? 0 : 0.04 }}
-        >
-          <KioskActionBar
-            primary={
-              <Button
-                className="h-14 rounded-xl text-base"
-                onClick={() => void onSubmit()}
-                disabled={loading || Boolean(openSession)}
-              >
-                {loading ? "Checking in…" : "Check in"}
-              </Button>
-            }
-            secondary={
-              openSession ? (
-                <Link
-                  href="/office-hours/check-out"
-                  className="inline-flex items-center justify-center border border-[var(--admin-border-soft)] bg-white/80 text-sm font-medium text-foreground/80"
-                >
-                  Go to check out
-                </Link>
-              ) : (
-                <Link
-                  href="/office-hours/kiosk"
-                  className="inline-flex items-center justify-center border border-[var(--admin-border-soft)] bg-white/80 text-sm font-medium text-foreground/80"
-                >
-                  Open kiosk
-                </Link>
-              )
-            }
-            tertiary={
-              <Button
-                variant="outline"
-                className="h-12 rounded-xl"
-                onClick={() => void refreshOpenSession()}
-                disabled={loading}
-              >
-                Refresh
-              </Button>
-            }
-            hint="Location is required for check-in."
-          />
-        </motion.section>
-
         {notice ? (
           <KioskNotice tone="good">
             <span role="status" aria-live="polite">
@@ -303,6 +256,44 @@ export default function OfficeHoursCheckInPage() {
           </KioskNotice>
         ) : null}
       </div>
+
+      <KioskStickyAction
+        status={
+          <KioskStatusChip
+            tone={openSession ? "warning" : "good"}
+            icon={openSession ? "clock" : "check"}
+            label={openSession ? "Already checked in" : "Ready to check in"}
+          />
+        }
+        primary={
+          <Button
+            className="h-14 rounded-xl text-base"
+            onClick={() => void onSubmit()}
+            disabled={loading || Boolean(openSession)}
+          >
+            {loading ? "Checking in…" : openSession ? "Already checked in" : "Check in"}
+          </Button>
+        }
+        secondary={
+          <div className="flex gap-2">
+            <Link
+              href={openSession ? "/office-hours/check-out" : "/office-hours/kiosk"}
+              className="inline-flex h-12 flex-1 items-center justify-center rounded-xl border border-[var(--admin-border-soft)] bg-white px-3 text-sm font-medium text-foreground/85"
+            >
+              {openSession ? "Open check-out page" : "Open kiosk"}
+            </Link>
+            <Button
+              variant="outline"
+              className="h-12 rounded-xl px-4"
+              onClick={() => void refreshOpenSession()}
+              disabled={loading}
+            >
+              Refresh
+            </Button>
+          </div>
+        }
+        hint="Location is required for check-in."
+      />
     </KioskShell>
   );
 }
