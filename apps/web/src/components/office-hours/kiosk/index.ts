@@ -5,3 +5,4 @@ export { KioskShell } from "./kiosk-shell";
 export { KioskStickyAction } from "./kiosk-sticky-action";
 export { KioskStatusChip } from "./kiosk-status-chip";
 export { KioskStepHeader } from "./kiosk-step-header";
+export { KioskTopNav } from "./kiosk-top-nav";

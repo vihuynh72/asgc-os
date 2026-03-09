@@ -3,8 +3,16 @@
 import { Suspense, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useSearchParams } from "next/navigation";
 
+import { AdminInlineNotice } from "@/components/admin/admin-inline-notice";
+import { AdminSurface } from "@/components/admin/admin-surface";
 import { Button } from "@/components/ui/button";
 import { PageShell } from "@/components/page-shell";
+import {
+  getLoginModeContent,
+  getLoginPrimaryActionLabel,
+  getLoginStatusNotice,
+  getLoginVerifyNotice,
+} from "@/lib/login-view.mjs";
 import { safePostAuthRedirectPath } from "@/lib/redirects";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 
@@ -69,9 +77,7 @@ function AuthCallbackErrorBanner() {
   if (!message) return null;
 
   return (
-    <p className="mt-4 max-w-md text-sm text-foreground/70">
-      {message}
-    </p>
+    <AdminInlineNotice tone="critical">{message}</AdminInlineNotice>
   );
 }
 
@@ -104,7 +110,7 @@ function SupabaseHashErrorBanner() {
   }, [hash]);
 
   if (!message) return null;
-  return <p className="mt-4 max-w-md text-sm text-foreground/70">{message}</p>;
+  return <AdminInlineNotice tone="critical">{message}</AdminInlineNotice>;
 }
 
 export default function LoginPage() {
@@ -127,6 +133,18 @@ export default function LoginPage() {
   const [authMode, setAuthMode] = useState<"email" | "password">("email");
 
   const normalizedEmail = useMemo(() => normalizeEmail(email), [email]);
+  const emailMode = useMemo(() => getLoginModeContent("email"), []);
+  const passwordMode = useMemo(() => getLoginModeContent("password"), []);
+  const modeContent = authMode === "password" ? passwordMode : emailMode;
+  const statusNotice = useMemo(
+    () => getLoginStatusNotice({ authMode, status, passwordStatus, resetStatus }),
+    [authMode, passwordStatus, resetStatus, status],
+  );
+  const verifyNotice = useMemo(() => getLoginVerifyNotice(verifyStatus), [verifyStatus]);
+  const primaryActionLabel = useMemo(
+    () => getLoginPrimaryActionLabel({ authMode, isSubmitting, isSigningIn }),
+    [authMode, isSigningIn, isSubmitting],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -317,248 +335,272 @@ export default function LoginPage() {
   }
 
   return (
-    <PageShell
-      title="Sign in"
-      description="Invite-only. Use your campus email to get started."
-    >
-      {existingUser ? (
-        <div className="mt-4 max-w-md rounded-md border p-4">
-          <p className="text-sm text-foreground/70">
-            You’re already signed in as{" "}
-            <span className="font-medium text-foreground">{existingUser.email ?? "unknown"}</span>.
-          </p>
-          <div className="mt-3 flex flex-wrap items-center gap-3">
-            <Button type="button" onClick={() => window.location.assign(postAuthRedirectTo)}>
-              Continue
-            </Button>
-            <form action="/auth/signout" method="post">
-              <Button type="submit" variant="outline">
-                Sign out
-              </Button>
-            </form>
-          </div>
-        </div>
-      ) : null}
+    <PageShell title="Sign in" showHeader={false} containerClassName="login-shell max-w-6xl">
+      <section className="login-page">
+        <div aria-hidden className="login-page-backdrop" />
 
-      <Suspense fallback={null}>
-        <AuthCallbackErrorBanner />
-      </Suspense>
-      <SupabaseHashErrorBanner />
-
-      <div className="mt-6 max-w-md space-y-6">
-        <div className="space-y-3 rounded-md border p-4">
-          <div className="flex flex-wrap gap-2">
-            <Button
-              type="button"
-              size="sm"
-              variant={authMode === "email" ? "default" : "outline"}
-              onClick={() => {
-                setAuthMode("email");
-                setPasswordStatus("idle");
-                setResetStatus("idle");
-              }}
-            >
-              Email sign-in
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant={authMode === "password" ? "default" : "outline"}
-              onClick={() => {
-                setAuthMode("password");
-                setStatus("idle");
-                setVerifyStatus("idle");
-              }}
-            >
-              Password
-            </Button>
-          </div>
-
-          <form
-            onSubmit={authMode === "password" ? onPasswordSignIn : onSubmit}
-            className="space-y-4"
-          >
-            <div className="space-y-1">
-              <label htmlFor="email" className="text-sm font-medium">
-                Email
-              </label>
-              <input
-                id="email"
-                name="email"
-                type="email"
-                autoComplete="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="h-9 w-full rounded-md border bg-background px-3 text-sm"
-                placeholder="you@example.com"
-              />
+        <div className="login-layout">
+          <section className="login-hero-panel" aria-label="Sign-in overview">
+            <div className="login-chip-row">
+              <span className="login-chip">Invite-only</span>
+              <span className="login-chip login-chip-accent">GCCCD</span>
+              <span className="login-chip">{modeContent.label}</span>
             </div>
 
-            {authMode === "password" ? (
-              <div className="space-y-1">
-                <label htmlFor="password" className="text-sm font-medium">
-                  Password
-                </label>
-                <input
-                  id="password"
-                  name="password"
-                  type="password"
-                  autoComplete="current-password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="h-9 w-full rounded-md border bg-background px-3 text-sm"
-                  placeholder="••••••••"
-                />
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <p className="login-hero-eyebrow">{modeContent.eyebrow}</p>
+                <h1 className="login-hero-title">Sign in</h1>
+                <p className="login-hero-subtitle">Campus email only. Clean, fast, and consistent with the rest of ASGC OS.</p>
               </div>
-            ) : null}
 
-            {rememberedEmails.length > 0 ? (
-              <details className="rounded-md border border-foreground/10 px-3 py-2">
-                <summary className="cursor-pointer text-xs font-medium text-foreground/70">
-                  Use a recent email
-                </summary>
-                <div className="mt-2 flex flex-wrap items-center gap-2">
-                  {rememberedEmails.map((saved) => (
-                    <Button
-                      key={saved}
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setEmail(saved)}
-                    >
-                      {saved}
-                    </Button>
-                  ))}
+              <div className="login-hero-grid" aria-hidden="true">
+                <article className="login-hero-card">
+                  <span className="login-hero-card-label">Campus only</span>
+                  <strong>@gcccd.edu</strong>
+                </article>
+                <article className="login-hero-card">
+                  <span className="login-hero-card-label">Link or code</span>
+                  <strong>Works with Safe Links</strong>
+                </article>
+                <article className="login-hero-card">
+                  <span className="login-hero-card-label">Fast return</span>
+                  <strong>Recent email stays nearby</strong>
+                </article>
+              </div>
+            </div>
+          </section>
+
+          <div className="login-auth-stack">
+            {existingUser ? (
+              <AdminSurface
+                title="Already signed in"
+                description={existingUser.email ?? "Unknown account"}
+                className="login-existing-surface"
+              >
+                <div className="login-action-row">
                   <Button
                     type="button"
-                    variant="ghost"
-                    size="sm"
+                    className="login-primary-button"
+                    onClick={() => window.location.assign(postAuthRedirectTo)}
+                  >
+                    Continue
+                  </Button>
+                  <form action="/auth/signout" method="post">
+                    <Button type="submit" variant="outline" className="login-secondary-button">
+                      Sign out
+                    </Button>
+                  </form>
+                </div>
+              </AdminSurface>
+            ) : null}
+
+            <div className="login-notice-stack">
+              <Suspense fallback={null}>
+                <AuthCallbackErrorBanner />
+              </Suspense>
+              <SupabaseHashErrorBanner />
+            </div>
+
+            <AdminSurface
+              title={modeContent.title}
+              description={modeContent.detail}
+              className="login-auth-surface"
+              contentClassName="login-auth-content"
+              action={
+                <div className="login-mode-switch" role="tablist" aria-label="Sign-in method">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={authMode === "email"}
+                    className={authMode === "email" ? "login-mode-button login-mode-button-active" : "login-mode-button"}
                     onClick={() => {
-                      forgetRememberedEmails();
-                      setRememberedEmails([]);
+                      setAuthMode("email");
+                      setPasswordStatus("idle");
+                      setResetStatus("idle");
                     }}
                   >
-                    Forget
-                  </Button>
+                    {emailMode.label}
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={authMode === "password"}
+                    className={authMode === "password" ? "login-mode-button login-mode-button-active" : "login-mode-button"}
+                    onClick={() => {
+                      setAuthMode("password");
+                      setStatus("idle");
+                      setVerifyStatus("idle");
+                    }}
+                  >
+                    {passwordMode.label}
+                  </button>
                 </div>
-              </details>
-            ) : null}
-
-            <label className="flex items-center gap-2 text-sm text-foreground/70">
-              <input
-                type="checkbox"
-                checked={rememberEmail}
-                onChange={(e) => setRememberEmail(e.target.checked)}
-              />
-              Remember this email
-            </label>
-
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <Button
-                type="submit"
-                className="w-full sm:w-auto"
-                disabled={
-                  authMode === "password"
-                    ? isSigningIn || normalizedEmail.length === 0 || password.length === 0
-                    : isSubmitting || normalizedEmail.length === 0
-                }
-              >
-                {authMode === "password"
-                  ? isSigningIn
-                    ? "Signing in..."
-                    : "Sign in"
-                  : isSubmitting
-                    ? "Sending..."
-                    : "Send sign-in email"}
-              </Button>
-
-              {authMode === "password" ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="w-full sm:w-auto"
-                  disabled={isResettingPassword || normalizedEmail.length === 0}
-                  onClick={() => void onRequestPasswordReset()}
-                >
-                  {isResettingPassword ? "Sending..." : "Forgot password"}
-                </Button>
+              }
+            >
+              {statusNotice ? (
+                <AdminInlineNotice tone={statusNotice.tone}>{statusNotice.message}</AdminInlineNotice>
               ) : null}
-            </div>
 
-            {authMode === "password" && passwordStatus === "error" ? (
-              <p className="text-sm text-foreground/70">
-                Sign-in failed. Check your email/password or use email sign-in.
-              </p>
-            ) : null}
+              <form
+                onSubmit={authMode === "password" ? onPasswordSignIn : onSubmit}
+                className="login-form-grid"
+              >
+                <div className="admin-field">
+                  <label htmlFor="email" className="login-field-label">
+                    Email
+                  </label>
+                  <input
+                    id="email"
+                    name="email"
+                    type="email"
+                    autoComplete="email"
+                    required
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="login-input"
+                    placeholder="name@gcccd.edu"
+                  />
+                </div>
 
-            {authMode === "password" && resetStatus === "sent" ? (
-              <p className="text-sm text-foreground/70">If invited, you’ll get a reset email shortly.</p>
-            ) : null}
+                {authMode === "password" ? (
+                  <div className="admin-field">
+                    <label htmlFor="password" className="login-field-label">
+                      Password
+                    </label>
+                    <input
+                      id="password"
+                      name="password"
+                      type="password"
+                      autoComplete="current-password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      className="login-input"
+                      placeholder="Password"
+                    />
+                  </div>
+                ) : null}
 
-            {authMode === "password" && resetStatus === "error" ? (
-              <p className="text-sm text-foreground/70">
-                Could not send a reset email. Please try again.
-              </p>
-            ) : null}
+                {rememberedEmails.length > 0 ? (
+                  <details className="login-details">
+                    <summary className="login-details-summary">Recent emails</summary>
+                    <div className="login-pill-row">
+                      {rememberedEmails.map((saved) => (
+                        <button
+                          key={saved}
+                          type="button"
+                          className="login-email-pill"
+                          onClick={() => setEmail(saved)}
+                        >
+                          {saved}
+                        </button>
+                      ))}
+                      <button
+                        type="button"
+                        className="login-email-pill login-email-pill-muted"
+                        onClick={() => {
+                          forgetRememberedEmails();
+                          setRememberedEmails([]);
+                        }}
+                      >
+                        Forget
+                      </button>
+                    </div>
+                  </details>
+                ) : null}
+
+                <label className="login-checkbox-row">
+                  <input
+                    type="checkbox"
+                    checked={rememberEmail}
+                    onChange={(e) => setRememberEmail(e.target.checked)}
+                  />
+                  <span>Remember this email</span>
+                </label>
+
+                <div className="login-action-row">
+                  <Button
+                    type="submit"
+                    className="login-primary-button"
+                    disabled={
+                      authMode === "password"
+                        ? isSigningIn || normalizedEmail.length === 0 || password.length === 0
+                        : isSubmitting || normalizedEmail.length === 0
+                    }
+                  >
+                    {primaryActionLabel}
+                  </Button>
+
+                  {authMode === "password" ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="login-secondary-button"
+                      disabled={isResettingPassword || normalizedEmail.length === 0}
+                      onClick={() => void onRequestPasswordReset()}
+                    >
+                      {isResettingPassword ? "Sending..." : "Reset password"}
+                    </Button>
+                  ) : null}
+                </div>
+              </form>
+            </AdminSurface>
 
             {authMode === "email" && status === "sent" ? (
-              <p className="text-sm text-foreground/70">
-                Check your inbox for a sign-in email. You can also enter the one-time code below.
-              </p>
+              <AdminSurface
+                title="Enter code"
+                description="Use the code if the link does not open cleanly."
+                className="login-verify-surface"
+              >
+                <form onSubmit={onVerify} className="login-form-grid">
+                  <div className="admin-field">
+                    <label htmlFor="token" className="login-field-label">
+                      One-time code
+                    </label>
+                    <input
+                      id="token"
+                      name="token"
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      value={token}
+                      onChange={(e) => setToken(e.target.value)}
+                      className="login-input"
+                      placeholder="Code"
+                    />
+                  </div>
+
+                  <div className="login-action-row">
+                    <Button
+                      type="submit"
+                      className="login-primary-button"
+                      disabled={isVerifying || normalizedEmail.length === 0 || token.trim().length === 0}
+                    >
+                      {isVerifying ? "Verifying..." : "Verify code"}
+                    </Button>
+                  </div>
+
+                  {verifyNotice ? (
+                    <AdminInlineNotice tone={verifyNotice.tone}>{verifyNotice.message}</AdminInlineNotice>
+                  ) : null}
+                </form>
+              </AdminSurface>
             ) : null}
 
-            {authMode === "email" && status === "error" ? (
-              <p className="text-sm text-foreground/70">
-                Something went wrong. Please try again.
-              </p>
-            ) : null}
-          </form>
-        </div>
-
-        {authMode === "email" && status === "sent" ? (
-          <form onSubmit={onVerify} className="space-y-4 rounded-md border p-4">
-            <div className="space-y-1">
-              <label htmlFor="token" className="text-sm font-medium">
-                One-time code
-              </label>
-              <input
-                id="token"
-                name="token"
-                inputMode="numeric"
-                autoComplete="one-time-code"
-                value={token}
-                onChange={(e) => setToken(e.target.value)}
-                className="h-9 w-full rounded-md border bg-background px-3 text-sm"
-                placeholder="Enter the code from your email"
-              />
-            </div>
-
-            <Button type="submit" disabled={isVerifying || normalizedEmail.length === 0 || token.trim().length === 0}>
-              {isVerifying ? "Verifying..." : "Verify code"}
-            </Button>
-
-            {verifyStatus === "error" ? (
-              <p className="text-sm text-foreground/70">
-                That code could not be verified. Request a new sign-in email and try again.
-              </p>
-            ) : null}
-          </form>
-        ) : null}
-
-        <details className="rounded-md border border-foreground/10 px-3 py-2 text-sm text-foreground/70">
-          <summary className="cursor-pointer text-sm font-medium">Trouble signing in?</summary>
-          <div className="mt-2 space-y-2 text-sm text-foreground/70">
-            <p>If your email provider rewrites links (Safe Links), use the one-time code instead.</p>
-            <p>After you sign in, you can set a password from your Account page.</p>
-            {process.env.NODE_ENV !== "production" ? (
-              <p className="text-xs text-foreground/60">
-                Local dev emails are captured in Supabase Inbucket at http://localhost:54324.
-              </p>
-            ) : null}
+            <details className="login-help-panel">
+              <summary className="login-help-summary">Need help?</summary>
+              <div className="login-help-copy">
+                <p>If your email provider rewrites links, use the one-time code instead.</p>
+                <p>After you sign in, you can set a password from Account.</p>
+                {process.env.NODE_ENV !== "production" ? (
+                  <p className="text-xs text-foreground/60">
+                    Local dev emails appear in Supabase Inbucket at http://localhost:54324.
+                  </p>
+                ) : null}
+              </div>
+            </details>
           </div>
-        </details>
-      </div>
+        </div>
+      </section>
     </PageShell>
   );
 }
