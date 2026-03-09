@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
+import Link from "next/link";
 
-import { PageShell } from "@/components/page-shell";
+import { KioskShell, KioskStepHeader } from "@/components/office-hours/kiosk";
 import { getSupabaseServerComponentClient } from "@/lib/supabaseServerComponent";
 
 import { KioskPhotoReviewPanel } from "./review-panel";
@@ -25,15 +26,25 @@ export default async function KioskPhotoReviewPage() {
   }
 
   return (
-    <PageShell
-      title="Office Hours — Kiosk Selfie Review"
-      description="Review kiosk check-in selfies (retained for 30 days)."
-      containerClassName="max-w-5xl"
-      backHref="/office-hours"
-      backLabel="Back to Office Hours"
-    >
-      <KioskPhotoReviewPanel />
-    </PageShell>
+    <KioskShell className="max-w-6xl items-start py-4 sm:py-6">
+      <div className="kiosk-panel space-y-4">
+        <KioskStepHeader
+          eyebrow="Office Hours"
+          title="Selfie review"
+          subtitle="Inspect, quarantine, restore."
+          step={1}
+          totalSteps={1}
+          actions={
+            <Link
+              href="/office-hours"
+              className="inline-flex h-10 items-center justify-center rounded-full border border-[var(--admin-border-soft)] bg-white/80 px-3 text-xs font-medium text-foreground/80"
+            >
+              Back
+            </Link>
+          }
+        />
+        <KioskPhotoReviewPanel />
+      </div>
+    </KioskShell>
   );
 }
-

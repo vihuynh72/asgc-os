@@ -1,9 +1,24 @@
 "use client";
 
+import Link from "next/link";
+import { motion, useReducedMotion } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod";
 
+import {
+  KioskActionBar,
+  KioskCameraCapture,
+  KioskNotice,
+  KioskShell,
+  KioskStatusChip,
+  KioskStepHeader,
+} from "@/components/office-hours/kiosk";
 import { Button } from "@/components/ui/button";
+import {
+  canSubmitKioskCheckIn,
+  deriveKioskEntryStep,
+} from "@/lib/office-hours-kiosk/entry-state.mjs";
+import type { KioskLocationPreflightResult } from "@/lib/office-hours-kiosk/types";
 
 type KioskOpenSession = {
   id: string;
@@ -13,6 +28,13 @@ type KioskOpenSession = {
 type KioskStatus = {
   user_exists: boolean;
   open_session: KioskOpenSession | null;
+};
+
+type LocationSnapshot = {
+  lat: number;
+  lon: number;
+  accuracyM: number | null;
+  acquiredAt: string;
 };
 
 const EmailSchema = z.string().email();
@@ -30,392 +52,120 @@ function friendlyError(code: string): string {
     case "invalid_email":
       return "Enter a valid email.";
     case "email_not_allowed":
-      return "This email isn’t on the allowlist. Ask an admin to add you.";
+      return "Access not enabled.";
     case "email_disabled":
-      return "This email is disabled in the allowlist. Ask a full admin to re-enable it.";
+      return "Access disabled.";
     case "email_blocked":
-      return "This email is blocked. Ask a full admin if you believe this is a mistake.";
+      return "Access blocked.";
     case "outside_geofence":
-      return "You appear to be outside the allowed office area.";
+      return "Outside office range.";
     case "already_checked_in":
-      return "You already have an open session.";
+      return "Session already open.";
     case "no_open_session":
-      return "No open session found to check out.";
+      return "No open session.";
     case "office_location_not_configured":
-      return "Office location is not fully configured yet (lat/lon/radii missing).";
     case "office_location_missing":
     case "office_config_missing":
-      return "Office location is not configured yet.";
+      return "Location unavailable.";
     case "location_incomplete":
-      return "Location data is incomplete.";
+      return "Location incomplete.";
     case "weekend_not_allowed":
-      return "Office hours aren’t enabled today.";
+      return "Day not enabled.";
     case "photo_required":
-      return "A selfie is required to check in.";
+      return "Selfie required.";
     case "invalid_photo_type":
-      return "Unsupported photo type. Use JPG, PNG, or WebP.";
+      return "Photo type invalid.";
     case "photo_too_large":
-      return "Photo is too large. Please retake a smaller photo.";
+      return "Photo too large.";
+    case "invalid_lat":
+    case "invalid_lon":
+      return "Location invalid.";
     default:
       return code || "Something went wrong.";
   }
 }
 
-async function getCurrentPosition(): Promise<{ lat: number; lon: number }> {
+async function getCurrentPosition({
+  timeoutMs = 15_000,
+}: {
+  timeoutMs?: number;
+} = {}): Promise<LocationSnapshot> {
   return new Promise((resolve, reject) => {
     if (!navigator.geolocation) {
-      reject(new Error("Geolocation not supported"));
+      reject(new Error("geolocation_not_supported"));
       return;
     }
 
     navigator.geolocation.getCurrentPosition(
-      (pos) => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
+      (pos) =>
+        resolve({
+          lat: pos.coords.latitude,
+          lon: pos.coords.longitude,
+          accuracyM: Number.isFinite(pos.coords.accuracy) ? pos.coords.accuracy : null,
+          acquiredAt: new Date().toISOString(),
+        }),
       (err) => reject(err),
-      { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 },
+      { enableHighAccuracy: true, maximumAge: 0, timeout: timeoutMs },
     );
   });
 }
 
-function supportsCameraCapture(): boolean {
-  return typeof navigator !== "undefined" && Boolean(navigator.mediaDevices?.getUserMedia);
+function iconForTone(
+  tone: KioskLocationPreflightResult["statusTone"] | "neutral",
+): "triangle" | "clock" | "dot" | "check" {
+  if (tone === "critical") return "triangle";
+  if (tone === "warning") return "clock";
+  if (tone === "good") return "check";
+  return "dot";
 }
 
-async function imageBlobFromVideo(video: HTMLVideoElement): Promise<Blob> {
-  const w = video.videoWidth || 1280;
-  const h = video.videoHeight || 720;
-
-  const maxDim = 1280;
-  const scale = Math.min(1, maxDim / Math.max(w, h));
-  const outW = Math.max(1, Math.round(w * scale));
-  const outH = Math.max(1, Math.round(h * scale));
-
-  const canvas = document.createElement("canvas");
-  canvas.width = outW;
-  canvas.height = outH;
-
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("canvas_unavailable");
-
-  ctx.drawImage(video, 0, 0, outW, outH);
-
-  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.85));
-  if (!blob) throw new Error("capture_failed");
-  return blob;
+function formatDistance(value: number): string {
+  if (!Number.isFinite(value)) return "—";
+  return `${Math.round(value)}m`;
 }
 
-function fileFromBlob(blob: Blob): File {
-  const name = `kiosk-selfie-${new Date().toISOString().replace(/[:.]/g, "-")}.jpg`;
-  return new File([blob], name, { type: "image/jpeg" });
-}
-
-function PreviewImage({ file }: { file: File }) {
-  const [url, setUrl] = useState<string>("");
-
-  useEffect(() => {
-    const next = URL.createObjectURL(file);
-    setUrl(next);
-    return () => URL.revokeObjectURL(next);
-  }, [file]);
-
-  // eslint-disable-next-line @next/next/no-img-element
-  return <img src={url} alt="Selfie preview" className="w-full rounded-md border bg-foreground/5 object-cover" />;
-}
-
-function SelfieCapture({
-  value,
-  disabled,
-  onChange,
-}: {
-  value: File | null;
-  disabled: boolean;
-  onChange: (file: File | null) => void;
-}) {
-  const [mode, setMode] = useState<"camera" | "file">(() => (supportsCameraCapture() ? "camera" : "file"));
-  const [cameraError, setCameraError] = useState<string | null>(null);
-  const [cameraState, setCameraState] = useState<"idle" | "starting" | "ready">("idle");
-  const [capturing, setCapturing] = useState(false);
-  const [videoReady, setVideoReady] = useState(false);
-  const [warmTooLong, setWarmTooLong] = useState(false);
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-
-  const attachStreamToVideo = useCallback(() => {
-    const video = videoRef.current;
-    const stream = streamRef.current;
-    if (!video || !stream) return;
-    if (video.srcObject !== stream) {
-      video.srcObject = stream;
-    }
-    // Don't await: iOS Safari can treat awaited calls as losing the "gesture" context.
-    void video.play().catch(() => null);
-  }, []);
-
-  const stop = useCallback(() => {
-    const stream = streamRef.current;
-    streamRef.current = null;
-    if (stream) stream.getTracks().forEach((t) => t.stop());
-    if (videoRef.current) videoRef.current.srcObject = null;
-    setVideoReady(false);
-    setCameraState("idle");
-    setWarmTooLong(false);
-  }, []);
-
-  const start = useCallback(async () => {
-    if (!supportsCameraCapture()) {
-      setCameraError("Camera is not supported on this device.");
-      return;
-    }
-    stop();
-    setCameraState("starting");
-    setVideoReady(false);
-    setWarmTooLong(false);
-    setCameraError(null);
-    try {
-      if (!window.isSecureContext) {
-        throw new Error("insecure_context");
-      }
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: { facingMode: { ideal: "user" }, width: { ideal: 1280 }, height: { ideal: 720 } },
-      });
-      streamRef.current = stream;
-      setCameraState("ready");
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "";
-      setCameraError(
-        msg === "insecure_context"
-          ? "Camera requires HTTPS. Use Upload instead."
-          : "Waiting for camera permission… If nothing happens, use Upload.",
-      );
-      stop();
-      setMode("file");
-    }
-  }, [stop]);
-
-  useEffect(() => {
-    if (mode !== "camera" || cameraState !== "ready") return;
-    attachStreamToVideo();
-  }, [attachStreamToVideo, cameraState, mode]);
-
-  useEffect(() => {
-    if (cameraState !== "starting") return;
-    const id = window.setTimeout(() => {
-      setCameraError("Waiting for permission… Look for a camera prompt from your browser.");
-    }, 1800);
-    return () => window.clearTimeout(id);
-  }, [cameraState]);
-
-  useEffect(() => {
-    if (cameraState !== "ready" || videoReady) return;
-    const id = window.setTimeout(() => setWarmTooLong(true), 2500);
-    return () => window.clearTimeout(id);
-  }, [cameraState, videoReady]);
-
-  useEffect(() => {
-    if (cameraState !== "ready" || videoReady) return;
-    const id = window.setTimeout(() => {
-      setCameraError("Camera couldn’t start. Switching to Upload.");
-      stop();
-      setMode("file");
-    }, 4500);
-    return () => window.clearTimeout(id);
-  }, [cameraState, stop, videoReady]);
-
-  useEffect(() => {
-    if (mode !== "camera" || value || disabled) stop();
-    return () => stop();
-  }, [disabled, mode, start, stop, value]);
-
-  async function capture() {
-    if (!videoRef.current) return;
-    if (!videoReady || (videoRef.current.videoWidth ?? 0) <= 0) {
-      setCameraError("Camera is not ready yet. Please wait a moment.");
-      return;
-    }
-    setCapturing(true);
-    setCameraError(null);
-    try {
-      const blob = await imageBlobFromVideo(videoRef.current);
-      onChange(fileFromBlob(blob));
-      stop();
-    } catch {
-      setCameraError("Could not capture a photo. Try again.");
-    } finally {
-      setCapturing(false);
-    }
+function formatWhen(iso: string): string {
+  try {
+    return new Date(iso).toLocaleString();
+  } catch {
+    return iso;
   }
-
-  const canUseCamera = supportsCameraCapture();
-  const markVideoReady = useCallback(() => {
-    const video = videoRef.current;
-    if (!video) return;
-    if (video.videoWidth > 0 && video.videoHeight > 0) {
-      setVideoReady(true);
-    }
-  }, []);
-
-  return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-end">
-        <div className="inline-flex overflow-hidden rounded-full border bg-background/40 shadow-sm ring-1 ring-black/5 backdrop-blur">
-          <button
-            type="button"
-            className={`px-3.5 py-1.5 text-xs font-medium ${
-              mode === "camera"
-                ? "bg-foreground/5 text-foreground"
-                : "text-foreground/70 hover:bg-foreground/5 hover:text-foreground"
-            } disabled:opacity-50`}
-            onClick={() => {
-              setCameraError(null);
-              setMode("camera");
-              stop();
-            }}
-            disabled={!canUseCamera || disabled}
-          >
-            Camera
-          </button>
-          <button
-            type="button"
-            className={`px-3.5 py-1.5 text-xs font-medium ${
-              mode === "file"
-                ? "bg-foreground/5 text-foreground"
-                : "text-foreground/70 hover:bg-foreground/5 hover:text-foreground"
-            } disabled:opacity-50`}
-            onClick={() => {
-              setCameraError(null);
-              setMode("file");
-              stop();
-            }}
-            disabled={disabled}
-          >
-            Upload
-          </button>
-        </div>
-      </div>
-
-      {value ? (
-        <div className="space-y-2">
-          <PreviewImage file={value} />
-          <div className="flex gap-2">
-            <Button type="button" variant="outline" className="h-10 w-full" onClick={() => onChange(null)} disabled={disabled}>
-              Retake
-            </Button>
-          </div>
-        </div>
-      ) : mode === "camera" ? (
-        <div className="space-y-2">
-          {cameraState === "ready" ? (
-            <>
-              <div className="relative overflow-hidden rounded-md border bg-black">
-                <video
-                  ref={videoRef}
-                  autoPlay
-                  playsInline
-                  muted
-                  onLoadedMetadata={markVideoReady}
-                  onCanPlay={markVideoReady}
-                  onPlaying={markVideoReady}
-                  onError={() => {
-                    setCameraError("Camera failed to load. Switching to Upload.");
-                    stop();
-                    setMode("file");
-                  }}
-                  className="aspect-[4/5] w-full max-h-[360px] object-cover"
-                />
-                {!videoReady ? (
-                  <div className="absolute inset-0 flex items-center justify-center bg-black/40 text-sm text-white">
-                    <div className="space-y-2 text-center">
-                      <div>Warming up camera…</div>
-                      {warmTooLong ? (
-                        <div className="text-xs text-white/80">
-                          Still stuck? Tap Retry or switch to Upload.
-                        </div>
-                      ) : null}
-                    </div>
-                  </div>
-                ) : (
-                  <div className="absolute bottom-2 left-2 rounded-full bg-black/50 px-2 py-1 text-[11px] text-white">
-                    Center your face in the frame
-                  </div>
-                )}
-              </div>
-              <Button
-                type="button"
-                className="h-12 w-full text-base"
-                onClick={() => void capture()}
-                disabled={disabled || capturing || !videoReady}
-              >
-                {capturing ? "Capturing…" : "Take selfie"}
-              </Button>
-              {warmTooLong ? (
-                <Button type="button" variant="outline" className="h-10 w-full" onClick={() => void start()} disabled={disabled}>
-                  Retry camera
-                </Button>
-              ) : null}
-              <Button type="button" variant="outline" className="h-10 w-full" onClick={stop} disabled={disabled}>
-                Disable camera
-              </Button>
-            </>
-          ) : (
-            <div className="space-y-2">
-              <div className="rounded-md border bg-foreground/[0.02] p-3 text-sm text-foreground/80">
-                Tap below to enable the front camera and take a quick selfie.
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="h-12 w-full text-base"
-                  onClick={() => void start()}
-                  disabled={disabled || !canUseCamera || cameraState === "starting"}
-                >
-                  {cameraState === "starting" ? "Requesting…" : "Enable camera"}
-                </Button>
-                <Button type="button" variant="outline" className="h-12 w-full text-base" onClick={stop} disabled={disabled}>
-                  Cancel
-                </Button>
-              </div>
-              <div className="text-xs text-foreground/70">
-                If camera permission is blocked, switch to Upload.
-              </div>
-            </div>
-          )}
-          {cameraError ? <div className="text-xs text-red-600">{cameraError}</div> : null}
-        </div>
-      ) : (
-        <div className="space-y-2">
-          <input
-            type="file"
-            accept="image/*"
-            capture="user"
-            className="block w-full text-sm text-foreground/80 file:mr-3 file:rounded-md file:border file:border-foreground/20 file:bg-transparent file:px-3 file:py-2 file:text-sm file:font-medium file:text-foreground hover:file:bg-foreground/5"
-            onChange={(e) => onChange(e.target.files?.[0] ?? null)}
-            disabled={disabled}
-          />
-          <div className="text-xs text-foreground/70">
-            If upload fails, switch to Camera mode.
-          </div>
-        </div>
-      )}
-    </div>
-  );
 }
 
 export default function OfficeHoursKioskPage() {
+  const reduceMotion = useReducedMotion();
+
   const [email, setEmail] = useState("");
   const [photo, setPhoto] = useState<File | null>(null);
   const [status, setStatus] = useState<KioskStatus | null>(null);
   const [statusLoading, setStatusLoading] = useState(false);
   const statusAbortRef = useRef<AbortController | null>(null);
 
+  const [location, setLocation] = useState<LocationSnapshot | null>(null);
+  const [locationLoading, setLocationLoading] = useState(false);
+  const [locationError, setLocationError] = useState<string | null>(null);
+  const [geoPermission, setGeoPermission] = useState<
+    "granted" | "denied" | "prompt" | "unsupported"
+  >("prompt");
+
+  const [preflight, setPreflight] = useState<KioskLocationPreflightResult | null>(null);
+  const [preflightLoading, setPreflightLoading] = useState(false);
+  const [preflightError, setPreflightError] = useState<string | null>(null);
+  const preflightAbortRef = useRef<AbortController | null>(null);
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [geoPermission, setGeoPermission] = useState<"granted" | "denied" | "prompt" | "unsupported">("prompt");
 
   const emailNormalized = useMemo(() => normalizeEmail(email), [email]);
-  const emailValid = useMemo(() => EmailSchema.safeParse(emailNormalized).success, [emailNormalized]);
-  const emailDomainOk = useMemo(() => (emailValid ? isGcccdEmail(emailNormalized) : false), [emailNormalized, emailValid]);
+  const emailValid = useMemo(
+    () => EmailSchema.safeParse(emailNormalized).success,
+    [emailNormalized],
+  );
+  const emailDomainOk = useMemo(
+    () => (emailValid ? isGcccdEmail(emailNormalized) : false),
+    [emailNormalized, emailValid],
+  );
 
   useEffect(() => {
     const html = document.documentElement;
@@ -430,7 +180,7 @@ export default function OfficeHoursKioskPage() {
       const saved = window.localStorage.getItem("officeHours.kioskEmail");
       if (saved) setEmail(saved);
     } catch {
-      // Ignore
+      // Ignore local storage read failures.
     }
   }, []);
 
@@ -443,10 +193,10 @@ export default function OfficeHoursKioskPage() {
 
     navigator.permissions
       .query({ name: "geolocation" as PermissionName })
-      .then((status) => {
+      .then((permission) => {
         if (cancelled) return;
-        setGeoPermission(status.state);
-        status.onchange = () => setGeoPermission(status.state);
+        setGeoPermission(permission.state);
+        permission.onchange = () => setGeoPermission(permission.state);
       })
       .catch(() => setGeoPermission("unsupported"));
 
@@ -456,35 +206,42 @@ export default function OfficeHoursKioskPage() {
   }, []);
 
   const loadStatus = useCallback(async () => {
-     if (!emailValid) {
-       setStatus(null);
-       return;
-     }
- 
-     setError(null);
-     setStatusLoading(true);
-     statusAbortRef.current?.abort();
-     const controller = new AbortController();
-     statusAbortRef.current = controller;
-     try {
-       const res = await fetch(`/api/office-hours/kiosk/status?email=${encodeURIComponent(emailNormalized)}`, {
-         signal: controller.signal,
-       });
-       const json = (await res.json().catch(() => null)) as { error?: string } | KioskStatus | null;
- 
-       if (!res.ok) {
-         setStatus(null);
-         setError(friendlyError((json as { error?: string } | null)?.error ?? ""));
-         return;
-       }
- 
-       setStatus(json as KioskStatus);
-       setError(null);
-     } finally {
-       if (statusAbortRef.current === controller) {
-         setStatusLoading(false);
-       }
-     }
+    if (!emailValid) {
+      setStatus(null);
+      return;
+    }
+
+    setStatusLoading(true);
+    statusAbortRef.current?.abort();
+    const controller = new AbortController();
+    statusAbortRef.current = controller;
+
+    try {
+      const response = await fetch(
+        `/api/office-hours/kiosk/status?email=${encodeURIComponent(emailNormalized)}`,
+        { signal: controller.signal },
+      );
+      const json = (await response.json().catch(() => null)) as
+        | { error?: string }
+        | KioskStatus
+        | null;
+
+      if (!response.ok) {
+        setStatus(null);
+        setError(friendlyError((json as { error?: string } | null)?.error ?? ""));
+        return;
+      }
+
+      setStatus((json as KioskStatus) ?? null);
+    } catch (e) {
+      if ((e as { name?: string } | null)?.name === "AbortError") return;
+      setStatus(null);
+      setError("Could not load status.");
+    } finally {
+      if (statusAbortRef.current === controller) {
+        setStatusLoading(false);
+      }
+    }
   }, [emailNormalized, emailValid]);
 
   useEffect(() => {
@@ -498,7 +255,7 @@ export default function OfficeHoursKioskPage() {
 
     const id = window.setTimeout(() => {
       void loadStatus();
-    }, 300);
+    }, 220);
     return () => window.clearTimeout(id);
   }, [emailValid, loadStatus]);
 
@@ -506,35 +263,108 @@ export default function OfficeHoursKioskPage() {
     return () => {
       statusAbortRef.current?.abort();
       statusAbortRef.current = null;
+      preflightAbortRef.current?.abort();
+      preflightAbortRef.current = null;
     };
   }, []);
 
   const openSession = status?.open_session ?? null;
 
-  const step = useMemo(() => {
-    if (openSession) return "checked_in";
-    if (!emailValid) return "email";
-    if (!photo) return "selfie";
-    return "ready";
-  }, [emailValid, openSession, photo]);
+  useEffect(() => {
+    if (!emailValid || !location || openSession) {
+      setPreflight(null);
+      setPreflightError(null);
+      setPreflightLoading(false);
+      preflightAbortRef.current?.abort();
+      preflightAbortRef.current = null;
+      return;
+    }
 
-  const headline = useMemo(() => (openSession ? "Check out" : "Check in"), [openSession]);
-  const subhead = useMemo(
-    () => (openSession ? "Finish your session to receive credit." : "Email → selfie → location (about 10 seconds)"),
-    [openSession],
+    preflightAbortRef.current?.abort();
+    const controller = new AbortController();
+    preflightAbortRef.current = controller;
+    setPreflightLoading(true);
+    setPreflightError(null);
+
+    void (async () => {
+      try {
+        const response = await fetch("/api/office-hours/kiosk/location-check", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            email: emailNormalized,
+            lat: location.lat,
+            lon: location.lon,
+            intent: "check_in",
+          }),
+          signal: controller.signal,
+        });
+        const json = (await response.json().catch(() => null)) as
+          | KioskLocationPreflightResult
+          | { error?: string }
+          | null;
+
+        if (!response.ok) {
+          setPreflight(null);
+          setPreflightError(
+            friendlyError((json as { error?: string } | null)?.error ?? "Location unavailable"),
+          );
+          return;
+        }
+
+        setPreflight(json as KioskLocationPreflightResult);
+      } catch (e) {
+        if ((e as { name?: string } | null)?.name === "AbortError") return;
+        setPreflight(null);
+        setPreflightError("Location unavailable.");
+      } finally {
+        if (preflightAbortRef.current === controller) {
+          setPreflightLoading(false);
+        }
+      }
+    })();
+  }, [emailNormalized, emailValid, location, openSession]);
+
+  const stepId = useMemo(
+    () =>
+      deriveKioskEntryStep({
+        emailValid,
+        hasPhoto: Boolean(photo),
+        hasOpenSession: Boolean(openSession),
+        preflightReady: Boolean(preflight) && !preflightLoading,
+        preflightAllowed: Boolean(preflight?.ok),
+      }),
+    [emailValid, openSession, photo, preflight, preflightLoading],
   );
 
-  const emailHint = useMemo(() => {
-    if (!email.length) return null;
-    if (!emailValid) return "Enter a valid email address.";
-    if (!emailDomainOk) return "Use your @gcccd.edu email.";
-    return null;
-  }, [email.length, emailDomainOk, emailValid]);
+  const stepNumber = stepId === "email" ? 1 : stepId === "selfie" ? 2 : stepId === "location" ? 3 : 4;
+  const canCheckIn = canSubmitKioskCheckIn({
+    emailValid,
+    hasPhoto: Boolean(photo),
+    preflightReady: Boolean(preflight) && !preflightLoading,
+    preflightAllowed: Boolean(preflight?.ok),
+  });
+
+  const requestLocation = useCallback(async () => {
+    setLocationLoading(true);
+    setLocationError(null);
+    setError(null);
+    try {
+      const coords = await getCurrentPosition();
+      setLocation(coords);
+      setNotice(null);
+    } catch {
+      setLocationError("Location required.");
+    } finally {
+      setLocationLoading(false);
+    }
+  }, []);
 
   const onCheckIn = useCallback(async () => {
     setLoading(true);
     setError(null);
     setNotice(null);
+
     try {
       if (!emailValid) {
         setError("Enter a valid email.");
@@ -542,319 +372,356 @@ export default function OfficeHoursKioskPage() {
       }
 
       if (!photo) {
-        setError("Selfie is required to check in.");
+        setError("Selfie required.");
         return;
       }
 
-      const { lat, lon } = await getCurrentPosition();
+      if (!location || !preflight?.ok) {
+        setError("Location required.");
+        return;
+      }
 
       const form = new FormData();
       form.set("email", emailNormalized);
-      form.set("lat", String(lat));
-      form.set("lon", String(lon));
+      form.set("lat", String(location.lat));
+      form.set("lon", String(location.lon));
       form.set("photo", photo);
 
-      const res = await fetch("/api/office-hours/kiosk/check-in", { method: "POST", body: form });
+      const response = await fetch("/api/office-hours/kiosk/check-in", {
+        method: "POST",
+        body: form,
+      });
+      const json = (await response.json().catch(() => null)) as
+        | { error?: string }
+        | { session?: { checkin_at?: string } }
+        | null;
 
-      const json = (await res.json().catch(() => null)) as { error?: string } | { session?: { checkin_at?: string } } | null;
-      if (!res.ok) {
+      if (!response.ok) {
         setError(friendlyError((json as { error?: string } | null)?.error ?? ""));
         return;
       }
- 
-       try {
-         window.localStorage.setItem("officeHours.kioskEmail", emailNormalized);
-       } catch {
-         // Ignore
-       }
- 
+
+      try {
+        window.localStorage.setItem("officeHours.kioskEmail", emailNormalized);
+      } catch {
+        // Ignore local storage write failures.
+      }
+
       const checkinAt = (json as { session?: { checkin_at?: string } } | null)?.session?.checkin_at;
-      setNotice(checkinAt ? `Checked in at ${new Date(checkinAt).toLocaleString()}.` : "Checked in.");
+      setNotice(checkinAt ? `Checked in ${formatWhen(checkinAt)}.` : "Checked in.");
       setPhoto(null);
       await loadStatus();
     } catch {
-      setError("Location is required to check in. Enable location permissions and try again.");
+      setError("Check-in failed.");
     } finally {
       setLoading(false);
     }
-  }, [emailNormalized, emailValid, loadStatus, photo]);
+  }, [emailNormalized, emailValid, loadStatus, location, photo, preflight?.ok]);
 
   const onCheckOut = useCallback(async () => {
     setLoading(true);
     setError(null);
     setNotice(null);
+
     try {
       if (!emailValid) {
         setError("Enter a valid email.");
         return;
       }
 
-      const res = await fetch("/api/office-hours/kiosk/check-out", {
+      let coords = location;
+      if (!coords) {
+        coords = await getCurrentPosition({ timeoutMs: 7000 }).catch(() => null);
+      }
+
+      const body: { email: string; lat?: number; lon?: number } = { email: emailNormalized };
+      if (coords) {
+        body.lat = coords.lat;
+        body.lon = coords.lon;
+        setLocation(coords);
+      }
+
+      const response = await fetch("/api/office-hours/kiosk/check-out", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ email: emailNormalized }),
+        body: JSON.stringify(body),
       });
- 
-       const json = (await res.json().catch(() => null)) as { error?: string } | { session?: { duration_minutes?: number } } | null;
-       if (!res.ok) {
-         setError(friendlyError((json as { error?: string } | null)?.error ?? ""));
-         return;
-       }
- 
-       try {
-         window.localStorage.setItem("officeHours.kioskEmail", emailNormalized);
-       } catch {
-         // Ignore
-       }
- 
-       const duration = (json as { session?: { duration_minutes?: number } } | null)?.session?.duration_minutes;
-       setNotice(typeof duration === "number" ? `Checked out. Session: ${duration} minutes.` : "Checked out.");
-       await loadStatus();
-     } finally {
-       setLoading(false);
-     }
-  }, [emailNormalized, emailValid, loadStatus]);
+      const json = (await response.json().catch(() => null)) as
+        | { error?: string }
+        | { session?: { duration_minutes?: number } }
+        | null;
+
+      if (!response.ok) {
+        setError(friendlyError((json as { error?: string } | null)?.error ?? ""));
+        return;
+      }
+
+      try {
+        window.localStorage.setItem("officeHours.kioskEmail", emailNormalized);
+      } catch {
+        // Ignore local storage write failures.
+      }
+
+      const minutes = (json as { session?: { duration_minutes?: number } } | null)?.session?.duration_minutes;
+      setNotice(typeof minutes === "number" ? `Checked out • ${minutes}m.` : "Checked out.");
+      await loadStatus();
+    } catch {
+      setError("Check-out failed.");
+    } finally {
+      setLoading(false);
+    }
+  }, [emailNormalized, emailValid, loadStatus, location]);
+
+  const emailHint = useMemo(() => {
+    if (!email.length) return null;
+    if (!emailValid) return "Use a valid email.";
+    if (!emailDomainOk) return "Use @gcccd.edu.";
+    return null;
+  }, [email.length, emailDomainOk, emailValid]);
+
+  const locationSummary = useMemo(() => {
+    if (!location) return "No location yet.";
+    const accuracy = location.accuracyM ? `±${Math.round(location.accuracyM)}m` : null;
+    return accuracy ? `Updated ${accuracy}` : "Location ready";
+  }, [location]);
+
+  const statusTone = openSession ? "good" : statusLoading ? "neutral" : "warning";
+  const statusLabel = openSession
+    ? "Session open"
+    : statusLoading
+      ? "Checking status"
+      : "Ready to check in";
 
   return (
-    <div className="relative overflow-hidden">
+    <KioskShell>
       <h1 className="sr-only">Office Hours Kiosk</h1>
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(900px_circle_at_20%_10%,rgba(16,185,129,0.22),transparent_55%),radial-gradient(800px_circle_at_80%_20%,rgba(59,130,246,0.18),transparent_55%),radial-gradient(900px_circle_at_50%_85%,rgba(236,72,153,0.10),transparent_60%)]"
-      />
+      <div className="kiosk-panel space-y-4">
+        <KioskStepHeader
+          eyebrow="Office Hours"
+          title={openSession ? "Check out" : "Check in"}
+          subtitle="Email. Selfie. Location."
+          step={stepNumber}
+          totalSteps={4}
+          actions={
+            <>
+              <Link
+                href="/"
+                className="inline-flex h-10 items-center justify-center rounded-full border border-[var(--admin-border-soft)] bg-white/80 px-3 text-xs font-medium text-foreground/80"
+              >
+                Home
+              </Link>
+              <Link
+                href="/login"
+                className="inline-flex h-10 items-center justify-center rounded-full border border-[var(--admin-border-soft)] bg-white/80 px-3 text-xs font-medium text-foreground/80"
+              >
+                Sign in
+              </Link>
+            </>
+          }
+        />
 
-      <div className="mx-auto flex min-h-dvh w-full max-w-xl items-start px-4 py-6 sm:items-center sm:px-6 sm:py-10">
-        <div className="w-full">
-          <div className="rounded-[28px] border bg-background/70 p-5 shadow-2xl ring-1 ring-black/5 backdrop-blur-xl supports-[backdrop-filter]:bg-background/60 sm:p-6">
-            <div className="flex items-start justify-between gap-4">
-              <div className="space-y-2">
-                <div className="text-[11px] font-medium uppercase tracking-[0.2em] text-foreground/60">
-                  Office Hours
-                </div>
-                <div className="text-2xl font-semibold tracking-tight sm:text-3xl">{headline}</div>
-                <div className="text-sm text-foreground/60">{subhead}</div>
-              </div>
-              <div className="flex flex-col items-end gap-3 pt-2">
-                <div className="flex items-center gap-1.5">
-                  <span
-                    className={`h-2 w-2 rounded-full ${step !== "email" ? "bg-emerald-500" : "bg-foreground/20"}`}
-                  />
-                  <span
-                    className={`h-2 w-2 rounded-full ${
-                      step === "ready" || step === "checked_in"
-                        ? "bg-emerald-500"
-                        : step === "selfie"
-                          ? "bg-emerald-400"
-                          : "bg-foreground/20"
-                    }`}
-                  />
-                  <span
-                    className={`h-2 w-2 rounded-full ${step === "checked_in" ? "bg-emerald-500" : "bg-foreground/20"}`}
-                  />
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <a
-                    href="/"
-                    className="inline-flex h-9 w-9 items-center justify-center rounded-full border bg-background/50 text-foreground/80 shadow-sm ring-1 ring-black/5 backdrop-blur hover:bg-foreground/5 hover:text-foreground sm:hidden"
-                    aria-label="Home"
-                    title="Home"
-                  >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                      <path
-                        d="M3 10.5L12 3l9 7.5V21a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1V10.5Z"
-                        stroke="currentColor"
-                        strokeWidth="1.6"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                  </a>
-                  <a
-                    href="/login"
-                    className="inline-flex h-9 w-9 items-center justify-center rounded-full border bg-background/50 text-foreground/80 shadow-sm ring-1 ring-black/5 backdrop-blur hover:bg-foreground/5 hover:text-foreground sm:hidden"
-                    aria-label="Sign in"
-                    title="Sign in"
-                  >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                      <path
-                        d="M15 3H19a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"
-                        stroke="currentColor"
-                        strokeWidth="1.6"
-                        strokeLinecap="round"
-                      />
-                      <path
-                        d="M10 17l5-5-5-5"
-                        stroke="currentColor"
-                        strokeWidth="1.6"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                      <path
-                        d="M15 12H3"
-                        stroke="currentColor"
-                        strokeWidth="1.6"
-                        strokeLinecap="round"
-                      />
-                    </svg>
-                  </a>
-
-                  <div className="hidden overflow-hidden rounded-full border bg-background/50 shadow-sm ring-1 ring-black/5 backdrop-blur sm:inline-flex">
-                    <a
-                      href="/"
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-foreground/80 hover:bg-foreground/5 hover:text-foreground"
-                      aria-label="Go to home page"
-                    >
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                        <path
-                          d="M3 10.5L12 3l9 7.5V21a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1V10.5Z"
-                          stroke="currentColor"
-                          strokeWidth="1.5"
-                          strokeLinejoin="round"
-                        />
-                      </svg>
-                      Home
-                    </a>
-                    <span className="w-px bg-foreground/10" />
-                    <a
-                      href="/login"
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-foreground/80 hover:bg-foreground/5 hover:text-foreground"
-                      aria-label="Go to login"
-                    >
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                        <path
-                          d="M15 3H19a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"
-                          stroke="currentColor"
-                          strokeWidth="1.5"
-                          strokeLinecap="round"
-                        />
-                        <path
-                          d="M10 17l5-5-5-5"
-                          stroke="currentColor"
-                          strokeWidth="1.5"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                        <path
-                          d="M15 12H3"
-                          stroke="currentColor"
-                          strokeWidth="1.5"
-                          strokeLinecap="round"
-                        />
-                      </svg>
-                      Sign in
-                    </a>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-6 space-y-6">
-              <div className="space-y-3">
-                <label className="space-y-2">
-                  <div className="text-sm font-medium text-foreground/80">ASGC email</div>
-                  <input
-                    type="email"
-                    inputMode="email"
-                    autoCapitalize="none"
-                    autoCorrect="off"
-                    className="h-14 w-full rounded-full border bg-background/40 px-5 text-base shadow-sm ring-1 ring-black/5 placeholder:text-foreground/40 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="name@gcccd.edu"
-                    aria-label="ASGC email"
-                  />
-                </label>
-
-                {emailHint || statusLoading ? (
-                  <div className="flex items-center justify-between pt-1 text-xs text-foreground/60">
-                    <span>{emailHint ?? ""}</span>
-                    {statusLoading ? <span>Checking…</span> : null}
-                  </div>
-                ) : null}
-              </div>
-
-              {emailValid ? (
-                openSession ? (
-                  <div className="space-y-3">
-                    <div className="rounded-xl border bg-emerald-500/5 p-4 text-sm text-foreground/80">
-                      <div className="font-medium">You’re checked in</div>
-                      <div className="mt-1 text-xs text-foreground/60">
-                        Since <span className="font-mono">{new Date(openSession.checkin_at).toLocaleString()}</span>
-                      </div>
-                    </div>
-
-                    <Button onClick={onCheckOut} disabled={loading} className="h-12 w-full rounded-xl text-base">
-                      {loading ? "Checking out…" : "Check out"}
-                    </Button>
-                    <div className="text-xs text-foreground/60">
-                      Office hour credit requires manual check out.
-                    </div>
-                  </div>
-                ) : (
-                  <div className="space-y-4">
-                    <div className="space-y-2">
-                      <div className="text-xs font-medium uppercase tracking-wide text-foreground/60">Selfie • required</div>
-                      <SelfieCapture value={photo} disabled={loading} onChange={setPhoto} />
-                    </div>
-
-                    <div className="space-y-2">
-                      <div className="text-xs font-medium uppercase tracking-wide text-foreground/60">Check in</div>
-                      {geoPermission === "denied" ? (
-                        <div className="rounded-xl border border-red-500/30 bg-red-500/5 p-3 text-xs text-red-700 dark:text-red-300">
-                          Location permission is blocked. Enable location to check in.
-                        </div>
-                      ) : (
-                        <div className="text-xs text-foreground/60">We’ll verify your location at check-in.</div>
-                      )}
-
-                      <Button
-                        onClick={onCheckIn}
-                        disabled={loading || !photo || geoPermission === "denied"}
-                        className="h-12 w-full rounded-xl text-base"
-                      >
-                        {loading ? "Checking in…" : "Check in"}
-                      </Button>
-                      <div className="text-[11px] text-foreground/50">
-                        Selfies are retained for 30 days. Office hours are tracked on enabled days.
-                      </div>
-                    </div>
-                  </div>
-                )
-              ) : (
-                <div className="rounded-2xl border bg-foreground/[0.02] p-5 text-sm text-foreground/70">
-                  Enter your ASGC email to begin.
-                </div>
-              )}
-
-              {status?.user_exists === false && emailValid ? (
-                <div className="rounded-xl border bg-foreground/[0.02] p-3 text-xs text-foreground/60">
-                  No account found yet — a kiosk check-in will create one.
-                </div>
-              ) : null}
-
-              <div className="flex items-center justify-between gap-2 pt-1">
-                <Button variant="ghost" onClick={loadStatus} disabled={!emailValid || loading} className="h-9 px-2 text-xs">
-                  Refresh
-                </Button>
-                <div className="text-[11px] text-foreground/50">
-                  Need access? Ask an admin to add you to the allowlist.
-                </div>
-              </div>
-
-              {notice ? (
-                <div className="rounded-xl border bg-foreground/[0.02] p-3 text-sm text-foreground/80" role="status" aria-live="polite">
-                  {notice}
-                </div>
-              ) : null}
-              {error ? (
-                <div className="rounded-xl border border-red-500/30 bg-red-500/5 p-3 text-sm text-red-700 dark:text-red-300" role="alert">
-                  {error}
-                </div>
-              ) : null}
-            </div>
+        <motion.section
+          className="kiosk-section space-y-3"
+          initial={reduceMotion ? false : { opacity: 0, y: 8 }}
+          animate={reduceMotion ? undefined : { opacity: 1, y: 0 }}
+          transition={{ duration: 0.22, ease: "easeOut" }}
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs font-medium uppercase tracking-[0.12em] text-[var(--admin-label)]">
+              Step 1 · Email
+            </p>
+            <KioskStatusChip tone={statusTone} icon={iconForTone(statusTone)} label={statusLabel} />
           </div>
-        </div>
+
+          <input
+            type="email"
+            inputMode="email"
+            autoCapitalize="none"
+            autoCorrect="off"
+            className="kiosk-input"
+            placeholder="name@gcccd.edu"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            aria-label="ASGC email"
+          />
+
+          <div className="flex items-center justify-between gap-2 text-xs text-foreground/65">
+            <span>{emailHint ?? "Use your GCCCD email."}</span>
+            <Button
+              type="button"
+              variant="ghost"
+              className="h-9 rounded-full px-3 text-xs"
+              onClick={() => void loadStatus()}
+              disabled={!emailValid || statusLoading || loading}
+            >
+              {statusLoading ? "Checking…" : "Refresh"}
+            </Button>
+          </div>
+        </motion.section>
+
+        {!openSession ? (
+          <motion.section
+            className="kiosk-section space-y-3"
+            initial={reduceMotion ? false : { opacity: 0, y: 8 }}
+            animate={reduceMotion ? undefined : { opacity: 1, y: 0 }}
+            transition={{ duration: 0.22, ease: "easeOut", delay: reduceMotion ? 0 : 0.04 }}
+          >
+            <p className="text-xs font-medium uppercase tracking-[0.12em] text-[var(--admin-label)]">
+              Step 2 · Selfie
+            </p>
+            <KioskCameraCapture value={photo} disabled={loading || !emailValid} onChange={setPhoto} />
+          </motion.section>
+        ) : null}
+
+        <motion.section
+          className="kiosk-section space-y-3"
+          initial={reduceMotion ? false : { opacity: 0, y: 8 }}
+          animate={reduceMotion ? undefined : { opacity: 1, y: 0 }}
+          transition={{ duration: 0.22, ease: "easeOut", delay: reduceMotion ? 0 : 0.08 }}
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs font-medium uppercase tracking-[0.12em] text-[var(--admin-label)]">
+              Step 3 · Location
+            </p>
+            {preflight ? (
+              <KioskStatusChip
+                tone={preflight.statusTone}
+                icon={iconForTone(preflight.statusTone)}
+                label={preflight.statusLabel}
+              />
+            ) : (
+              <KioskStatusChip tone="neutral" icon="dot" label={locationSummary} />
+            )}
+          </div>
+
+          <div className="kiosk-control-row">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-12 rounded-xl px-4"
+              onClick={() => void requestLocation()}
+              disabled={locationLoading || loading || !emailValid}
+            >
+              {locationLoading ? "Locating…" : location ? "Update location" : "Use location"}
+            </Button>
+            {location ? (
+              <span className="text-xs text-foreground/65">{locationSummary}</span>
+            ) : null}
+          </div>
+
+          {preflightLoading ? (
+            <p className="text-xs text-foreground/65">Checking range…</p>
+          ) : null}
+
+          {preflight ? (
+            <p className="text-xs text-foreground/65">
+              {formatDistance(preflight.distanceM)} from office · radius{" "}
+              {formatDistance(preflight.radiusM)} · grace{" "}
+              {formatDistance(preflight.graceRadiusM)}
+            </p>
+          ) : null}
+
+          {geoPermission === "denied" ? (
+            <KioskNotice tone="critical">
+              Location permission is blocked. Enable location, then retry.
+            </KioskNotice>
+          ) : null}
+
+          {locationError ? <KioskNotice tone="critical">{locationError}</KioskNotice> : null}
+          {preflightError ? <KioskNotice tone="critical">{preflightError}</KioskNotice> : null}
+        </motion.section>
+
+        <motion.section
+          className="kiosk-section space-y-3"
+          initial={reduceMotion ? false : { opacity: 0, y: 8 }}
+          animate={reduceMotion ? undefined : { opacity: 1, y: 0 }}
+          transition={{ duration: 0.22, ease: "easeOut", delay: reduceMotion ? 0 : 0.12 }}
+        >
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs font-medium uppercase tracking-[0.12em] text-[var(--admin-label)]">
+              Step 4 · Action
+            </p>
+            {openSession ? (
+              <KioskStatusChip tone="good" icon="check" label="Open session" />
+            ) : canCheckIn ? (
+              <KioskStatusChip tone="good" icon="check" label="Ready" />
+            ) : (
+              <KioskStatusChip tone="warning" icon="clock" label="Complete steps" />
+            )}
+          </div>
+
+          {openSession ? (
+            <KioskActionBar
+              primary={
+                <Button
+                  type="button"
+                  className="h-14 rounded-xl text-base"
+                  onClick={() => void onCheckOut()}
+                  disabled={loading || !emailValid}
+                >
+                  {loading ? "Checking out…" : "Check out"}
+                </Button>
+              }
+              secondary={
+                <Link
+                  href="/office-hours/check-in"
+                  className="inline-flex items-center justify-center border border-[var(--admin-border-soft)] bg-white/80 text-sm font-medium text-foreground/80"
+                >
+                  Go to check-in page
+                </Link>
+              }
+              tertiary={
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-12 rounded-xl"
+                  onClick={() => void loadStatus()}
+                  disabled={statusLoading || loading || !emailValid}
+                >
+                  Refresh status
+                </Button>
+              }
+              hint={`Opened ${formatWhen(openSession.checkin_at)}`}
+            />
+          ) : (
+            <KioskActionBar
+              primary={
+                <Button
+                  type="button"
+                  className="h-14 rounded-xl text-base"
+                  onClick={() => void onCheckIn()}
+                  disabled={loading || !canCheckIn}
+                >
+                  {loading ? "Checking in…" : "Check in"}
+                </Button>
+              }
+              secondary={
+                <Link
+                  href="/office-hours/check-out"
+                  className="inline-flex items-center justify-center border border-[var(--admin-border-soft)] bg-white/80 text-sm font-medium text-foreground/80"
+                >
+                  Need check out?
+                </Link>
+              }
+              tertiary={
+                <Link
+                  href="/office-hours"
+                  className="inline-flex items-center justify-center border border-[var(--admin-border-soft)] bg-white/80 text-sm font-medium text-foreground/80"
+                >
+                  Office Hours
+                </Link>
+              }
+              hint="Check-out remains available without location."
+            />
+          )}
+        </motion.section>
+
+        {!status?.user_exists && emailValid && !statusLoading ? (
+          <KioskNotice tone="neutral">New account will be created on first check-in.</KioskNotice>
+        ) : null}
+        {notice ? <KioskNotice tone="good">{notice}</KioskNotice> : null}
+        {error ? <KioskNotice tone="critical">{error}</KioskNotice> : null}
       </div>
-    </div>
+    </KioskShell>
   );
 }

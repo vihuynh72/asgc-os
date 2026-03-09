@@ -1,10 +1,17 @@
 "use client";
 
 import Link from "next/link";
+import { motion, useReducedMotion } from "motion/react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { PageShell } from "@/components/page-shell";
+import {
+  KioskActionBar,
+  KioskNotice,
+  KioskShell,
+  KioskStatusChip,
+  KioskStepHeader,
+} from "@/components/office-hours/kiosk";
 import { Button } from "@/components/ui/button";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 
@@ -23,6 +30,7 @@ function friendlyError(message: string): string {
 }
 
 export default function OfficeHoursCheckOutPage() {
+  const reduceMotion = useReducedMotion();
   const router = useRouter();
   const supabase = useMemo(() => getSupabaseBrowserClient(), []);
   const [openSession, setOpenSession] = useState<OpenSession | null>(null);
@@ -77,55 +85,110 @@ export default function OfficeHoursCheckOutPage() {
   }, [refreshOpenSession, router]);
 
   return (
-    <PageShell title="Check Out" description="Check out to record your office hours.">
-      <div className="space-y-4">
-        <div className="rounded-lg border border-foreground/10 p-4">
-          {openSession ? (
-            <div className="text-sm text-foreground/80">
-              Open session started {new Date(openSession.checkin_at).toLocaleString()}.
-            </div>
-          ) : (
-            <div className="text-sm text-foreground/80">No open session.</div>
-          )}
-
-          <div className="mt-4 flex flex-wrap gap-2">
-            <Button onClick={onSubmit} disabled={loading || !openSession}>
-              Check Out
-            </Button>
+    <KioskShell>
+      <div className="kiosk-panel space-y-4">
+        <KioskStepHeader
+          eyebrow="Office Hours"
+          title="Check out"
+          subtitle="Close your active session."
+          step={openSession ? 2 : 1}
+          totalSteps={2}
+          actions={
             <Link
               href="/office-hours"
-              className="inline-flex h-9 items-center justify-center rounded-md border border-foreground/20 bg-transparent px-3 text-sm font-medium text-foreground transition-colors hover:bg-foreground/5"
+              className="inline-flex h-10 items-center justify-center rounded-full border border-[var(--admin-border-soft)] bg-white/80 px-3 text-xs font-medium text-foreground/80"
             >
               Back
             </Link>
-            {!openSession ? (
-              <Link
-                href="/office-hours/check-in"
-                className="inline-flex h-9 items-center justify-center rounded-md border border-foreground/20 bg-transparent px-3 text-sm font-medium text-foreground transition-colors hover:bg-foreground/5"
-              >
-                Go to check in
-              </Link>
-            ) : null}
-            <Link
-              href="/office-hours/kiosk"
-              className="inline-flex h-9 items-center justify-center rounded-md border border-foreground/20 bg-transparent px-3 text-sm font-medium text-foreground transition-colors hover:bg-foreground/5"
-            >
-              Use Office Hours Form
-            </Link>
+          }
+        />
+
+        <motion.section
+          className="kiosk-section space-y-3"
+          initial={reduceMotion ? false : { opacity: 0, y: 8 }}
+          animate={reduceMotion ? undefined : { opacity: 1, y: 0 }}
+          transition={{ duration: 0.22, ease: "easeOut" }}
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs font-medium uppercase tracking-[0.12em] text-[var(--admin-label)]">
+              Session status
+            </p>
+            {openSession ? (
+              <KioskStatusChip tone="good" icon="check" label="Open session" />
+            ) : (
+              <KioskStatusChip tone="warning" icon="clock" label="No open session" />
+            )}
           </div>
 
-          {notice ? (
-            <div className="mt-3 text-sm text-foreground/80" role="status" aria-live="polite">
+          {openSession ? (
+            <p className="text-sm text-foreground/75">
+              Started {new Date(openSession.checkin_at).toLocaleString()}.
+            </p>
+          ) : (
+            <p className="text-sm text-foreground/75">Nothing to check out right now.</p>
+          )}
+        </motion.section>
+
+        <motion.section
+          className="kiosk-section"
+          initial={reduceMotion ? false : { opacity: 0, y: 8 }}
+          animate={reduceMotion ? undefined : { opacity: 1, y: 0 }}
+          transition={{ duration: 0.22, ease: "easeOut", delay: reduceMotion ? 0 : 0.04 }}
+        >
+          <KioskActionBar
+            primary={
+              <Button
+                className="h-14 rounded-xl text-base"
+                onClick={() => void onSubmit()}
+                disabled={loading || !openSession}
+              >
+                {loading ? "Checking out…" : "Check out"}
+              </Button>
+            }
+            secondary={
+              !openSession ? (
+                <Link
+                  href="/office-hours/check-in"
+                  className="inline-flex items-center justify-center border border-[var(--admin-border-soft)] bg-white/80 text-sm font-medium text-foreground/80"
+                >
+                  Go to check in
+                </Link>
+              ) : (
+                <Link
+                  href="/office-hours/kiosk"
+                  className="inline-flex items-center justify-center border border-[var(--admin-border-soft)] bg-white/80 text-sm font-medium text-foreground/80"
+                >
+                  Open kiosk
+                </Link>
+              )
+            }
+            tertiary={
+              <Button
+                variant="outline"
+                className="h-12 rounded-xl"
+                onClick={() => void refreshOpenSession()}
+                disabled={loading}
+              >
+                Refresh
+              </Button>
+            }
+            hint="Kiosk check-out can attach location when available."
+          />
+        </motion.section>
+
+        {notice ? (
+          <KioskNotice tone="good">
+            <span role="status" aria-live="polite">
               {notice}
-            </div>
-          ) : null}
-          {error ? (
-            <div className="mt-3 text-sm text-red-600" role="alert">
-              {error}
-            </div>
-          ) : null}
-        </div>
+            </span>
+          </KioskNotice>
+        ) : null}
+        {error ? (
+          <KioskNotice tone="critical">
+            <span role="alert">{error}</span>
+          </KioskNotice>
+        ) : null}
       </div>
-    </PageShell>
+    </KioskShell>
   );
 }
