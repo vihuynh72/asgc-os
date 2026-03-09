@@ -61,7 +61,7 @@ export function KioskCameraCapture({
 
   return (
     <div className="kiosk-control-grid">
-      <div className="kiosk-control-row">
+      <div className="kiosk-control-row kiosk-control-row-split">
         <Button
           variant={mode === "camera" ? "default" : "outline"}
           className="h-11 rounded-full px-4"
@@ -111,7 +111,7 @@ export function KioskCameraCapture({
               </div>
 
               <div className="kiosk-control-grid">
-                <div className="kiosk-control-row">
+                <div className="kiosk-control-row kiosk-control-row-compact">
                   <label className="kiosk-control-label">Quality</label>
                   <select
                     className="h-11 rounded-full border border-[var(--admin-border-soft)] bg-white/85 px-3 text-sm"
@@ -124,7 +124,7 @@ export function KioskCameraCapture({
                   </select>
                 </div>
 
-                <div className="kiosk-control-row">
+                <div className="kiosk-control-row kiosk-control-row-split">
                   {controlState.canFlip ? (
                     <Button variant="outline" className="h-11 rounded-full px-4" onClick={() => void rotateCamera()} disabled={disabled}>
                       Flip

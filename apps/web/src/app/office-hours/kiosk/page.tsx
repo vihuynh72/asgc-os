@@ -182,7 +182,7 @@ function StepCard({
           tone={tone}
           icon={icon}
           label={summary}
-          className="w-full justify-start sm:w-auto sm:max-w-[58%] sm:justify-end"
+          className="max-w-full self-start whitespace-nowrap sm:max-w-[58%] sm:self-center"
         />
       </button>
 
