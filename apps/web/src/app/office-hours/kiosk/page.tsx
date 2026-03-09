@@ -149,6 +149,7 @@ function StepCard({
   step,
   title,
   summary,
+  statusLabel,
   tone,
   icon,
   active,
@@ -159,6 +160,7 @@ function StepCard({
   step: number;
   title: string;
   summary: string;
+  statusLabel?: string;
   tone: "critical" | "warning" | "neutral" | "good";
   icon?: "triangle" | "clock" | "dot" | "check";
   active: boolean;
@@ -181,8 +183,8 @@ function StepCard({
         <KioskStatusChip
           tone={tone}
           icon={icon}
-          label={summary}
-          className="max-w-full self-start whitespace-nowrap sm:max-w-[58%] sm:self-center"
+          label={statusLabel ?? summary}
+          className="max-w-full shrink-0 self-start sm:max-w-[58%] sm:self-center"
         />
       </button>
 
@@ -590,6 +592,16 @@ export default function OfficeHoursKioskPage() {
       ? "Ready to check in"
       : "Complete steps";
   const actionTone = loading ? "neutral" : canSubmitCheckIn ? "good" : "warning";
+  const emailStatusLabel = statusLoading ? "Checking" : emailReady ? "Ready" : "Email needed";
+  const selfieStatusLabel = photo ? "Ready" : "Needed";
+  const locationStatusLabel = preflightLoading
+    ? "Checking"
+    : preflight
+      ? preflight.statusLabel
+      : location
+        ? "Located"
+        : "Needs location";
+  const actionStatusLabel = loading ? "Checking" : canSubmitCheckIn ? "Ready" : "Pending";
   const headerStep = branch === "check_out" ? 2 : stepRank(focusedStep);
   const headerTotalSteps = branch === "check_out" ? 2 : 4;
   const headerTitle = branch === "check_out" ? "Check out" : "Check in";
@@ -638,6 +650,7 @@ export default function OfficeHoursKioskPage() {
             title="Email"
             summary={emailSummary}
             tone={statusLoading ? "neutral" : emailReady ? "good" : "warning"}
+            statusLabel={emailStatusLabel}
             icon={statusLoading ? "dot" : emailReady ? "check" : "clock"}
             active={branch === "email" || focusedStep === "email"}
             onActivate={() => setFocusedStep("email")}
@@ -678,6 +691,7 @@ export default function OfficeHoursKioskPage() {
                 title="Selfie"
                 summary={selfieSummary}
                 tone={photo ? "good" : "warning"}
+                statusLabel={selfieStatusLabel}
                 icon={photo ? "check" : "clock"}
                 active={focusedStep === "selfie"}
                 disabled={false}
@@ -691,6 +705,7 @@ export default function OfficeHoursKioskPage() {
                 title="Location"
                 summary={preflightLoading ? "Checking range…" : locationSummary}
                 tone={preflight ? preflight.statusTone : location ? "neutral" : "warning"}
+                statusLabel={locationStatusLabel}
                 icon={preflight ? iconForTone(preflight.statusTone) : "dot"}
                 active={focusedStep === "location"}
                 disabled={!photo}
@@ -736,6 +751,7 @@ export default function OfficeHoursKioskPage() {
                 title="Action"
                 summary={actionSummary}
                 tone={actionTone}
+                statusLabel={actionStatusLabel}
                 icon={iconForTone(actionTone)}
                 active={focusedStep === "action"}
                 disabled={false}
@@ -770,6 +786,7 @@ export default function OfficeHoursKioskPage() {
               title="Check out"
               summary={loading ? "Checking out…" : "Ready to check out"}
               tone="good"
+              statusLabel={loading ? "Checking" : "Ready"}
               icon={loading ? "clock" : "check"}
               active
               onActivate={() => undefined}
