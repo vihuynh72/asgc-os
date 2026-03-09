@@ -6,20 +6,24 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { z } from "zod";
 
 import {
+  KioskActionBar,
   KioskCameraCapture,
   KioskNotice,
   KioskShell,
   KioskStatusChip,
   KioskStepHeader,
-  KioskStickyAction,
 } from "@/components/office-hours/kiosk";
 import { Button } from "@/components/ui/button";
 import {
-  deriveKioskEntryStep,
-  deriveKioskStickyAction,
-  normalizeKioskWizardStep,
+  canSubmitKioskCheckIn,
+  deriveKioskCheckInStep,
+  deriveKioskEntryBranch,
 } from "@/lib/office-hours-kiosk/entry-state.mjs";
-import type { KioskLocationPreflightResult } from "@/lib/office-hours-kiosk/types";
+import type {
+  KioskCheckInStep,
+  KioskEntryBranch,
+  KioskLocationPreflightResult,
+} from "@/lib/office-hours-kiosk/types";
 import { cn } from "@/lib/utils";
 
 type KioskOpenSession = {
@@ -174,7 +178,12 @@ function StepCard({
           <p className="kiosk-step-title">{step}. {title}</p>
           {!active ? <p className="kiosk-step-summary">{summary}</p> : null}
         </div>
-        <KioskStatusChip tone={tone} icon={icon} label={summary} className="max-w-[58%] justify-end" />
+        <KioskStatusChip
+          tone={tone}
+          icon={icon}
+          label={summary}
+          className="w-full justify-start sm:w-auto sm:max-w-[58%] sm:justify-end"
+        />
       </button>
 
       {active ? <div className="kiosk-step-body">{children}</div> : null}
@@ -206,6 +215,7 @@ export default function OfficeHoursKioskPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [focusedStep, setFocusedStep] = useState<WizardStepId>("email");
 
   const emailNormalized = useMemo(() => normalizeEmail(email), [email]);
   const emailValid = useMemo(
@@ -215,6 +225,30 @@ export default function OfficeHoursKioskPage() {
   const emailDomainOk = useMemo(
     () => (emailValid ? isGcccdEmail(emailNormalized) : false),
     [emailNormalized, emailValid],
+  );
+  const emailReady = useMemo(
+    () => emailValid && emailDomainOk,
+    [emailDomainOk, emailValid],
+  );
+
+  const resetCheckInState = useCallback(
+    ({ clearMessages = true }: { clearMessages?: boolean } = {}) => {
+      setPhoto(null);
+      setLocation(null);
+      setLocationLoading(false);
+      setLocationError(null);
+      preflightAbortRef.current?.abort();
+      preflightAbortRef.current = null;
+      setPreflight(null);
+      setPreflightLoading(false);
+      setPreflightError(null);
+      setFocusedStep("email");
+      if (clearMessages) {
+        setError(null);
+        setNotice(null);
+      }
+    },
+    [],
   );
 
   useEffect(() => {
@@ -248,8 +282,11 @@ export default function OfficeHoursKioskPage() {
   }, []);
 
   const loadStatus = useCallback(async () => {
-    if (!emailValid) {
+    if (!emailReady) {
+      statusAbortRef.current?.abort();
+      statusAbortRef.current = null;
       setStatus(null);
+      setStatusLoading(false);
       return;
     }
 
@@ -281,25 +318,27 @@ export default function OfficeHoursKioskPage() {
       setError("Could not load status.");
     } finally {
       if (statusAbortRef.current === controller) {
+        statusAbortRef.current = null;
         setStatusLoading(false);
       }
     }
-  }, [emailNormalized, emailValid]);
+  }, [emailNormalized, emailReady]);
 
   useEffect(() => {
-    setError(null);
-    setNotice(null);
+    resetCheckInState();
+    statusAbortRef.current?.abort();
+    statusAbortRef.current = null;
+    setStatus(null);
+    setStatusLoading(false);
 
-    if (!emailValid) {
-      setStatus(null);
-      return;
-    }
+    if (!emailReady) return;
+    setStatusLoading(true);
 
     const id = window.setTimeout(() => {
       void loadStatus();
     }, 220);
     return () => window.clearTimeout(id);
-  }, [emailValid, loadStatus]);
+  }, [emailNormalized, emailReady, loadStatus, resetCheckInState]);
 
   useEffect(() => {
     return () => {
@@ -311,9 +350,25 @@ export default function OfficeHoursKioskPage() {
   }, []);
 
   const openSession = status?.open_session ?? null;
+  const statusResolved = emailReady && !statusLoading && status !== null;
+  const branch = useMemo<KioskEntryBranch>(
+    () =>
+      deriveKioskEntryBranch({
+        emailValid: emailReady,
+        statusResolved,
+        hasOpenSession: Boolean(openSession),
+      }),
+    [emailReady, openSession, statusResolved],
+  );
 
   useEffect(() => {
-    if (!emailValid || !location || openSession) {
+    if (branch === "check_out") {
+      resetCheckInState();
+    }
+  }, [branch, resetCheckInState]);
+
+  useEffect(() => {
+    if (!emailReady || branch !== "check_in" || !location) {
       setPreflight(null);
       setPreflightError(null);
       setPreflightLoading(false);
@@ -361,49 +416,35 @@ export default function OfficeHoursKioskPage() {
         setPreflightError("Location unavailable.");
       } finally {
         if (preflightAbortRef.current === controller) {
+          preflightAbortRef.current = null;
           setPreflightLoading(false);
         }
       }
     })();
-  }, [emailNormalized, emailValid, location, openSession]);
+  }, [branch, emailNormalized, emailReady, location]);
 
-  const entryStep = useMemo(
+  const checkInStep = useMemo<KioskCheckInStep>(
     () =>
-      deriveKioskEntryStep({
-        emailValid,
+      deriveKioskCheckInStep({
         hasPhoto: Boolean(photo),
-        hasOpenSession: Boolean(openSession),
         preflightReady: Boolean(preflight) && !preflightLoading,
         preflightAllowed: Boolean(preflight?.ok),
       }),
-    [emailValid, openSession, photo, preflight, preflightLoading],
+    [photo, preflight, preflightLoading],
   );
 
-  const autoWizardStep = normalizeKioskWizardStep(entryStep) as WizardStepId;
-  const [focusedStep, setFocusedStep] = useState<WizardStepId>("email");
-
   useEffect(() => {
-    setFocusedStep((previous) => {
-      const previousRank = stepRank(previous);
-      const autoRank = stepRank(autoWizardStep);
-      if (previousRank === autoRank) return previous;
-      return autoWizardStep;
-    });
-  }, [autoWizardStep]);
+    if (branch !== "check_in") return;
 
-  const stickyAction = deriveKioskStickyAction({
-    hasOpenSession: Boolean(openSession),
-    emailValid,
-    hasPhoto: Boolean(photo),
-    preflightReady: Boolean(preflight) && !preflightLoading,
-    preflightAllowed: Boolean(preflight?.ok),
-    loading,
-  });
-  const stickyTone = (stickyAction.tone ?? "neutral") as
-    | "critical"
-    | "warning"
-    | "neutral"
-    | "good";
+    const autoStep = checkInStep as WizardStepId;
+    setFocusedStep((previous) => {
+      if (previous === "email") return autoStep;
+      const previousRank = stepRank(previous);
+      const autoRank = stepRank(autoStep);
+      if (previousRank === autoRank) return previous;
+      return autoStep;
+    });
+  }, [branch, checkInStep]);
 
   const requestLocation = useCallback(async () => {
     setLocationLoading(true);
@@ -426,8 +467,8 @@ export default function OfficeHoursKioskPage() {
     setNotice(null);
 
     try {
-      if (!emailValid) {
-        setError("Enter a valid email.");
+      if (!emailReady) {
+        setError("Use your GCCCD email.");
         return;
       }
 
@@ -476,7 +517,7 @@ export default function OfficeHoursKioskPage() {
     } finally {
       setLoading(false);
     }
-  }, [emailNormalized, emailValid, loadStatus, location, photo, preflight?.ok]);
+  }, [emailNormalized, emailReady, loadStatus, location, photo, preflight?.ok]);
 
   const onCheckOut = useCallback(async () => {
     setLoading(true);
@@ -484,27 +525,15 @@ export default function OfficeHoursKioskPage() {
     setNotice(null);
 
     try {
-      if (!emailValid) {
-        setError("Enter a valid email.");
+      if (!emailReady) {
+        setError("Use your GCCCD email.");
         return;
-      }
-
-      let coords = location;
-      if (!coords) {
-        coords = await getCurrentPosition({ timeoutMs: 7000 }).catch(() => null);
-      }
-
-      const body: { email: string; lat?: number; lon?: number } = { email: emailNormalized };
-      if (coords) {
-        body.lat = coords.lat;
-        body.lon = coords.lon;
-        setLocation(coords);
       }
 
       const response = await fetch("/api/office-hours/kiosk/check-out", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ email: emailNormalized }),
       });
       const json = (await response.json().catch(() => null)) as
         | { error?: string }
@@ -530,38 +559,56 @@ export default function OfficeHoursKioskPage() {
     } finally {
       setLoading(false);
     }
-  }, [emailNormalized, emailValid, loadStatus, location]);
+  }, [emailNormalized, emailReady, loadStatus]);
 
-  const emailSummary = emailValid ? emailNormalized : "Enter GCCCD email";
-  const selfieSummary = openSession
-    ? "Selfie not needed"
-    : photo
-      ? "Selfie ready"
-      : "Selfie required";
+  const emailSummary = !email.length
+    ? "Enter GCCCD email"
+    : statusLoading
+      ? "Checking…"
+      : !emailReady
+        ? "Use @gcccd.edu"
+        : branch === "check_out"
+          ? "Open session found"
+          : statusResolved
+            ? "Ready to continue"
+            : emailNormalized;
+  const selfieSummary = photo ? "Selfie ready" : "Selfie required";
   const locationSummary = preflight
     ? preflight.statusLabel
     : location
       ? "Location ready"
       : "No location yet";
-
-  const canOpenSelfie = emailValid && !openSession;
-  const canOpenLocation = emailValid && (openSession ? true : Boolean(photo));
-  const canOpenAction = emailValid;
-  const stickyHint = openSession
-    ? "Check-out works with or without location."
-    : "Check-in requires selfie and in-range location.";
+  const canSubmitCheckIn = canSubmitKioskCheckIn({
+    emailValid: emailReady,
+    hasPhoto: Boolean(photo),
+    preflightReady: Boolean(preflight) && !preflightLoading,
+    preflightAllowed: Boolean(preflight?.ok),
+  });
+  const actionSummary = loading
+    ? "Checking in…"
+    : canSubmitCheckIn
+      ? "Ready to check in"
+      : "Complete steps";
+  const actionTone = loading ? "neutral" : canSubmitCheckIn ? "good" : "warning";
+  const headerStep = branch === "check_out" ? 2 : stepRank(focusedStep);
+  const headerTotalSteps = branch === "check_out" ? 2 : 4;
+  const headerTitle = branch === "check_out" ? "Check out" : "Check in";
+  const headerSubtitle =
+    branch === "check_out"
+      ? "We found an open session for this email."
+      : "Type your GCCCD email to continue.";
 
   return (
-    <KioskShell>
+    <KioskShell className="kiosk-shell-main-inline">
       <h1 className="sr-only">Office Hours Kiosk</h1>
 
-      <div className="kiosk-panel kiosk-panel-with-sticky kiosk-page-stack">
+      <div className="kiosk-panel kiosk-page-stack">
         <KioskStepHeader
           eyebrow="Office Hours"
-          title={openSession ? "Check out" : "Check in"}
-          subtitle="One clear step at a time."
-          step={stepRank(autoWizardStep)}
-          totalSteps={4}
+          title={headerTitle}
+          subtitle={headerSubtitle}
+          step={headerStep}
+          totalSteps={headerTotalSteps}
           actions={
             <>
               <Link
@@ -589,10 +636,10 @@ export default function OfficeHoursKioskPage() {
           <StepCard
             step={1}
             title="Email"
-            summary={statusLoading ? "Checking…" : emailSummary}
-            tone={emailValid ? "good" : "warning"}
-            icon={emailValid ? "check" : "clock"}
-            active={focusedStep === "email"}
+            summary={emailSummary}
+            tone={statusLoading ? "neutral" : emailReady ? "good" : "warning"}
+            icon={statusLoading ? "dot" : emailReady ? "check" : "clock"}
+            active={branch === "email" || focusedStep === "email"}
             onActivate={() => setFocusedStep("email")}
           >
             <input
@@ -605,152 +652,151 @@ export default function OfficeHoursKioskPage() {
               value={email}
               onChange={(event) => setEmail(event.target.value)}
               aria-label="ASGC email"
+              disabled={loading}
             />
             <div className="kiosk-control-row">
               <span className="text-xs text-foreground/65">
-                {email.length ? (emailDomainOk ? "Valid GCCCD email." : "Use @gcccd.edu.") : "Use your GCCCD email."}
+                {!email.length
+                  ? "Use your GCCCD email."
+                  : !emailReady
+                    ? "Use your @gcccd.edu email."
+                    : statusLoading
+                      ? "Checking your kiosk status…"
+                      : branch === "email"
+                        ? "We’ll show the next step after we verify your status."
+                        : branch === "check_out"
+                        ? "Open session found. Finish with check-out below."
+                        : "Continue with selfie and location."}
               </span>
-              <Button
-                type="button"
-                variant="outline"
-                className="h-11 rounded-full px-4"
-                onClick={() => void loadStatus()}
-                disabled={!emailValid || statusLoading || loading}
-              >
-                {statusLoading ? "Checking…" : "Refresh"}
-              </Button>
             </div>
           </StepCard>
 
-          <StepCard
-            step={2}
-            title="Selfie"
-            summary={selfieSummary}
-            tone={openSession || photo ? "good" : "warning"}
-            icon={openSession || photo ? "check" : "clock"}
-            active={focusedStep === "selfie"}
-            disabled={!canOpenSelfie}
-            onActivate={() => {
-              if (canOpenSelfie) setFocusedStep("selfie");
-            }}
-          >
-            <KioskCameraCapture value={photo} disabled={loading || !emailValid || Boolean(openSession)} onChange={setPhoto} />
-          </StepCard>
-
-          <StepCard
-            step={3}
-            title="Location"
-            summary={preflightLoading ? "Checking range…" : locationSummary}
-            tone={preflight ? preflight.statusTone : location ? "neutral" : "warning"}
-            icon={preflight ? iconForTone(preflight.statusTone) : "dot"}
-            active={focusedStep === "location"}
-            disabled={!canOpenLocation}
-            onActivate={() => {
-              if (canOpenLocation) setFocusedStep("location");
-            }}
-          >
-            <div className="kiosk-control-row">
-              <Button
-                type="button"
-                variant="outline"
-                className="h-12 rounded-xl px-4"
-                onClick={() => void requestLocation()}
-                disabled={locationLoading || loading || !emailValid}
+          {branch === "check_in" ? (
+            <>
+              <StepCard
+                step={2}
+                title="Selfie"
+                summary={selfieSummary}
+                tone={photo ? "good" : "warning"}
+                icon={photo ? "check" : "clock"}
+                active={focusedStep === "selfie"}
+                disabled={false}
+                onActivate={() => setFocusedStep("selfie")}
               >
-                {locationLoading ? "Locating…" : location ? "Update location" : "Use location"}
-              </Button>
-              {location ? (
-                <span className="text-xs text-foreground/65">
-                  {location.accuracyM ? `±${Math.round(location.accuracyM)}m` : "Updated"}
-                </span>
-              ) : null}
-            </div>
+                <KioskCameraCapture value={photo} disabled={loading || !emailReady} onChange={setPhoto} />
+              </StepCard>
 
-            {preflight ? (
-              <p className="text-xs text-foreground/65">
-                {formatDistance(preflight.distanceM)} from office · radius{" "}
-                {formatDistance(preflight.radiusM)} · grace{" "}
-                {formatDistance(preflight.graceRadiusM)}
-              </p>
-            ) : null}
-            {geoPermission === "denied" ? (
-              <KioskNotice tone="critical">
-                Location permission is blocked. Enable location, then retry.
-              </KioskNotice>
-            ) : null}
-            {locationError ? <KioskNotice tone="critical">{locationError}</KioskNotice> : null}
-            {preflightError ? <KioskNotice tone="critical">{preflightError}</KioskNotice> : null}
-          </StepCard>
+              <StepCard
+                step={3}
+                title="Location"
+                summary={preflightLoading ? "Checking range…" : locationSummary}
+                tone={preflight ? preflight.statusTone : location ? "neutral" : "warning"}
+                icon={preflight ? iconForTone(preflight.statusTone) : "dot"}
+                active={focusedStep === "location"}
+                disabled={!photo}
+                onActivate={() => {
+                  if (photo) setFocusedStep("location");
+                }}
+              >
+                <div className="kiosk-control-row">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-12 rounded-xl px-4"
+                    onClick={() => void requestLocation()}
+                    disabled={locationLoading || loading || !emailReady}
+                  >
+                    {locationLoading ? "Locating…" : location ? "Update location" : "Use location"}
+                  </Button>
+                  {location ? (
+                    <span className="text-xs text-foreground/65">
+                      {location.accuracyM ? `±${Math.round(location.accuracyM)}m` : "Updated"}
+                    </span>
+                  ) : null}
+                </div>
 
-          <StepCard
-            step={4}
-            title="Action"
-            summary={stickyAction.mode === "check_out" ? "Check out" : stickyAction.label}
-            tone={stickyTone}
-            icon={iconForTone(stickyTone)}
-            active={focusedStep === "action"}
-            disabled={!canOpenAction}
-            onActivate={() => {
-              if (canOpenAction) setFocusedStep("action");
-            }}
-          >
-            {openSession ? (
+                {preflight ? (
+                  <p className="text-xs text-foreground/65">
+                    {formatDistance(preflight.distanceM)} from office · radius{" "}
+                    {formatDistance(preflight.radiusM)} · grace{" "}
+                    {formatDistance(preflight.graceRadiusM)}
+                  </p>
+                ) : null}
+                {geoPermission === "denied" ? (
+                  <KioskNotice tone="critical">
+                    Location permission is blocked. Enable location, then retry.
+                  </KioskNotice>
+                ) : null}
+                {locationError ? <KioskNotice tone="critical">{locationError}</KioskNotice> : null}
+                {preflightError ? <KioskNotice tone="critical">{preflightError}</KioskNotice> : null}
+              </StepCard>
+
+              <StepCard
+                step={4}
+                title="Action"
+                summary={actionSummary}
+                tone={actionTone}
+                icon={iconForTone(actionTone)}
+                active={focusedStep === "action"}
+                disabled={false}
+                onActivate={() => setFocusedStep("action")}
+              >
+                <p className="text-sm text-foreground/75">
+                  Complete the previous steps, then submit your check-in.
+                </p>
+                {!status?.user_exists ? (
+                  <KioskNotice tone="neutral">A new account is created on first check-in.</KioskNotice>
+                ) : null}
+                <KioskActionBar
+                  primary={
+                    <Button
+                      type="button"
+                      className="h-14 rounded-xl text-base"
+                      onClick={() => void onCheckIn()}
+                      disabled={!canSubmitCheckIn || loading}
+                    >
+                      {loading ? "Checking in…" : canSubmitCheckIn ? "Check in" : "Complete steps"}
+                    </Button>
+                  }
+                  hint="Check-in requires a selfie and an in-range location."
+                />
+              </StepCard>
+            </>
+          ) : null}
+
+          {branch === "check_out" ? (
+            <StepCard
+              step={2}
+              title="Check out"
+              summary={loading ? "Checking out…" : "Ready to check out"}
+              tone="good"
+              icon={loading ? "clock" : "check"}
+              active
+              onActivate={() => undefined}
+            >
               <p className="text-sm text-foreground/75">
-                Opened {formatWhen(openSession.checkin_at)}. Finish with check-out.
+                Opened {openSession ? formatWhen(openSession.checkin_at) : "earlier"}. Finish with check-out.
               </p>
-            ) : (
-              <p className="text-sm text-foreground/75">
-                Complete previous steps, then use the sticky action.
-              </p>
-            )}
-            {!status?.user_exists && emailValid && !statusLoading ? (
-              <KioskNotice tone="neutral">A new account is created on first check-in.</KioskNotice>
-            ) : null}
-          </StepCard>
+              <KioskActionBar
+                primary={
+                  <Button
+                    type="button"
+                    className="h-14 rounded-xl text-base"
+                    onClick={() => void onCheckOut()}
+                    disabled={loading || !emailReady}
+                  >
+                    {loading ? "Checking out…" : "Check out"}
+                  </Button>
+                }
+                hint="Checkout closes the active session for this email."
+              />
+            </StepCard>
+          ) : null}
         </motion.div>
 
         {notice ? <KioskNotice tone="good">{notice}</KioskNotice> : null}
         {error ? <KioskNotice tone="critical">{error}</KioskNotice> : null}
       </div>
-
-      <KioskStickyAction
-        status={
-          <KioskStatusChip
-            tone={stickyTone}
-            icon={iconForTone(stickyTone)}
-            label={
-              stickyAction.mode === "check_out"
-                ? emailValid
-                  ? "Ready to check out"
-                  : "Email required"
-                : stickyAction.disabled
-                  ? "Complete steps"
-                  : "Ready to check in"
-            }
-          />
-        }
-        primary={
-          <Button
-            type="button"
-            className="h-14 rounded-xl text-base"
-            onClick={() =>
-              void (stickyAction.mode === "check_out" ? onCheckOut() : onCheckIn())
-            }
-            disabled={stickyAction.disabled}
-          >
-            {stickyAction.label}
-          </Button>
-        }
-        secondary={
-          <Link
-            href={stickyAction.mode === "check_out" ? "/office-hours/check-in" : "/office-hours/check-out"}
-            className="inline-flex h-12 items-center justify-center rounded-xl border border-[var(--admin-border-soft)] bg-white px-4 text-sm font-medium text-foreground/85"
-          >
-            {stickyAction.mode === "check_out" ? "Open check-in page" : "Open check-out page"}
-          </Link>
-        }
-        hint={stickyHint}
-      />
     </KioskShell>
   );
 }

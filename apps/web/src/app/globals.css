@@ -724,15 +724,17 @@ body {
 
 .kiosk-step-meta {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 0.65rem;
+  flex-wrap: wrap;
 }
 
 .kiosk-step-actions {
   display: inline-flex;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-start;
   gap: 0.45rem;
 }
 
@@ -776,13 +778,18 @@ body {
   display: flex;
   width: 100%;
   min-height: 3.5rem;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 0.7rem;
+  flex-wrap: wrap;
   border: 0;
   background: transparent;
   padding: 0;
   text-align: left;
+}
+
+.kiosk-step-trigger > :first-child {
+  flex: 1 1 14rem;
 }
 
 .kiosk-step-title {
@@ -902,6 +909,10 @@ body {
   flex-wrap: wrap;
 }
 
+.kiosk-shell-main-inline {
+  padding-bottom: 1.6rem;
+}
+
 .kiosk-sticky-wrap {
   position: fixed;
   left: 0;
@@ -1000,6 +1011,10 @@ body {
   .kiosk-shell-main {
     max-width: 50rem;
     padding: 1.4rem 1.2rem 8.3rem;
+  }
+
+  .kiosk-shell-main-inline {
+    padding-bottom: 2rem;
   }
 
   .kiosk-panel {

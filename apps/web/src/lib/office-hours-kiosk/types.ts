@@ -1,6 +1,8 @@
 export type KioskStatusTone = "critical" | "warning" | "neutral" | "good";
 
-export type KioskEntryStep = "email" | "selfie" | "location" | "action" | "checked_in";
+export type KioskEntryBranch = "email" | "check_in" | "check_out";
+
+export type KioskCheckInStep = "selfie" | "location" | "action";
 
 export type KioskDistanceBand = "in_radius" | "in_grace" | "outside_grace";
 
