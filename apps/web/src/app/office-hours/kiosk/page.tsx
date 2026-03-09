@@ -2,23 +2,25 @@
 
 import Link from "next/link";
 import { motion, useReducedMotion } from "motion/react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { z } from "zod";
 
 import {
-  KioskActionBar,
   KioskCameraCapture,
   KioskNotice,
   KioskShell,
   KioskStatusChip,
   KioskStepHeader,
+  KioskStickyAction,
 } from "@/components/office-hours/kiosk";
 import { Button } from "@/components/ui/button";
 import {
-  canSubmitKioskCheckIn,
   deriveKioskEntryStep,
+  deriveKioskStickyAction,
+  normalizeKioskWizardStep,
 } from "@/lib/office-hours-kiosk/entry-state.mjs";
 import type { KioskLocationPreflightResult } from "@/lib/office-hours-kiosk/types";
+import { cn } from "@/lib/utils";
 
 type KioskOpenSession = {
   id: string;
@@ -37,7 +39,14 @@ type LocationSnapshot = {
   acquiredAt: string;
 };
 
+type WizardStepId = "email" | "selfie" | "location" | "action";
+
+const WIZARD_STEPS: WizardStepId[] = ["email", "selfie", "location", "action"];
 const EmailSchema = z.string().email();
+
+function stepRank(stepId: WizardStepId): number {
+  return WIZARD_STEPS.indexOf(stepId) + 1;
+}
 
 function normalizeEmail(raw: string): string {
   return raw.trim().toLowerCase();
@@ -132,6 +141,47 @@ function formatWhen(iso: string): string {
   }
 }
 
+function StepCard({
+  step,
+  title,
+  summary,
+  tone,
+  icon,
+  active,
+  disabled,
+  onActivate,
+  children,
+}: {
+  step: number;
+  title: string;
+  summary: string;
+  tone: "critical" | "warning" | "neutral" | "good";
+  icon?: "triangle" | "clock" | "dot" | "check";
+  active: boolean;
+  disabled?: boolean;
+  onActivate: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <section className={cn("kiosk-section kiosk-step-card", active && "kiosk-step-card-active")}>
+      <button
+        type="button"
+        className="kiosk-step-trigger"
+        onClick={onActivate}
+        disabled={disabled && !active}
+      >
+        <div className="min-w-0">
+          <p className="kiosk-step-title">{step}. {title}</p>
+          {!active ? <p className="kiosk-step-summary">{summary}</p> : null}
+        </div>
+        <KioskStatusChip tone={tone} icon={icon} label={summary} className="max-w-[58%] justify-end" />
+      </button>
+
+      {active ? <div className="kiosk-step-body">{children}</div> : null}
+    </section>
+  );
+}
+
 export default function OfficeHoursKioskPage() {
   const reduceMotion = useReducedMotion();
 
@@ -166,14 +216,6 @@ export default function OfficeHoursKioskPage() {
     () => (emailValid ? isGcccdEmail(emailNormalized) : false),
     [emailNormalized, emailValid],
   );
-
-  useEffect(() => {
-    const html = document.documentElement;
-    html.setAttribute("data-kiosk", "true");
-    return () => {
-      html.removeAttribute("data-kiosk");
-    };
-  }, []);
 
   useEffect(() => {
     try {
@@ -325,7 +367,7 @@ export default function OfficeHoursKioskPage() {
     })();
   }, [emailNormalized, emailValid, location, openSession]);
 
-  const stepId = useMemo(
+  const entryStep = useMemo(
     () =>
       deriveKioskEntryStep({
         emailValid,
@@ -337,13 +379,31 @@ export default function OfficeHoursKioskPage() {
     [emailValid, openSession, photo, preflight, preflightLoading],
   );
 
-  const stepNumber = stepId === "email" ? 1 : stepId === "selfie" ? 2 : stepId === "location" ? 3 : 4;
-  const canCheckIn = canSubmitKioskCheckIn({
+  const autoWizardStep = normalizeKioskWizardStep(entryStep) as WizardStepId;
+  const [focusedStep, setFocusedStep] = useState<WizardStepId>("email");
+
+  useEffect(() => {
+    setFocusedStep((previous) => {
+      const previousRank = stepRank(previous);
+      const autoRank = stepRank(autoWizardStep);
+      if (previousRank === autoRank) return previous;
+      return autoWizardStep;
+    });
+  }, [autoWizardStep]);
+
+  const stickyAction = deriveKioskStickyAction({
+    hasOpenSession: Boolean(openSession),
     emailValid,
     hasPhoto: Boolean(photo),
     preflightReady: Boolean(preflight) && !preflightLoading,
     preflightAllowed: Boolean(preflight?.ok),
+    loading,
   });
+  const stickyTone = (stickyAction.tone ?? "neutral") as
+    | "critical"
+    | "warning"
+    | "neutral"
+    | "good";
 
   const requestLocation = useCallback(async () => {
     setLocationLoading(true);
@@ -472,47 +532,47 @@ export default function OfficeHoursKioskPage() {
     }
   }, [emailNormalized, emailValid, loadStatus, location]);
 
-  const emailHint = useMemo(() => {
-    if (!email.length) return null;
-    if (!emailValid) return "Use a valid email.";
-    if (!emailDomainOk) return "Use @gcccd.edu.";
-    return null;
-  }, [email.length, emailDomainOk, emailValid]);
+  const emailSummary = emailValid ? emailNormalized : "Enter GCCCD email";
+  const selfieSummary = openSession
+    ? "Selfie not needed"
+    : photo
+      ? "Selfie ready"
+      : "Selfie required";
+  const locationSummary = preflight
+    ? preflight.statusLabel
+    : location
+      ? "Location ready"
+      : "No location yet";
 
-  const locationSummary = useMemo(() => {
-    if (!location) return "No location yet.";
-    const accuracy = location.accuracyM ? `±${Math.round(location.accuracyM)}m` : null;
-    return accuracy ? `Updated ${accuracy}` : "Location ready";
-  }, [location]);
-
-  const statusTone = openSession ? "good" : statusLoading ? "neutral" : "warning";
-  const statusLabel = openSession
-    ? "Session open"
-    : statusLoading
-      ? "Checking status"
-      : "Ready to check in";
+  const canOpenSelfie = emailValid && !openSession;
+  const canOpenLocation = emailValid && (openSession ? true : Boolean(photo));
+  const canOpenAction = emailValid;
+  const stickyHint = openSession
+    ? "Check-out works with or without location."
+    : "Check-in requires selfie and in-range location.";
 
   return (
     <KioskShell>
       <h1 className="sr-only">Office Hours Kiosk</h1>
-      <div className="kiosk-panel space-y-4">
+
+      <div className="kiosk-panel kiosk-panel-with-sticky kiosk-page-stack">
         <KioskStepHeader
           eyebrow="Office Hours"
           title={openSession ? "Check out" : "Check in"}
-          subtitle="Email. Selfie. Location."
-          step={stepNumber}
+          subtitle="One clear step at a time."
+          step={stepRank(autoWizardStep)}
           totalSteps={4}
           actions={
             <>
               <Link
                 href="/"
-                className="inline-flex h-10 items-center justify-center rounded-full border border-[var(--admin-border-soft)] bg-white/80 px-3 text-xs font-medium text-foreground/80"
+                className="inline-flex h-10 items-center justify-center rounded-full border border-[var(--admin-border-soft)] bg-white px-3 text-xs font-medium text-foreground/80"
               >
                 Home
               </Link>
               <Link
                 href="/login"
-                className="inline-flex h-10 items-center justify-center rounded-full border border-[var(--admin-border-soft)] bg-white/80 px-3 text-xs font-medium text-foreground/80"
+                className="inline-flex h-10 items-center justify-center rounded-full border border-[var(--admin-border-soft)] bg-white px-3 text-xs font-medium text-foreground/80"
               >
                 Sign in
               </Link>
@@ -520,208 +580,177 @@ export default function OfficeHoursKioskPage() {
           }
         />
 
-        <motion.section
-          className="kiosk-section space-y-3"
+        <motion.div
           initial={reduceMotion ? false : { opacity: 0, y: 8 }}
           animate={reduceMotion ? undefined : { opacity: 1, y: 0 }}
           transition={{ duration: 0.22, ease: "easeOut" }}
+          className="kiosk-page-stack"
         >
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-xs font-medium uppercase tracking-[0.12em] text-[var(--admin-label)]">
-              Step 1 · Email
-            </p>
-            <KioskStatusChip tone={statusTone} icon={iconForTone(statusTone)} label={statusLabel} />
-          </div>
-
-          <input
-            type="email"
-            inputMode="email"
-            autoCapitalize="none"
-            autoCorrect="off"
-            className="kiosk-input"
-            placeholder="name@gcccd.edu"
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-            aria-label="ASGC email"
-          />
-
-          <div className="flex items-center justify-between gap-2 text-xs text-foreground/65">
-            <span>{emailHint ?? "Use your GCCCD email."}</span>
-            <Button
-              type="button"
-              variant="ghost"
-              className="h-9 rounded-full px-3 text-xs"
-              onClick={() => void loadStatus()}
-              disabled={!emailValid || statusLoading || loading}
-            >
-              {statusLoading ? "Checking…" : "Refresh"}
-            </Button>
-          </div>
-        </motion.section>
-
-        {!openSession ? (
-          <motion.section
-            className="kiosk-section space-y-3"
-            initial={reduceMotion ? false : { opacity: 0, y: 8 }}
-            animate={reduceMotion ? undefined : { opacity: 1, y: 0 }}
-            transition={{ duration: 0.22, ease: "easeOut", delay: reduceMotion ? 0 : 0.04 }}
+          <StepCard
+            step={1}
+            title="Email"
+            summary={statusLoading ? "Checking…" : emailSummary}
+            tone={emailValid ? "good" : "warning"}
+            icon={emailValid ? "check" : "clock"}
+            active={focusedStep === "email"}
+            onActivate={() => setFocusedStep("email")}
           >
-            <p className="text-xs font-medium uppercase tracking-[0.12em] text-[var(--admin-label)]">
-              Step 2 · Selfie
-            </p>
-            <KioskCameraCapture value={photo} disabled={loading || !emailValid} onChange={setPhoto} />
-          </motion.section>
-        ) : null}
+            <input
+              type="email"
+              inputMode="email"
+              autoCapitalize="none"
+              autoCorrect="off"
+              className="kiosk-input"
+              placeholder="name@gcccd.edu"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              aria-label="ASGC email"
+            />
+            <div className="kiosk-control-row">
+              <span className="text-xs text-foreground/65">
+                {email.length ? (emailDomainOk ? "Valid GCCCD email." : "Use @gcccd.edu.") : "Use your GCCCD email."}
+              </span>
+              <Button
+                type="button"
+                variant="outline"
+                className="h-11 rounded-full px-4"
+                onClick={() => void loadStatus()}
+                disabled={!emailValid || statusLoading || loading}
+              >
+                {statusLoading ? "Checking…" : "Refresh"}
+              </Button>
+            </div>
+          </StepCard>
 
-        <motion.section
-          className="kiosk-section space-y-3"
-          initial={reduceMotion ? false : { opacity: 0, y: 8 }}
-          animate={reduceMotion ? undefined : { opacity: 1, y: 0 }}
-          transition={{ duration: 0.22, ease: "easeOut", delay: reduceMotion ? 0 : 0.08 }}
-        >
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-xs font-medium uppercase tracking-[0.12em] text-[var(--admin-label)]">
-              Step 3 · Location
-            </p>
+          <StepCard
+            step={2}
+            title="Selfie"
+            summary={selfieSummary}
+            tone={openSession || photo ? "good" : "warning"}
+            icon={openSession || photo ? "check" : "clock"}
+            active={focusedStep === "selfie"}
+            disabled={!canOpenSelfie}
+            onActivate={() => {
+              if (canOpenSelfie) setFocusedStep("selfie");
+            }}
+          >
+            <KioskCameraCapture value={photo} disabled={loading || !emailValid || Boolean(openSession)} onChange={setPhoto} />
+          </StepCard>
+
+          <StepCard
+            step={3}
+            title="Location"
+            summary={preflightLoading ? "Checking range…" : locationSummary}
+            tone={preflight ? preflight.statusTone : location ? "neutral" : "warning"}
+            icon={preflight ? iconForTone(preflight.statusTone) : "dot"}
+            active={focusedStep === "location"}
+            disabled={!canOpenLocation}
+            onActivate={() => {
+              if (canOpenLocation) setFocusedStep("location");
+            }}
+          >
+            <div className="kiosk-control-row">
+              <Button
+                type="button"
+                variant="outline"
+                className="h-12 rounded-xl px-4"
+                onClick={() => void requestLocation()}
+                disabled={locationLoading || loading || !emailValid}
+              >
+                {locationLoading ? "Locating…" : location ? "Update location" : "Use location"}
+              </Button>
+              {location ? (
+                <span className="text-xs text-foreground/65">
+                  {location.accuracyM ? `±${Math.round(location.accuracyM)}m` : "Updated"}
+                </span>
+              ) : null}
+            </div>
+
             {preflight ? (
-              <KioskStatusChip
-                tone={preflight.statusTone}
-                icon={iconForTone(preflight.statusTone)}
-                label={preflight.statusLabel}
-              />
-            ) : (
-              <KioskStatusChip tone="neutral" icon="dot" label={locationSummary} />
-            )}
-          </div>
-
-          <div className="kiosk-control-row">
-            <Button
-              type="button"
-              variant="outline"
-              className="h-12 rounded-xl px-4"
-              onClick={() => void requestLocation()}
-              disabled={locationLoading || loading || !emailValid}
-            >
-              {locationLoading ? "Locating…" : location ? "Update location" : "Use location"}
-            </Button>
-            {location ? (
-              <span className="text-xs text-foreground/65">{locationSummary}</span>
+              <p className="text-xs text-foreground/65">
+                {formatDistance(preflight.distanceM)} from office · radius{" "}
+                {formatDistance(preflight.radiusM)} · grace{" "}
+                {formatDistance(preflight.graceRadiusM)}
+              </p>
             ) : null}
-          </div>
+            {geoPermission === "denied" ? (
+              <KioskNotice tone="critical">
+                Location permission is blocked. Enable location, then retry.
+              </KioskNotice>
+            ) : null}
+            {locationError ? <KioskNotice tone="critical">{locationError}</KioskNotice> : null}
+            {preflightError ? <KioskNotice tone="critical">{preflightError}</KioskNotice> : null}
+          </StepCard>
 
-          {preflightLoading ? (
-            <p className="text-xs text-foreground/65">Checking range…</p>
-          ) : null}
-
-          {preflight ? (
-            <p className="text-xs text-foreground/65">
-              {formatDistance(preflight.distanceM)} from office · radius{" "}
-              {formatDistance(preflight.radiusM)} · grace{" "}
-              {formatDistance(preflight.graceRadiusM)}
-            </p>
-          ) : null}
-
-          {geoPermission === "denied" ? (
-            <KioskNotice tone="critical">
-              Location permission is blocked. Enable location, then retry.
-            </KioskNotice>
-          ) : null}
-
-          {locationError ? <KioskNotice tone="critical">{locationError}</KioskNotice> : null}
-          {preflightError ? <KioskNotice tone="critical">{preflightError}</KioskNotice> : null}
-        </motion.section>
-
-        <motion.section
-          className="kiosk-section space-y-3"
-          initial={reduceMotion ? false : { opacity: 0, y: 8 }}
-          animate={reduceMotion ? undefined : { opacity: 1, y: 0 }}
-          transition={{ duration: 0.22, ease: "easeOut", delay: reduceMotion ? 0 : 0.12 }}
-        >
-          <div className="flex items-center justify-between gap-2">
-            <p className="text-xs font-medium uppercase tracking-[0.12em] text-[var(--admin-label)]">
-              Step 4 · Action
-            </p>
+          <StepCard
+            step={4}
+            title="Action"
+            summary={stickyAction.mode === "check_out" ? "Check out" : stickyAction.label}
+            tone={stickyTone}
+            icon={iconForTone(stickyTone)}
+            active={focusedStep === "action"}
+            disabled={!canOpenAction}
+            onActivate={() => {
+              if (canOpenAction) setFocusedStep("action");
+            }}
+          >
             {openSession ? (
-              <KioskStatusChip tone="good" icon="check" label="Open session" />
-            ) : canCheckIn ? (
-              <KioskStatusChip tone="good" icon="check" label="Ready" />
+              <p className="text-sm text-foreground/75">
+                Opened {formatWhen(openSession.checkin_at)}. Finish with check-out.
+              </p>
             ) : (
-              <KioskStatusChip tone="warning" icon="clock" label="Complete steps" />
+              <p className="text-sm text-foreground/75">
+                Complete previous steps, then use the sticky action.
+              </p>
             )}
-          </div>
+            {!status?.user_exists && emailValid && !statusLoading ? (
+              <KioskNotice tone="neutral">A new account is created on first check-in.</KioskNotice>
+            ) : null}
+          </StepCard>
+        </motion.div>
 
-          {openSession ? (
-            <KioskActionBar
-              primary={
-                <Button
-                  type="button"
-                  className="h-14 rounded-xl text-base"
-                  onClick={() => void onCheckOut()}
-                  disabled={loading || !emailValid}
-                >
-                  {loading ? "Checking out…" : "Check out"}
-                </Button>
-              }
-              secondary={
-                <Link
-                  href="/office-hours/check-in"
-                  className="inline-flex items-center justify-center border border-[var(--admin-border-soft)] bg-white/80 text-sm font-medium text-foreground/80"
-                >
-                  Go to check-in page
-                </Link>
-              }
-              tertiary={
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="h-12 rounded-xl"
-                  onClick={() => void loadStatus()}
-                  disabled={statusLoading || loading || !emailValid}
-                >
-                  Refresh status
-                </Button>
-              }
-              hint={`Opened ${formatWhen(openSession.checkin_at)}`}
-            />
-          ) : (
-            <KioskActionBar
-              primary={
-                <Button
-                  type="button"
-                  className="h-14 rounded-xl text-base"
-                  onClick={() => void onCheckIn()}
-                  disabled={loading || !canCheckIn}
-                >
-                  {loading ? "Checking in…" : "Check in"}
-                </Button>
-              }
-              secondary={
-                <Link
-                  href="/office-hours/check-out"
-                  className="inline-flex items-center justify-center border border-[var(--admin-border-soft)] bg-white/80 text-sm font-medium text-foreground/80"
-                >
-                  Need check out?
-                </Link>
-              }
-              tertiary={
-                <Link
-                  href="/office-hours"
-                  className="inline-flex items-center justify-center border border-[var(--admin-border-soft)] bg-white/80 text-sm font-medium text-foreground/80"
-                >
-                  Office Hours
-                </Link>
-              }
-              hint="Check-out remains available without location."
-            />
-          )}
-        </motion.section>
-
-        {!status?.user_exists && emailValid && !statusLoading ? (
-          <KioskNotice tone="neutral">New account will be created on first check-in.</KioskNotice>
-        ) : null}
         {notice ? <KioskNotice tone="good">{notice}</KioskNotice> : null}
         {error ? <KioskNotice tone="critical">{error}</KioskNotice> : null}
       </div>
+
+      <KioskStickyAction
+        status={
+          <KioskStatusChip
+            tone={stickyTone}
+            icon={iconForTone(stickyTone)}
+            label={
+              stickyAction.mode === "check_out"
+                ? emailValid
+                  ? "Ready to check out"
+                  : "Email required"
+                : stickyAction.disabled
+                  ? "Complete steps"
+                  : "Ready to check in"
+            }
+          />
+        }
+        primary={
+          <Button
+            type="button"
+            className="h-14 rounded-xl text-base"
+            onClick={() =>
+              void (stickyAction.mode === "check_out" ? onCheckOut() : onCheckIn())
+            }
+            disabled={stickyAction.disabled}
+          >
+            {stickyAction.label}
+          </Button>
+        }
+        secondary={
+          <Link
+            href={stickyAction.mode === "check_out" ? "/office-hours/check-in" : "/office-hours/check-out"}
+            className="inline-flex h-12 items-center justify-center rounded-xl border border-[var(--admin-border-soft)] bg-white px-4 text-sm font-medium text-foreground/85"
+          >
+            {stickyAction.mode === "check_out" ? "Open check-in page" : "Open check-out page"}
+          </Link>
+        }
+        hint={stickyHint}
+      />
     </KioskShell>
   );
 }

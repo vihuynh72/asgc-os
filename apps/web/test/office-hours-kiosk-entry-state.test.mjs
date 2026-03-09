@@ -3,8 +3,10 @@ import assert from "node:assert/strict";
 
 import {
   canSubmitKioskCheckIn,
+  deriveKioskStickyAction,
   deriveKioskEntryStep,
   mapDistanceToPreflightStatus,
+  normalizeKioskWizardStep,
 } from "../src/lib/office-hours-kiosk/entry-state.mjs";
 
 test("deriveKioskEntryStep resolves check-in flow in strict order", () => {
@@ -130,5 +132,84 @@ test("mapDistanceToPreflightStatus maps geofence bands and tones", () => {
   assert.deepEqual(
     mapDistanceToPreflightStatus({ distanceM: 89, radiusM: 45, graceRadiusM: 70 }),
     { band: "outside_grace", statusTone: "critical", statusLabel: "Out of range" },
+  );
+});
+
+test("normalizeKioskWizardStep maps checked_in to action and guards invalid step ids", () => {
+  assert.equal(normalizeKioskWizardStep("email"), "email");
+  assert.equal(normalizeKioskWizardStep("selfie"), "selfie");
+  assert.equal(normalizeKioskWizardStep("location"), "location");
+  assert.equal(normalizeKioskWizardStep("action"), "action");
+  assert.equal(normalizeKioskWizardStep("checked_in"), "action");
+  assert.equal(normalizeKioskWizardStep("unknown"), "email");
+});
+
+test("deriveKioskStickyAction enforces strict check-in gate and lenient check-out gate", () => {
+  assert.deepEqual(
+    deriveKioskStickyAction({
+      hasOpenSession: false,
+      emailValid: true,
+      hasPhoto: true,
+      preflightReady: true,
+      preflightAllowed: true,
+      loading: false,
+    }),
+    {
+      mode: "check_in",
+      label: "Check in",
+      disabled: false,
+      tone: "good",
+    },
+  );
+
+  assert.deepEqual(
+    deriveKioskStickyAction({
+      hasOpenSession: false,
+      emailValid: true,
+      hasPhoto: false,
+      preflightReady: true,
+      preflightAllowed: true,
+      loading: false,
+    }),
+    {
+      mode: "check_in",
+      label: "Complete steps",
+      disabled: true,
+      tone: "warning",
+    },
+  );
+
+  assert.deepEqual(
+    deriveKioskStickyAction({
+      hasOpenSession: true,
+      emailValid: false,
+      hasPhoto: false,
+      preflightReady: false,
+      preflightAllowed: false,
+      loading: false,
+    }),
+    {
+      mode: "check_out",
+      label: "Enter email",
+      disabled: true,
+      tone: "warning",
+    },
+  );
+
+  assert.deepEqual(
+    deriveKioskStickyAction({
+      hasOpenSession: true,
+      emailValid: true,
+      hasPhoto: false,
+      preflightReady: false,
+      preflightAllowed: false,
+      loading: true,
+    }),
+    {
+      mode: "check_out",
+      label: "Checking out…",
+      disabled: true,
+      tone: "good",
+    },
   );
 });
