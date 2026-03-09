@@ -3,66 +3,48 @@ import assert from "node:assert/strict";
 
 import {
   canSubmitKioskCheckIn,
-  deriveKioskStickyAction,
-  deriveKioskEntryStep,
+  deriveKioskCheckInStep,
+  deriveKioskEntryBranch,
   mapDistanceToPreflightStatus,
-  normalizeKioskWizardStep,
 } from "../src/lib/office-hours-kiosk/entry-state.mjs";
 
-test("deriveKioskEntryStep resolves check-in flow in strict order", () => {
+test("deriveKioskEntryBranch keeps invalid or unresolved email in the email branch", () => {
   assert.equal(
-    deriveKioskEntryStep({
+    deriveKioskEntryBranch({
       emailValid: false,
-      hasPhoto: false,
+      statusResolved: false,
       hasOpenSession: false,
-      preflightReady: false,
-      preflightAllowed: false,
     }),
     "email",
   );
 
   assert.equal(
-    deriveKioskEntryStep({
+    deriveKioskEntryBranch({
       emailValid: true,
-      hasPhoto: false,
+      statusResolved: false,
       hasOpenSession: false,
-      preflightReady: false,
-      preflightAllowed: false,
     }),
-    "selfie",
+    "email",
+  );
+});
+
+test("deriveKioskEntryBranch sends resolved users into the correct branch", () => {
+  assert.equal(
+    deriveKioskEntryBranch({
+      emailValid: true,
+      statusResolved: true,
+      hasOpenSession: false,
+    }),
+    "check_in",
   );
 
   assert.equal(
-    deriveKioskEntryStep({
+    deriveKioskEntryBranch({
       emailValid: true,
-      hasPhoto: true,
-      hasOpenSession: false,
-      preflightReady: false,
-      preflightAllowed: false,
-    }),
-    "location",
-  );
-
-  assert.equal(
-    deriveKioskEntryStep({
-      emailValid: true,
-      hasPhoto: true,
-      hasOpenSession: false,
-      preflightReady: true,
-      preflightAllowed: true,
-    }),
-    "action",
-  );
-
-  assert.equal(
-    deriveKioskEntryStep({
-      emailValid: true,
-      hasPhoto: false,
+      statusResolved: true,
       hasOpenSession: true,
-      preflightReady: false,
-      preflightAllowed: false,
     }),
-    "checked_in",
+    "check_out",
   );
 });
 
@@ -118,6 +100,35 @@ test("canSubmitKioskCheckIn requires email, selfie, and allowed preflight", () =
   );
 });
 
+test("deriveKioskCheckInStep progresses through selfie, location, and action", () => {
+  assert.equal(
+    deriveKioskCheckInStep({
+      hasPhoto: false,
+      preflightReady: false,
+      preflightAllowed: false,
+    }),
+    "selfie",
+  );
+
+  assert.equal(
+    deriveKioskCheckInStep({
+      hasPhoto: true,
+      preflightReady: false,
+      preflightAllowed: false,
+    }),
+    "location",
+  );
+
+  assert.equal(
+    deriveKioskCheckInStep({
+      hasPhoto: true,
+      preflightReady: true,
+      preflightAllowed: true,
+    }),
+    "action",
+  );
+});
+
 test("mapDistanceToPreflightStatus maps geofence bands and tones", () => {
   assert.deepEqual(
     mapDistanceToPreflightStatus({ distanceM: 38, radiusM: 45, graceRadiusM: 70 }),
@@ -132,84 +143,5 @@ test("mapDistanceToPreflightStatus maps geofence bands and tones", () => {
   assert.deepEqual(
     mapDistanceToPreflightStatus({ distanceM: 89, radiusM: 45, graceRadiusM: 70 }),
     { band: "outside_grace", statusTone: "critical", statusLabel: "Out of range" },
-  );
-});
-
-test("normalizeKioskWizardStep maps checked_in to action and guards invalid step ids", () => {
-  assert.equal(normalizeKioskWizardStep("email"), "email");
-  assert.equal(normalizeKioskWizardStep("selfie"), "selfie");
-  assert.equal(normalizeKioskWizardStep("location"), "location");
-  assert.equal(normalizeKioskWizardStep("action"), "action");
-  assert.equal(normalizeKioskWizardStep("checked_in"), "action");
-  assert.equal(normalizeKioskWizardStep("unknown"), "email");
-});
-
-test("deriveKioskStickyAction enforces strict check-in gate and lenient check-out gate", () => {
-  assert.deepEqual(
-    deriveKioskStickyAction({
-      hasOpenSession: false,
-      emailValid: true,
-      hasPhoto: true,
-      preflightReady: true,
-      preflightAllowed: true,
-      loading: false,
-    }),
-    {
-      mode: "check_in",
-      label: "Check in",
-      disabled: false,
-      tone: "good",
-    },
-  );
-
-  assert.deepEqual(
-    deriveKioskStickyAction({
-      hasOpenSession: false,
-      emailValid: true,
-      hasPhoto: false,
-      preflightReady: true,
-      preflightAllowed: true,
-      loading: false,
-    }),
-    {
-      mode: "check_in",
-      label: "Complete steps",
-      disabled: true,
-      tone: "warning",
-    },
-  );
-
-  assert.deepEqual(
-    deriveKioskStickyAction({
-      hasOpenSession: true,
-      emailValid: false,
-      hasPhoto: false,
-      preflightReady: false,
-      preflightAllowed: false,
-      loading: false,
-    }),
-    {
-      mode: "check_out",
-      label: "Enter email",
-      disabled: true,
-      tone: "warning",
-    },
-  );
-
-  assert.deepEqual(
-    deriveKioskStickyAction({
-      hasOpenSession: true,
-      emailValid: true,
-      hasPhoto: false,
-      preflightReady: false,
-      preflightAllowed: false,
-      loading: true,
-    }),
-    {
-      mode: "check_out",
-      label: "Checking out…",
-      disabled: true,
-      tone: "good",
-    },
   );
 });
