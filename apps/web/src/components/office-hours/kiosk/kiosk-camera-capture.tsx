@@ -64,30 +64,30 @@ export function KioskCameraCapture({
       <div className="kiosk-control-row kiosk-control-row-split">
         <Button
           variant={mode === "camera" ? "default" : "outline"}
-          className="h-11 rounded-full px-4"
+          className="kiosk-camera-pill h-11 rounded-full px-4"
           onClick={() => setMode("camera")}
           disabled={!canUseCamera || disabled}
         >
-          Camera
+          ◎ Live
         </Button>
         <Button
           variant={mode === "file" ? "default" : "outline"}
-          className="h-11 rounded-full px-4"
+          className="kiosk-camera-pill h-11 rounded-full px-4"
           onClick={() => {
             setMode("file");
             stop();
           }}
           disabled={disabled}
         >
-          Upload
+          ↑ Upload
         </Button>
       </div>
 
       {value ? (
         <div className="kiosk-control-grid">
           <PreviewImage file={value} />
-          <Button variant="outline" className="h-12 rounded-xl" onClick={() => onChange(null)} disabled={disabled}>
-            Retake
+          <Button variant="outline" className="kiosk-camera-secondary h-12 rounded-xl" onClick={() => onChange(null)} disabled={disabled}>
+            ↺ Retake
           </Button>
         </div>
       ) : null}
@@ -126,13 +126,13 @@ export function KioskCameraCapture({
 
                 <div className="kiosk-control-row kiosk-control-row-split">
                   {controlState.canFlip ? (
-                    <Button variant="outline" className="h-11 rounded-full px-4" onClick={() => void rotateCamera()} disabled={disabled}>
-                      Flip
+                    <Button variant="outline" className="kiosk-camera-pill h-11 rounded-full px-4" onClick={() => void rotateCamera()} disabled={disabled}>
+                      ↺ Flip
                     </Button>
                   ) : null}
                   {controlState.canTorch ? (
-                    <Button variant="outline" className="h-11 rounded-full px-4" onClick={() => void toggleTorch()} disabled={disabled}>
-                      {torchOn ? "Torch off" : "Torch on"}
+                    <Button variant="outline" className="kiosk-camera-pill h-11 rounded-full px-4" onClick={() => void toggleTorch()} disabled={disabled}>
+                      {torchOn ? "✦ Flash off" : "✦ Flash"}
                     </Button>
                   ) : null}
                 </div>
@@ -153,27 +153,27 @@ export function KioskCameraCapture({
                 ) : null}
               </div>
 
-              <Button className="h-14 rounded-xl text-base" onClick={() => void capture()} disabled={disabled || capturing || !videoReady}>
-                {capturing ? "Capturing…" : "Take selfie"}
+              <Button className="kiosk-camera-primary h-14 rounded-xl text-base" onClick={() => void capture()} disabled={disabled || capturing || !videoReady}>
+                {capturing ? "Capturing…" : "● Capture"}
               </Button>
               {warmTooLong ? (
-                <Button variant="outline" className="h-11 rounded-xl" onClick={() => void start()} disabled={disabled}>
-                  Retry camera
+                <Button variant="outline" className="kiosk-camera-secondary h-11 rounded-xl" onClick={() => void start()} disabled={disabled}>
+                  Retry
                 </Button>
               ) : null}
-              <Button variant="outline" className="h-11 rounded-xl" onClick={stop} disabled={disabled}>
-                Disable camera
+              <Button variant="outline" className="kiosk-camera-secondary h-11 rounded-xl" onClick={stop} disabled={disabled}>
+                Close camera
               </Button>
             </>
           ) : (
             <>
               <Button
-                className="h-14 rounded-xl text-base"
+                className="kiosk-camera-primary h-14 rounded-xl text-base"
                 variant="outline"
                 onClick={() => void start()}
                 disabled={disabled || !canUseCamera || cameraState === "starting"}
               >
-                {cameraState === "starting" ? "Requesting…" : "Enable camera"}
+                {cameraState === "starting" ? "Requesting…" : "◎ Open camera"}
               </Button>
             </>
           )}
