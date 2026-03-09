@@ -667,13 +667,13 @@ body {
 
 .kiosk-panel {
   width: 100%;
-  border: 1px solid rgb(23 24 26 / 0.12);
+  border: 1px solid rgb(23 24 26 / 0.15);
   border-radius: 1.6rem;
   background:
-    linear-gradient(180deg, rgb(255 255 255 / 0.96), rgb(249 250 247 / 0.98));
-  box-shadow: 0 28px 52px -40px rgb(15 23 42 / 0.28);
+    linear-gradient(180deg, rgb(255 255 255 / 0.985), rgb(248 249 246 / 0.98));
+  box-shadow: 0 26px 54px -40px rgb(15 23 42 / 0.24);
   backdrop-filter: none;
-  padding: 0.9rem;
+  padding: 0.95rem;
 }
 
 .kiosk-panel-with-sticky {
@@ -718,9 +718,9 @@ body {
 }
 
 .kiosk-subtitle {
-  font-size: 0.84rem;
-  line-height: 1.38;
-  color: rgb(23 24 26 / 0.72);
+  font-size: 0.9rem;
+  line-height: 1.42;
+  color: rgb(23 24 26 / 0.78);
 }
 
 .kiosk-step-meta {
@@ -760,10 +760,10 @@ body {
 
 .kiosk-section {
   margin-top: 0;
-  border: 1px solid rgb(23 24 26 / 0.12);
+  border: 1px solid rgb(23 24 26 / 0.13);
   border-radius: 1.3rem;
-  background: linear-gradient(180deg, rgb(255 255 255 / 0.96), rgb(251 251 249 / 0.94));
-  padding: 0.8rem 0.8rem 0.82rem;
+  background: linear-gradient(180deg, rgb(255 255 255 / 0.98), rgb(250 251 248 / 0.96));
+  padding: 0.88rem 0.88rem 0.9rem;
 }
 
 .kiosk-step-card {
@@ -771,19 +771,20 @@ body {
 }
 
 .kiosk-step-card-active {
-  border-color: rgb(0 104 94 / 0.26);
-  background: linear-gradient(180deg, rgb(248 253 251 / 0.98), rgb(255 255 255 / 0.98));
-  box-shadow: 0 14px 28px -24px rgb(0 104 94 / 0.32);
+  border-color: rgb(0 104 94 / 0.28);
+  background: linear-gradient(180deg, rgb(243 250 247 / 0.98), rgb(255 255 255 / 0.99));
+  box-shadow: 0 16px 28px -24px rgb(0 104 94 / 0.22);
 }
 
 .kiosk-step-trigger {
   display: flex;
   width: 100%;
   min-height: 0;
-  flex-direction: column;
+  flex-direction: row;
   align-items: flex-start;
-  justify-content: flex-start;
-  gap: 0.55rem;
+  justify-content: space-between;
+  gap: 0.62rem;
+  flex-wrap: wrap;
   border: 0;
   background: transparent;
   padding: 0;
@@ -791,21 +792,22 @@ body {
 }
 
 .kiosk-step-trigger > :first-child {
-  flex: none;
-  width: 100%;
+  flex: 1 1 11rem;
+  min-width: 0;
+  width: auto;
 }
 
 .kiosk-step-title {
-  font-size: 0.95rem;
+  font-size: 0.98rem;
   font-weight: 650;
-  color: rgb(23 24 26 / 0.88);
+  color: rgb(23 24 26 / 0.92);
 }
 
 .kiosk-step-summary {
   margin-top: 0.16rem;
-  font-size: 0.72rem;
+  font-size: 0.84rem;
   letter-spacing: 0.01em;
-  color: rgb(23 24 26 / 0.62);
+  color: rgb(23 24 26 / 0.72);
 }
 
 .kiosk-step-body {
@@ -820,11 +822,12 @@ body {
   width: 100%;
   min-height: 3.15rem;
   border-radius: 1.05rem;
-  border: 1px solid rgb(23 24 26 / 0.13);
-  background: rgb(255 255 255 / 0.9);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.45);
+  border: 1px solid rgb(23 24 26 / 0.18);
+  background: rgb(255 255 255 / 0.96);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.5);
   padding-inline: 0.95rem;
   font-size: 0.98rem;
+  color: rgb(23 24 26 / 0.94);
 }
 
 .kiosk-action-bar {
@@ -847,23 +850,49 @@ body {
 }
 
 .kiosk-action-hint {
-  font-size: 0.72rem;
-  line-height: 1.35;
-  color: rgb(23 24 26 / 0.62);
+  font-size: 0.78rem;
+  line-height: 1.4;
+  color: rgb(23 24 26 / 0.72);
 }
 
 .kiosk-notice-copy {
-  font-size: 0.77rem;
-  line-height: 1.32;
+  font-size: 0.8rem;
+  line-height: 1.36;
 }
 
 .kiosk-status-chip {
-  min-height: 1.7rem;
+  min-height: 1.9rem;
   border-radius: 999px;
   text-transform: none;
   letter-spacing: 0.01em;
-  font-size: 0.7rem;
-  padding-inline: 0.62rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding-inline: 0.78rem;
+  box-shadow: none;
+}
+
+.kiosk-status-chip.admin-status-chip-good {
+  border-color: rgb(38 161 126 / 0.42);
+  background: rgb(220 246 235 / 0.98);
+  color: rgb(8 103 83 / 0.96);
+}
+
+.kiosk-status-chip.admin-status-chip-warning {
+  border-color: rgb(226 166 65 / 0.48);
+  background: rgb(251 239 209 / 0.98);
+  color: rgb(133 88 10 / 0.96);
+}
+
+.kiosk-status-chip.admin-status-chip-critical {
+  border-color: rgb(206 98 98 / 0.45);
+  background: rgb(251 228 228 / 0.98);
+  color: rgb(138 33 33 / 0.96);
+}
+
+.kiosk-status-chip.admin-status-chip-neutral {
+  border-color: rgb(117 128 141 / 0.26);
+  background: rgb(239 243 247 / 0.98);
+  color: rgb(62 71 83 / 0.92);
 }
 
 .kiosk-camera-frame {
@@ -939,6 +968,35 @@ body {
   justify-self: start;
   border-radius: 1rem;
   padding: 0.5rem 0.72rem;
+  border-width: 1px;
+}
+
+.kiosk-section .admin-inline-notice-good,
+.kiosk-panel > .admin-inline-notice-good {
+  border-color: rgb(38 161 126 / 0.3);
+  background: rgb(223 246 236 / 0.94);
+  color: rgb(8 103 83 / 0.94);
+}
+
+.kiosk-section .admin-inline-notice-warning,
+.kiosk-panel > .admin-inline-notice-warning {
+  border-color: rgb(226 166 65 / 0.36);
+  background: rgb(252 241 214 / 0.94);
+  color: rgb(133 88 10 / 0.94);
+}
+
+.kiosk-section .admin-inline-notice-critical,
+.kiosk-panel > .admin-inline-notice-critical {
+  border-color: rgb(206 98 98 / 0.32);
+  background: rgb(250 230 230 / 0.94);
+  color: rgb(138 33 33 / 0.94);
+}
+
+.kiosk-section .admin-inline-notice-neutral,
+.kiosk-panel > .admin-inline-notice-neutral {
+  border-color: rgb(117 128 141 / 0.24);
+  background: rgb(238 243 247 / 0.94);
+  color: rgb(62 71 83 / 0.9);
 }
 
 .kiosk-control-grid > input[type="file"] {
@@ -1063,17 +1121,11 @@ body {
   }
 
   .kiosk-step-trigger {
-    min-height: 3.5rem;
-    flex-direction: row;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 0.7rem;
-    flex-wrap: wrap;
+    min-height: 3.25rem;
   }
 
   .kiosk-step-trigger > :first-child {
     flex: 1 1 14rem;
-    width: auto;
   }
 
   .kiosk-status-chip {
