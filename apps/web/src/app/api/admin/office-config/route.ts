@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-import { requireFullAdminOrEvp, requireAnyAdminRead } from "@/lib/adminAuth";
+import { requireFullAdmin, requireFullAdminOrEvp, requireAnyAdminRead } from "@/lib/adminAuth";
 import {
   normalizeOfficeHoursAllowedWeekdays,
   normalizeOfficeHoursExtraAllowedDates,
@@ -109,11 +109,16 @@ export async function GET(request: NextRequest) {
 
 // PUT: Update office config (full admin OR EVP only)
 export async function PUT(request: NextRequest) {
-  const authz = await requireFullAdminOrEvp(request);
-  if (!authz.ok) return authz.response;
-
   const body = (await request.json().catch(() => null)) as null | Record<string, unknown>;
   if (!body) return NextResponse.json({ error: "invalid request" }, { status: 400 });
+
+  const touchesKioskSettings =
+    Object.prototype.hasOwnProperty.call(body, "kiosk_sms_enabled") ||
+    Object.prototype.hasOwnProperty.call(body, "kiosk_otp_ttl_minutes") ||
+    Object.prototype.hasOwnProperty.call(body, "kiosk_checkout_reminder_interval_minutes");
+
+  const authz = touchesKioskSettings ? await requireFullAdmin(request) : await requireFullAdminOrEvp(request);
+  if (!authz.ok) return authz.response;
 
   const admin = getSupabaseAdminClient();
   const existing = await ensureOfficeConfigRow(admin);
