@@ -1,4 +1,7 @@
+import { redirect } from "next/navigation";
+
 import { AdminHero } from "@/components/admin/admin-hero";
+import { isOfficeHoursKioskManagerTier } from "@/lib/office-hours-kiosk-admin.mjs";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 import { requireAdminViewer, type OfficeConfigRow } from "@/lib/admin/server";
 
@@ -8,7 +11,10 @@ import { OfficeHoursSectionNav } from "./_components/office-hours-section-nav";
 import { OfficeHoursKioskPanel } from "./_components/office-hours-kiosk-panel";
 
 export async function OfficeHoursKioskPage() {
-  await requireAdminViewer({ redirectTo: "/admin/office-hours/kiosk", capability: "office_hours" });
+  const viewer = await requireAdminViewer({ redirectTo: "/admin/office-hours/kiosk", capability: "office_hours" });
+  if (!isOfficeHoursKioskManagerTier(viewer.tier)) {
+    redirect("/unauthorized?reason=admin&redirectTo=/admin/office-hours/kiosk");
+  }
 
   const admin = getSupabaseAdminClient();
   const [members, config] = await Promise.all([

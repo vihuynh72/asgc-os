@@ -85,6 +85,7 @@ test("getAdminSectionNav returns office-hours specialist links", () => {
   assert.deepEqual(getAdminSectionNav("office_hours"), [
     { id: "sessions", label: "Sessions", href: "/admin/office-hours" },
     { id: "requirements", label: "Requirements", href: "/admin/office-hours/requirements" },
+    { id: "kiosk", label: "Kiosk", href: "/admin/office-hours/kiosk" },
     { id: "config", label: "Config", href: "/admin/office-hours/config" },
     { id: "export", label: "Export", href: "/admin/office-hours/export" },
   ]);
@@ -94,6 +95,7 @@ test("buildAdminHref returns canonical People, Office Hours, and Meetings destin
   assert.equal(buildAdminHref("people", "invites"), "/admin/people");
   assert.equal(buildAdminHref("people", "terms"), "/admin/people/terms");
   assert.equal(buildAdminHref("office_hours", "sessions"), "/admin/office-hours");
+  assert.equal(buildAdminHref("office_hours", "kiosk"), "/admin/office-hours/kiosk");
   assert.equal(buildAdminHref("office_hours", "config"), "/admin/office-hours/config");
   assert.equal(buildAdminHref("meetings", "existing"), "/admin/meetings#admin-meetings-existing");
 });
