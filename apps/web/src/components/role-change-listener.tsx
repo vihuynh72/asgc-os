@@ -2,7 +2,11 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
-import { isProbablyNetworkError, swallowNetworkError } from "@/lib/network-errors.mjs";
+import {
+  isMissingAuthSessionError,
+  isProbablyNetworkError,
+  swallowNetworkError,
+} from "@/lib/network-errors.mjs";
 
 /**
  * RoleChangeListener - Polls profile_private.roles_updated_at and role_assignments updates to detect role changes.
@@ -23,6 +27,12 @@ export function RoleChangeListener() {
     lastNetworkErrorAtRef.current = now;
     return true;
   };
+
+  const resetBaseline = useCallback(() => {
+    baselineRef.current = null;
+    baselineUserIdRef.current = null;
+    hasShownModalRef.current = false;
+  }, []);
 
   const handleSignOut = useCallback(async () => {
     setIsSigningOut(true);
@@ -105,7 +115,7 @@ export function RoleChangeListener() {
       if (typeof navigator !== "undefined" && navigator.onLine === false) return;
 
       try {
-        const authResult = await swallowNetworkError(() => supabase.auth.getUser());
+        const authResult = await swallowNetworkError(() => supabase.auth.getSession());
         if (!authResult) {
           if (shouldLogNetworkError()) {
             console.warn("[RoleChangeListener] auth network error (will retry).");
@@ -114,20 +124,27 @@ export function RoleChangeListener() {
         }
 
         const {
-          data: { user },
+          data: { session },
           error,
         } = authResult;
 
         if (error) {
           if (isProbablyNetworkError(error.message) && shouldLogNetworkError()) {
             console.warn("[RoleChangeListener] auth network error (will retry).");
+          } else if (isMissingAuthSessionError(error.message)) {
+            resetBaseline();
           } else if (!isProbablyNetworkError(error.message)) {
             console.error("[RoleChangeListener] auth error:", error.message);
           }
           return;
         }
 
-        if (!user) return;
+        const user = session?.user ?? null;
+        if (!user) {
+          resetBaseline();
+          return;
+        }
+
         const userId = user.id;
 
         if (baselineUserIdRef.current !== userId) {
@@ -164,11 +181,26 @@ export function RoleChangeListener() {
     checkRolesUpdated();
     interval = setInterval(checkRolesUpdated, 5000); // Poll every 5 seconds
 
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!session?.user?.id) {
+        resetBaseline();
+        return;
+      }
+      if (baselineUserIdRef.current !== session.user.id) {
+        baselineUserIdRef.current = session.user.id;
+        baselineRef.current = null;
+        hasShownModalRef.current = false;
+      }
+    });
+
     return () => {
       cancelled = true;
       if (interval) clearInterval(interval);
+      subscription.unsubscribe();
     };
-  }, []);
+  }, [resetBaseline]);
 
   if (!showModal) return null;
 
