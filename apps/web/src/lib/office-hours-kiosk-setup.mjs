@@ -28,6 +28,7 @@ export function isOfficeHoursKioskSchemaError(errorOrMessage) {
   if (
     hasAnyNeedle(message, [
       "office_hours_kiosk_phone_allowlist",
+      "office_hours_kiosk_pending_phone_allowlist",
       "office_hours_kiosk_otp_challenges",
       "enqueue_kiosk_checkout_sms_reminders",
     ])
