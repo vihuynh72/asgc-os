@@ -2,7 +2,9 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { sendEmail } from "@/lib/emailSender";
 import { isAuthorizedCronRequest } from "@/lib/cron-auth.mjs";
-import { getCronEnv } from "@/lib/envServer";
+import { getCronEnv, getSmsEnv } from "@/lib/envServer";
+import { buildKioskCheckoutReminderSmsText } from "@/lib/office-hours-kiosk-messages.mjs";
+import { sendSms } from "@/lib/smsSender.mjs";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
@@ -10,7 +12,9 @@ export const runtime = "nodejs";
 type NotificationLogRow = {
   id: string;
   type: string;
-  to_email: string;
+  channel: string | null;
+  to_email: string | null;
+  to_phone: string | null;
   subject: string | null;
   metadata: unknown;
   attempt_count: number;
@@ -183,6 +187,21 @@ function renderEmailText(type: string, metadata: unknown, origin: string): { sub
   };
 }
 
+function renderSmsText(type: string, metadata: unknown): string {
+  const m = (typeof metadata === "object" && metadata !== null ? (metadata as Record<string, unknown>) : {}) as Record<
+    string,
+    unknown
+  >;
+
+  if (type === "office_hours.kiosk_checkout_reminder") {
+    return buildKioskCheckoutReminderSmsText({
+      elapsedMinutes: safeNumber(m.elapsed_minutes) ?? 0,
+    });
+  }
+
+  throw new Error(`Unsupported SMS notification type: ${type}`);
+}
+
 async function handle(request: NextRequest) {
   let env: ReturnType<typeof getCronEnv>;
   try {
@@ -328,6 +347,13 @@ async function handle(request: NextRequest) {
     return NextResponse.json({ error: weeklyErr.message }, { status: 500 });
   }
 
+  const { data: kioskCheckoutSmsReminders, error: kioskCheckoutSmsErr } = await supabase.rpc(
+    "enqueue_kiosk_checkout_sms_reminders"
+  );
+  if (kioskCheckoutSmsErr) {
+    return NextResponse.json({ error: kioskCheckoutSmsErr.message }, { status: 500 });
+  }
+
   const lockId = `cron:${crypto.randomUUID()}`;
 
   // Claim all office_hours.* notifications (shifts, sessions, coverage)
@@ -342,20 +368,34 @@ async function handle(request: NextRequest) {
   }
 
   const rows = (claimed ?? []) as NotificationLogRow[];
+  let smsEnv: ReturnType<typeof getSmsEnv> | null | undefined;
 
   let sent = 0;
   let failed = 0;
 
   for (const row of rows) {
-    const { subject, text } = renderEmailText(row.type, row.metadata, origin);
-    const resolvedSubject = row.subject && row.subject.length > 0 ? row.subject : subject;
-
     try {
-      const result = await sendEmail({
-        to: row.to_email,
-        subject: resolvedSubject,
-        text,
-      });
+      let result: { providerMessageId: string | null | undefined };
+
+      if (row.channel === "sms") {
+        const text = renderSmsText(row.type, row.metadata);
+        if (!smsEnv) smsEnv = getSmsEnv();
+        if (!row.to_phone) throw new Error("Missing SMS recipient");
+        result = await sendSms({
+          to: row.to_phone,
+          body: text,
+          env: smsEnv,
+        });
+      } else {
+        const { subject, text } = renderEmailText(row.type, row.metadata, origin);
+        const resolvedSubject = row.subject && row.subject.length > 0 ? row.subject : subject;
+        if (!row.to_email) throw new Error("Missing email recipient");
+        result = await sendEmail({
+          to: row.to_email,
+          subject: resolvedSubject,
+          text,
+        });
+      }
 
       sent += 1;
 
@@ -406,6 +446,7 @@ async function handle(request: NextRequest) {
     claimed: rows.length,
     sent,
     failed,
+    kiosk_checkout_sms_reminders: kioskCheckoutSmsReminders ?? 0,
   });
 }
 

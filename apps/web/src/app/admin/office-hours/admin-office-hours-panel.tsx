@@ -36,6 +36,8 @@ type OfficeHourAdminSession = {
   status: string;
   duration_minutes: number | null;
   has_kiosk_selfie?: boolean;
+  kiosk_auth_method?: string | null;
+  kiosk_phone_last4?: string | null;
   within_radius: boolean | null;
   within_grace: boolean | null;
   distance_m_at_checkin: number | null;
@@ -136,6 +138,20 @@ function formatMinutes(minutes: number): string {
   const h = Math.floor(m / 60);
   const mm = m % 60;
   return `${h}h ${mm}m`;
+}
+
+function formatAuthMethodLabel(method: string | null | undefined): string {
+  switch (method) {
+    case "sms_otp":
+      return "SMS OTP";
+    default:
+      return "Standard";
+  }
+}
+
+function formatMaskedPhone(last4: string | null | undefined): string | null {
+  if (!last4) return null;
+  return `***-***-${last4}`;
 }
 
 function formatLocalDateTimeInput(iso: string | null): string {
@@ -739,6 +755,7 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
               <thead className="border-t bg-foreground/5 text-left text-xs text-foreground/70">
                 <tr>
                   <th className="px-3 py-2">User</th>
+                  <th className="px-3 py-2">Auth</th>
                   <th className="px-3 py-2">Check-in</th>
                   <th className="px-3 py-2">Check-out</th>
                   <th className="px-3 py-2">Duration</th>
@@ -759,6 +776,10 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
                       <div className="text-xs text-foreground/60">
                         {s.user_is_allowlisted === false ? "Not allowlisted" : (s.user_email || s.user_id)}
                       </div>
+                    </td>
+                    <td className="px-3 py-2">
+                      <div className="font-medium">{formatAuthMethodLabel(s.kiosk_auth_method)}</div>
+                      <div className="text-xs text-foreground/60">{formatMaskedPhone(s.kiosk_phone_last4) || "—"}</div>
                     </td>
                     <td className="px-3 py-2 font-mono">{formatTimeInTz(s.checkin_at, tz)}</td>
                     <td className="px-3 py-2 font-mono">{s.checkout_at ? formatTimeInTz(s.checkout_at, tz) : "—"}</td>
@@ -807,7 +828,7 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
                 ))}
                 {filteredSessions.length === 0 ? (
                   <tr>
-                    <td className="px-3 py-3 text-sm text-foreground/60" colSpan={9}>
+                    <td className="px-3 py-3 text-sm text-foreground/60" colSpan={10}>
                       No sessions found for this day.
                     </td>
                   </tr>
@@ -982,6 +1003,10 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
               <div className="text-xs text-foreground/60">
                 {overrideSession.user_email || overrideSession.user_id}
               </div>
+              <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-foreground/65">
+                <span>{formatAuthMethodLabel(overrideSession.kiosk_auth_method)}</span>
+                {overrideSession.kiosk_phone_last4 ? <span>{formatMaskedPhone(overrideSession.kiosk_phone_last4)}</span> : null}
+              </div>
               <div className="mt-2 text-xs text-foreground/70">
                 Check-in: {formatTimeInTz(overrideSession.checkin_at, tz)} • {formatDateHeading(formatDateKeyInTz(overrideSession.checkin_at, tz), tz)}
               </div>
@@ -1144,6 +1169,16 @@ function SessionCard({
             </span>
           ) : null}
         </div>
+      </div>
+      <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
+        <span className="rounded-full bg-foreground/10 px-2 py-0.5 font-medium text-foreground/70">
+          {formatAuthMethodLabel(session.kiosk_auth_method)}
+        </span>
+        {session.kiosk_phone_last4 ? (
+          <span className="rounded-full bg-foreground/10 px-2 py-0.5 font-medium text-foreground/70">
+            {formatMaskedPhone(session.kiosk_phone_last4)}
+          </span>
+        ) : null}
       </div>
       <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[10px] text-muted-foreground">
         <div className="flex items-center gap-1.5">

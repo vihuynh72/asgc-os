@@ -4,46 +4,27 @@ import { z } from "zod";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 
 import {
-  getAllowlistNotesForExactEmail,
-  getAllowlistDecision,
-  getOfficeGeo,
-  getOrCreateUserIdByEmail,
-  haversineMeters,
-  normalizeKioskEmail,
-  setProfileDisplayName,
+  getOpenKioskSession,
+  getVerifiedKioskChallenge,
+  markKioskChallengeUsed,
 } from "../_kiosk";
 
 export const runtime = "nodejs";
 
 const BodySchema = z
   .object({
-    email: z.string().email().transform(normalizeKioskEmail),
-    lat: z
-      .number()
-      .finite()
-      .refine((v) => v >= -90 && v <= 90, { message: "invalid_lat" })
-      .optional(),
-    lon: z
-      .number()
-      .finite()
-      .refine((v) => v >= -180 && v <= 180, { message: "invalid_lon" })
-      .optional(),
+    verificationToken: z.string().uuid(),
   })
-  .refine((v) => (v.lat === undefined) === (v.lon === undefined), { message: "location_incomplete" });
+  .strict();
 
 function mapErrorStatus(message: string): number {
   switch (message) {
-    case "email_not_allowed":
-      return 403;
     case "no_open_session":
       return 409;
-    case "office_location_not_configured":
-    case "office_location_missing":
-    case "office_config_missing":
-    case "invalid_lat":
-    case "invalid_lon":
-    case "location_incomplete":
-      return 400;
+    case "verification_invalid":
+    case "verification_expired":
+    case "verification_used":
+      return 403;
     default:
       return 500;
   }
@@ -56,55 +37,27 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: message }, { status: 400 });
   }
 
-  const { email, lat, lon } = parsed.data;
+  const { verificationToken } = parsed.data;
   const admin = getSupabaseAdminClient();
 
   try {
-    const decision = await getAllowlistDecision(admin, email);
-    if (!decision.allowed) {
-      return NextResponse.json({ error: decision.reason }, { status: 403 });
-    }
-
-    const userId = await getOrCreateUserIdByEmail(admin, email);
-    const allowlistNotes = await getAllowlistNotesForExactEmail(admin, email);
-    await setProfileDisplayName(admin, userId, allowlistNotes);
-
-    const { data: openSession, error: readErr } = await admin
-      .from("office_hour_sessions")
-      .select("id,checkin_at,office_location_id")
-      .eq("user_id", userId)
-      .eq("status", "open")
-      .is("checkout_at", null)
-      .order("checkin_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (readErr) {
-      return NextResponse.json({ error: readErr.message }, { status: 500 });
-    }
-
+    const challenge = await getVerifiedKioskChallenge(admin, verificationToken, "check_out");
+    const openSession = await getOpenKioskSession(admin, challenge.user_id);
     if (!openSession?.id) {
       return NextResponse.json({ error: "no_open_session" }, { status: 409 });
     }
 
     const checkoutAt = new Date().toISOString();
-    let dist: number | null = null;
-    let resolvedOfficeId: string | null = (openSession.office_location_id as string | null) ?? null;
-
-    if (typeof lat === "number" && typeof lon === "number") {
-      const geo = await getOfficeGeo(admin, resolvedOfficeId);
-      resolvedOfficeId = geo.officeLocationId;
-      dist = haversineMeters(lat, lon, geo.lat, geo.lon);
-    }
 
     const { data: updated, error: updateErr } = await admin
       .from("office_hour_sessions")
       .update({
         checkout_at: checkoutAt,
         status: "closed",
-        distance_m_at_checkout: dist,
+        distance_m_at_checkout: null,
         needs_review: false,
         review_reason: null,
+        next_checkout_reminder_at: null,
       })
       .eq("id", openSession.id)
       .eq("status", "open")
@@ -120,21 +73,22 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "no_open_session" }, { status: 409 });
     }
 
+    await markKioskChallengeUsed(admin, challenge.id);
+
     const durationMinutes = Math.max(
       0,
       Math.round((new Date(updated.checkout_at).getTime() - new Date(updated.checkin_at).getTime()) / 60_000),
     );
 
     await admin.from("audit_log").insert({
-      actor_user_id: userId,
+      actor_user_id: challenge.user_id,
       action_key: "office_hours.check_out",
       target_type: "office_hour_session",
       target_id: updated.id,
       metadata: {
-        method: "kiosk_email",
-        email,
-        office_location_id: resolvedOfficeId ?? updated.office_location_id,
-        distance_m_at_checkout: dist,
+        method: "kiosk_sms_otp",
+        office_location_id: updated.office_location_id,
+        distance_m_at_checkout: null,
         duration_minutes: durationMinutes,
         needs_review: false,
       },

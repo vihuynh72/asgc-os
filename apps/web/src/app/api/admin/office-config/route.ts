@@ -31,6 +31,9 @@ type OfficeConfigRow = {
   office_hours_allow_weekends: boolean;
   office_hours_allowed_weekdays: number[];
   office_hours_extra_allowed_dates: string[];
+  kiosk_sms_enabled: boolean;
+  kiosk_otp_ttl_minutes: number;
+  kiosk_checkout_reminder_interval_minutes: number;
 };
 
 function isTimeString(value: unknown): value is string {
@@ -41,7 +44,7 @@ async function ensureOfficeConfigRow(admin: ReturnType<typeof getSupabaseAdminCl
   const { data: existing, error: existingErr } = await admin
     .from("office_config")
     .select(
-      "primary_office_location_id,quiet_hours_enabled,quiet_hours_start_local,quiet_hours_end_local,weekly_hours_reminder_enabled,weekly_hours_reminder_weekday,weekly_hours_reminder_time_local,office_hours_allow_weekends,office_hours_allowed_weekdays,office_hours_extra_allowed_dates",
+      "primary_office_location_id,quiet_hours_enabled,quiet_hours_start_local,quiet_hours_end_local,weekly_hours_reminder_enabled,weekly_hours_reminder_weekday,weekly_hours_reminder_time_local,office_hours_allow_weekends,office_hours_allowed_weekdays,office_hours_extra_allowed_dates,kiosk_sms_enabled,kiosk_otp_ttl_minutes,kiosk_checkout_reminder_interval_minutes",
     )
     .eq("id", true)
     .maybeSingle();
@@ -63,7 +66,7 @@ async function ensureOfficeConfigRow(admin: ReturnType<typeof getSupabaseAdminCl
     .from("office_config")
     .insert({ id: true, primary_office_location_id: office.id })
     .select(
-      "primary_office_location_id,quiet_hours_enabled,quiet_hours_start_local,quiet_hours_end_local,weekly_hours_reminder_enabled,weekly_hours_reminder_weekday,weekly_hours_reminder_time_local,office_hours_allow_weekends,office_hours_allowed_weekdays,office_hours_extra_allowed_dates",
+      "primary_office_location_id,quiet_hours_enabled,quiet_hours_start_local,quiet_hours_end_local,weekly_hours_reminder_enabled,weekly_hours_reminder_weekday,weekly_hours_reminder_time_local,office_hours_allow_weekends,office_hours_allowed_weekdays,office_hours_extra_allowed_dates,kiosk_sms_enabled,kiosk_otp_ttl_minutes,kiosk_checkout_reminder_interval_minutes",
     )
     .single();
 
@@ -151,6 +154,23 @@ export async function PUT(request: NextRequest) {
     configPatch.office_hours_allow_weekends = body.office_hours_allow_weekends;
   }
 
+  if (typeof body.kiosk_sms_enabled === "boolean") {
+    configPatch.kiosk_sms_enabled = body.kiosk_sms_enabled;
+  }
+
+  if (typeof body.kiosk_otp_ttl_minutes === "number" && Number.isFinite(body.kiosk_otp_ttl_minutes)) {
+    const next = Math.floor(body.kiosk_otp_ttl_minutes);
+    if (next >= 1 && next <= 30) configPatch.kiosk_otp_ttl_minutes = next;
+  }
+
+  if (
+    typeof body.kiosk_checkout_reminder_interval_minutes === "number" &&
+    Number.isFinite(body.kiosk_checkout_reminder_interval_minutes)
+  ) {
+    const next = Math.floor(body.kiosk_checkout_reminder_interval_minutes);
+    if (next >= 15 && next <= 240) configPatch.kiosk_checkout_reminder_interval_minutes = next;
+  }
+
   if (Array.isArray(body.office_hours_allowed_weekdays)) {
     try {
       configPatch.office_hours_allowed_weekdays = normalizeOfficeHoursAllowedWeekdays(
@@ -200,7 +220,7 @@ export async function PUT(request: NextRequest) {
   const { data: config, error: configErr } = await admin
     .from("office_config")
     .select(
-      "primary_office_location_id,quiet_hours_enabled,quiet_hours_start_local,quiet_hours_end_local,weekly_hours_reminder_enabled,weekly_hours_reminder_weekday,weekly_hours_reminder_time_local,office_hours_allow_weekends,office_hours_allowed_weekdays,office_hours_extra_allowed_dates",
+      "primary_office_location_id,quiet_hours_enabled,quiet_hours_start_local,quiet_hours_end_local,weekly_hours_reminder_enabled,weekly_hours_reminder_weekday,weekly_hours_reminder_time_local,office_hours_allow_weekends,office_hours_allowed_weekdays,office_hours_extra_allowed_dates,kiosk_sms_enabled,kiosk_otp_ttl_minutes,kiosk_checkout_reminder_interval_minutes",
     )
     .eq("id", true)
     .single();
