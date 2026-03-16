@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
 import { getSmsEnv } from "@/lib/envServer";
+import { normalizeOfficeHoursKioskError } from "@/lib/office-hours-kiosk-setup.mjs";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 
 import { getMatchedKioskPhone, verifyKioskOtpChallengeCode, type KioskIntent } from "../../_kiosk";
@@ -28,6 +29,8 @@ function mapErrorStatus(message: string): number {
       return 404;
     case "phone_not_allowed":
       return 403;
+    case "kiosk_setup_incomplete":
+      return 503;
     default:
       return 500;
   }
@@ -66,7 +69,7 @@ export async function POST(request: NextRequest) {
       intent,
     });
   } catch (e) {
-    const message = e instanceof Error ? e.message : "unknown";
+    const message = normalizeOfficeHoursKioskError(e, "unknown");
     return NextResponse.json({ error: message }, { status: mapErrorStatus(message) });
   }
 }

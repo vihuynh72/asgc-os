@@ -81,6 +81,8 @@ function friendlyError(code: string): string {
       return "No open session was found to check out.";
     case "sms_disabled":
       return "Kiosk SMS is not enabled yet.";
+    case "kiosk_setup_incomplete":
+      return "The kiosk setup is incomplete right now. Ask an admin to finish the database migration.";
     default:
       return code || "Something went wrong.";
   }

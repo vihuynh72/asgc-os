@@ -37,6 +37,15 @@ function updatedLabel(value: string | null): string {
   }
 }
 
+function friendlyAdminError(code: string): string {
+  switch (code) {
+    case "kiosk_setup_incomplete":
+      return "Office Hours kiosk setup is incomplete. Apply the March 16 kiosk migrations before editing phones or SMS settings.";
+    default:
+      return code || "Could not save kiosk settings.";
+  }
+}
+
 export function OfficeHoursKioskPanel({
   initialMembers,
   initialConfig,
@@ -46,6 +55,7 @@ export function OfficeHoursKioskPanel({
   initialConfig: OfficeConfigRow;
   smsEnvReady: boolean;
 }) {
+  const schemaReady = (initialConfig as OfficeConfigRow & { kiosk_schema_ready?: boolean }).kiosk_schema_ready !== false;
   const [members, setMembers] = useState<MemberRow[]>(initialMembers);
   const [phoneDrafts, setPhoneDrafts] = useState<Record<string, string>>({});
   const [savingMemberId, setSavingMemberId] = useState<string>("");
@@ -86,7 +96,10 @@ export function OfficeHoursKioskPanel({
       setPhoneDrafts((current) => ({ ...current, [userId]: "" }));
       setNotice({ tone: "good", message: phone ? "Kiosk phone updated." : "Kiosk phone removed." });
     } catch (e) {
-      setNotice({ tone: "warning", message: e instanceof Error ? e.message : "Could not save kiosk phone." });
+      setNotice({
+        tone: "warning",
+        message: friendlyAdminError(e instanceof Error ? e.message : "Could not save kiosk phone."),
+      });
     } finally {
       setSavingMemberId("");
     }
@@ -108,7 +121,10 @@ export function OfficeHoursKioskPanel({
       });
       setNotice({ tone: "good", message: "Kiosk SMS settings saved." });
     } catch (e) {
-      setNotice({ tone: "warning", message: e instanceof Error ? e.message : "Could not save kiosk settings." });
+      setNotice({
+        tone: "warning",
+        message: friendlyAdminError(e instanceof Error ? e.message : "Could not save kiosk settings."),
+      });
     } finally {
       setConfigSaving(false);
     }
@@ -117,6 +133,12 @@ export function OfficeHoursKioskPanel({
   return (
     <div className="space-y-8">
       {notice ? <AdminInlineNotice tone={notice.tone}>{notice.message}</AdminInlineNotice> : null}
+
+      {!schemaReady ? (
+        <AdminInlineNotice tone="critical">
+          Office Hours kiosk setup is incomplete. Apply the March 16 kiosk migrations before saving phones or SMS settings.
+        </AdminInlineNotice>
+      ) : null}
 
       {!smsEnvReady ? (
         <AdminInlineNotice tone="critical">
@@ -172,7 +194,7 @@ export function OfficeHoursKioskPanel({
         </div>
 
         <div className="mt-5 flex justify-end">
-          <Button className="h-11 rounded-full px-5" onClick={() => void saveConfig()} disabled={configSaving}>
+          <Button className="h-11 rounded-full px-5" onClick={() => void saveConfig()} disabled={!schemaReady || configSaving}>
             {configSaving ? "Saving..." : "Save kiosk settings"}
           </Button>
         </div>
@@ -216,7 +238,7 @@ export function OfficeHoursKioskPanel({
                   <Button
                     className="h-11 rounded-full px-4"
                     onClick={() => void savePhone(member.user_id, draft || null)}
-                    disabled={isSaving || (!draft && !member.phone_configured)}
+                    disabled={!schemaReady || isSaving || (!draft && !member.phone_configured)}
                   >
                     {isSaving ? "Saving..." : draft ? "Save phone" : "Clear phone"}
                   </Button>
@@ -225,7 +247,7 @@ export function OfficeHoursKioskPanel({
                       variant="outline"
                       className="h-11 rounded-full px-4"
                       onClick={() => void savePhone(member.user_id, null)}
-                      disabled={isSaving}
+                      disabled={!schemaReady || isSaving}
                     >
                       Remove
                     </Button>

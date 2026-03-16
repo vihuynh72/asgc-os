@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
+import { normalizeOfficeHoursKioskError } from "@/lib/office-hours-kiosk-setup.mjs";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 import { shapeLocationCheckResult } from "@/lib/office-hours-kiosk/location-check.mjs";
 
@@ -65,7 +66,7 @@ export async function POST(request: NextRequest) {
       }),
     );
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "unknown";
+    const msg = normalizeOfficeHoursKioskError(e, "unknown");
     return NextResponse.json({
       ok: false,
       decision: { allowed: true },
@@ -77,6 +78,6 @@ export async function POST(request: NextRequest) {
       statusTone: "critical",
       statusLabel: mapStatusLabel(msg),
       error: msg,
-    }, { status: 400 });
+    }, { status: msg === "kiosk_setup_incomplete" ? 503 : 400 });
   }
 }

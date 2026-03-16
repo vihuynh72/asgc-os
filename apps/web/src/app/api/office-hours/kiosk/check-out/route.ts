@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
+import { normalizeOfficeHoursKioskError } from "@/lib/office-hours-kiosk-setup.mjs";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 
 import {
@@ -25,6 +26,8 @@ function mapErrorStatus(message: string): number {
     case "verification_expired":
     case "verification_used":
       return 403;
+    case "kiosk_setup_incomplete":
+      return 503;
     default:
       return 500;
   }
@@ -96,7 +99,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ session: { ...updated, duration_minutes: durationMinutes } });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "unknown";
+    const msg = normalizeOfficeHoursKioskError(e, "unknown");
     return NextResponse.json({ error: msg }, { status: mapErrorStatus(msg) });
   }
 }

@@ -2,6 +2,10 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { requireFullAdmin, requireFullAdminOrEvp, requireAnyAdminRead } from "@/lib/adminAuth";
 import {
+  ensureOfficeHoursConfigWithKioskFallback,
+  normalizeOfficeHoursKioskError,
+} from "@/lib/office-hours-kiosk-setup.mjs";
+import {
   normalizeOfficeHoursAllowedWeekdays,
   normalizeOfficeHoursExtraAllowedDates,
 } from "@/lib/office-hours-availability.mjs";
@@ -42,37 +46,7 @@ function isTimeString(value: unknown): value is string {
 }
 
 async function ensureOfficeConfigRow(admin: ReturnType<typeof getSupabaseAdminClient>) {
-  const { data: existing, error: existingErr } = await admin
-    .from("office_config")
-    .select(
-      "primary_office_location_id,quiet_hours_enabled,quiet_hours_start_local,quiet_hours_end_local,weekly_hours_reminder_enabled,weekly_hours_reminder_weekday,weekly_hours_reminder_time_local,office_hours_allow_weekends,office_hours_allowed_weekdays,office_hours_extra_allowed_dates,kiosk_sms_enabled,kiosk_otp_ttl_minutes,kiosk_checkout_reminder_interval_minutes",
-    )
-    .eq("id", true)
-    .maybeSingle();
-
-  if (existingErr) throw new Error(existingErr.message);
-  if (existing) return existing as OfficeConfigRow;
-
-  const { data: office, error: officeErr } = await admin
-    .from("office_locations")
-    .select("id")
-    .order("created_at", { ascending: true })
-    .limit(1)
-    .maybeSingle();
-
-  if (officeErr) throw new Error(officeErr.message);
-  if (!office?.id) throw new Error("No office_locations row found");
-
-  const { data: inserted, error: insertErr } = await admin
-    .from("office_config")
-    .insert({ id: true, primary_office_location_id: office.id })
-    .select(
-      "primary_office_location_id,quiet_hours_enabled,quiet_hours_start_local,quiet_hours_end_local,weekly_hours_reminder_enabled,weekly_hours_reminder_weekday,weekly_hours_reminder_time_local,office_hours_allow_weekends,office_hours_allowed_weekdays,office_hours_extra_allowed_dates,kiosk_sms_enabled,kiosk_otp_ttl_minutes,kiosk_checkout_reminder_interval_minutes",
-    )
-    .single();
-
-  if (insertErr) throw new Error(insertErr.message);
-  return inserted as OfficeConfigRow;
+  return (await ensureOfficeHoursConfigWithKioskFallback(admin)) as OfficeConfigRow;
 }
 
 // GET: Read office config (any admin tier can read, but EVP and full admin only see the data)
@@ -89,7 +63,8 @@ export async function GET(request: NextRequest) {
   try {
     config = await ensureOfficeConfigRow(admin);
   } catch (e) {
-    return NextResponse.json({ error: e instanceof Error ? e.message : "Failed to load office config" }, { status: 500 });
+    const message = normalizeOfficeHoursKioskError(e, "Failed to load office config");
+    return NextResponse.json({ error: message }, { status: message === "kiosk_setup_incomplete" ? 503 : 500 });
   }
 
   const { data: officeLocation, error: officeErr } = await admin
@@ -209,7 +184,10 @@ export async function PUT(request: NextRequest) {
 
   if (Object.keys(configPatch).length > 0) {
     const { error: patchErr } = await admin.from("office_config").update(configPatch).eq("id", true);
-    if (patchErr) return NextResponse.json({ error: patchErr.message }, { status: 500 });
+    if (patchErr) {
+      const message = normalizeOfficeHoursKioskError(patchErr, patchErr.message);
+      return NextResponse.json({ error: message }, { status: message === "kiosk_setup_incomplete" ? 503 : 500 });
+    }
 
     await admin.rpc("log_event", {
       action_key: "office_config.updated",
@@ -220,20 +198,18 @@ export async function PUT(request: NextRequest) {
     });
   }
 
-  const { data: config, error: configErr } = await admin
-    .from("office_config")
-    .select(
-      "primary_office_location_id,quiet_hours_enabled,quiet_hours_start_local,quiet_hours_end_local,weekly_hours_reminder_enabled,weekly_hours_reminder_weekday,weekly_hours_reminder_time_local,office_hours_allow_weekends,office_hours_allowed_weekdays,office_hours_extra_allowed_dates,kiosk_sms_enabled,kiosk_otp_ttl_minutes,kiosk_checkout_reminder_interval_minutes",
-    )
-    .eq("id", true)
-    .single();
-
-  if (configErr) return NextResponse.json({ error: configErr.message }, { status: 500 });
+  let config: OfficeConfigRow;
+  try {
+    config = await ensureOfficeConfigRow(admin);
+  } catch (e) {
+    const message = normalizeOfficeHoursKioskError(e, "Failed to load office config");
+    return NextResponse.json({ error: message }, { status: message === "kiosk_setup_incomplete" ? 503 : 500 });
+  }
 
   const { data: officeLocation, error: officeErr } = await admin
     .from("office_locations")
     .select("id,name,lat,lon,radius_m,grace_radius_m,timezone,active")
-    .eq("id", (config as OfficeConfigRow).primary_office_location_id)
+    .eq("id", config.primary_office_location_id)
     .single();
 
   if (officeErr) return NextResponse.json({ error: officeErr.message }, { status: 500 });

@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { requireFullAdmin } from "@/lib/adminAuth";
 import { normalizeKioskPhone } from "@/lib/office-hours-kiosk-auth.mjs";
+import { normalizeOfficeHoursKioskError } from "@/lib/office-hours-kiosk-setup.mjs";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 
 import { getKioskMemberRole } from "../../../office-hours/kiosk/_kiosk";
@@ -20,6 +21,8 @@ function mapErrorStatus(message: string): number {
       return 400;
     case "member_not_found":
       return 404;
+    case "kiosk_setup_incomplete":
+      return 503;
     default:
       return 500;
   }
@@ -46,7 +49,11 @@ export async function PUT(request: NextRequest) {
     const nextPhoneRaw = phone?.trim() ?? "";
 
     if (!nextPhoneRaw) {
-      await admin.from("office_hours_kiosk_phone_allowlist").delete().eq("user_id", userId);
+      const { error: deleteErr } = await admin.from("office_hours_kiosk_phone_allowlist").delete().eq("user_id", userId);
+      if (deleteErr) {
+        const message = normalizeOfficeHoursKioskError(deleteErr, "phone_delete_failed");
+        return NextResponse.json({ error: message }, { status: mapErrorStatus(message) });
+      }
       await admin.rpc("log_event", {
         action_key: "office_hours.kiosk_phone_cleared",
         actor_user_id: authz.userId,
@@ -81,7 +88,8 @@ export async function PUT(request: NextRequest) {
       .single();
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      const message = normalizeOfficeHoursKioskError(error, error.message);
+      return NextResponse.json({ error: message }, { status: mapErrorStatus(message) });
     }
 
     await admin.rpc("log_event", {
@@ -98,7 +106,7 @@ export async function PUT(request: NextRequest) {
       phone_updated_at: data.updated_at,
     });
   } catch (e) {
-    const message = e instanceof Error ? e.message : "unknown";
+    const message = normalizeOfficeHoursKioskError(e, "unknown");
     return NextResponse.json({ error: message }, { status: mapErrorStatus(message) });
   }
 }

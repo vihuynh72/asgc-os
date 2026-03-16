@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
+import { normalizeOfficeHoursKioskError } from "@/lib/office-hours-kiosk-setup.mjs";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 
 import {
@@ -44,6 +45,8 @@ function mapErrorStatus(message: string): number {
     case "invalid_lon":
     case "weekend_not_allowed":
       return 400;
+    case "kiosk_setup_incomplete":
+      return 503;
     default:
       return 500;
   }
@@ -68,6 +71,9 @@ export async function POST(request: NextRequest) {
 
     const geo = await getOfficeGeo(admin);
     const kioskConfig = await getKioskSmsConfig(admin);
+    if (!kioskConfig.schemaReady) {
+      return NextResponse.json({ error: "kiosk_setup_incomplete" }, { status: 503 });
+    }
     const now = new Date();
     const { data: allowedData, error: allowedErr } = await admin.rpc("is_office_hours_day_allowed", { _ts: now.toISOString() });
     const allowed = !allowedErr ? !!allowedData : !isWeekendInTimeZone(now, geo.timezone);
@@ -110,7 +116,8 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (insertErr) {
-      const msg = insertErr.code === "23505" ? "already_checked_in" : insertErr.message || "unknown";
+      const msg =
+        insertErr.code === "23505" ? "already_checked_in" : normalizeOfficeHoursKioskError(insertErr, "unknown");
       return NextResponse.json({ error: msg }, { status: mapErrorStatus(msg) });
     }
 
@@ -134,7 +141,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ session });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "unknown";
+    const msg = normalizeOfficeHoursKioskError(e, "unknown");
     return NextResponse.json({ error: msg }, { status: mapErrorStatus(msg) });
   }
 }

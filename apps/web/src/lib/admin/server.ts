@@ -1,6 +1,7 @@
 import { cache } from "react";
 import { redirect } from "next/navigation";
 
+import { ensureOfficeHoursConfigWithKioskFallback } from "@/lib/office-hours-kiosk-setup.mjs";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 import { getSupabaseServerComponentClient } from "@/lib/supabaseServerComponent";
 
@@ -111,37 +112,7 @@ type AdminViewer = {
 };
 
 async function ensureOfficeConfigRow(admin: ReturnType<typeof getSupabaseAdminClient>) {
-  const { data: existing, error: existingErr } = await admin
-    .from("office_config")
-    .select(
-      "primary_office_location_id,quiet_hours_enabled,quiet_hours_start_local,quiet_hours_end_local,weekly_hours_reminder_enabled,weekly_hours_reminder_weekday,weekly_hours_reminder_time_local,office_hours_allow_weekends,office_hours_allowed_weekdays,office_hours_extra_allowed_dates,kiosk_sms_enabled,kiosk_otp_ttl_minutes,kiosk_checkout_reminder_interval_minutes",
-    )
-    .eq("id", true)
-    .maybeSingle();
-
-  if (existingErr) throw existingErr;
-  if (existing) return existing as OfficeConfigRow;
-
-  const { data: office, error: officeErr } = await admin
-    .from("office_locations")
-    .select("id")
-    .order("created_at", { ascending: true })
-    .limit(1)
-    .maybeSingle();
-
-  if (officeErr) throw officeErr;
-  if (!office?.id) throw new Error("No office_locations row found");
-
-  const { data: inserted, error: insertErr } = await admin
-    .from("office_config")
-    .insert({ id: true, primary_office_location_id: office.id })
-    .select(
-      "primary_office_location_id,quiet_hours_enabled,quiet_hours_start_local,quiet_hours_end_local,weekly_hours_reminder_enabled,weekly_hours_reminder_weekday,weekly_hours_reminder_time_local,office_hours_allow_weekends,office_hours_allowed_weekdays,office_hours_extra_allowed_dates,kiosk_sms_enabled,kiosk_otp_ttl_minutes,kiosk_checkout_reminder_interval_minutes",
-    )
-    .single();
-
-  if (insertErr) throw insertErr;
-  return inserted as OfficeConfigRow;
+  return (await ensureOfficeHoursConfigWithKioskFallback(admin)) as OfficeConfigRow;
 }
 
 const resolveAdminViewer = cache(async (): Promise<AdminViewer | null> => {
