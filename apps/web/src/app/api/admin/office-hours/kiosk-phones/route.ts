@@ -1,7 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
+<<<<<<< HEAD
+import { requireFullAdmin } from "@/lib/adminAuth";
+=======
 import { requireFullAdminOrEvp } from "@/lib/adminAuth";
+>>>>>>> origin/main
 import { normalizeKioskPhone } from "@/lib/office-hours-kiosk-auth.mjs";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 
@@ -26,7 +30,11 @@ function mapErrorStatus(message: string): number {
 }
 
 export async function PUT(request: NextRequest) {
+<<<<<<< HEAD
+  const authz = await requireFullAdmin(request);
+=======
   const authz = await requireFullAdminOrEvp(request);
+>>>>>>> origin/main
   if (!authz.ok) return authz.response;
 
   const parsed = BodySchema.safeParse(await request.json().catch(() => null));
