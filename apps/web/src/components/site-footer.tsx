@@ -10,7 +10,7 @@ export function SiteFooter() {
         </div>
         <div className="flex flex-wrap items-center gap-4">
           <Link href="/legal#terms" className="hover:text-foreground">Terms</Link>
-          <Link href="/legal#privacy" className="hover:text-foreground">Privacy</Link>
+          <Link href="/privacy" className="hover:text-foreground">Privacy</Link>
           <Link href="/docs" className="hover:text-foreground">Documents</Link>
         </div>
       </div>

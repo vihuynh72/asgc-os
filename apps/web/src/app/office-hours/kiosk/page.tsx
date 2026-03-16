@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { motion, useReducedMotion } from "motion/react";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 
@@ -596,6 +597,15 @@ export default function OfficeHoursKioskPage() {
                 }
                 hint="The code expires in 5 minutes. Ask an admin to update the phone allowlist if you never receive it."
               />
+              <p className="text-sm leading-6 text-foreground/70">
+                Requesting a code sends a one-time verification text to the approved member number, and reminder texts
+                may be sent while the session stays open. Only registered ASGC members on the approved kiosk allowlist
+                can receive these texts; members of the public cannot. Read the{" "}
+                <Link href="/privacy" className="font-medium text-foreground underline underline-offset-4">
+                  privacy policy
+                </Link>
+                .
+              </p>
             </div>
           </StepCard>
 

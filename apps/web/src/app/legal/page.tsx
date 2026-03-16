@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { PageShell } from "@/components/page-shell";
 
 export default function LegalPage() {
@@ -15,8 +17,16 @@ export default function LegalPage() {
         <section id="privacy" className="space-y-2">
           <h2 className="text-lg font-semibold">Privacy</h2>
           <p>
-            This platform stores meeting, task, and compliance data needed to run ASGC operations. Only authorized
-            members can access internal records. Contact an admin if you have questions about data retention.
+            This platform stores meeting, task, compliance, and office-hours records needed to run ASGC operations.
+            Only authorized members can access internal records.
+          </p>
+          <p>
+            Kiosk SMS messages are limited to approved phone numbers for registered ASGC members. Members of the public
+            do not receive kiosk texts. Read the{" "}
+            <Link href="/privacy" className="font-medium text-foreground underline underline-offset-4">
+              full privacy policy
+            </Link>
+            .
           </p>
         </section>
       </div>
