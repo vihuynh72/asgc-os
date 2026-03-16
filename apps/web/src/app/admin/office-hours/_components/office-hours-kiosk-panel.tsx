@@ -9,7 +9,13 @@ import { Button } from "@/components/ui/button";
 import type { OfficeConfigRow } from "@/lib/admin/server";
 
 type MemberRow = {
-  user_id: string;
+  member_key: string;
+  source_type: "user" | "bootstrap_role_grant";
+  source_id: string;
+  entry_status: "active" | "awaiting_sign_in";
+  user_id: string | null;
+  bootstrap_role_grant_id: string | null;
+  email: string | null;
   display_name: string;
   role_key: "president" | "executive" | "board_member";
   role_label: string;
@@ -67,8 +73,8 @@ export function OfficeHoursKioskPanel({
     kiosk_checkout_reminder_interval_minutes: initialConfig.kiosk_checkout_reminder_interval_minutes,
   });
 
-  async function savePhone(userId: string, phone: string | null) {
-    setSavingMemberId(userId);
+  async function savePhone(member: MemberRow, phone: string | null) {
+    setSavingMemberId(member.member_key);
     setNotice(null);
 
     try {
@@ -77,23 +83,27 @@ export function OfficeHoursKioskPanel({
         {
           method: "PUT",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ userId, phone }),
+          body: JSON.stringify({
+            userId: member.user_id || null,
+            bootstrapRoleGrantId: member.bootstrap_role_grant_id,
+            phone,
+          }),
         },
       );
 
       setMembers((current) =>
-        current.map((member) =>
-          member.user_id === userId
+        current.map((row) =>
+          row.member_key === member.member_key
             ? {
-                ...member,
+                ...row,
                 phone_configured: data.phone_configured,
                 phone_last4: data.phone_last4,
                 phone_updated_at: data.phone_updated_at,
               }
-            : member,
+            : row,
         ),
       );
-      setPhoneDrafts((current) => ({ ...current, [userId]: "" }));
+      setPhoneDrafts((current) => ({ ...current, [member.member_key]: "" }));
       setNotice({ tone: "good", message: phone ? "Kiosk phone updated." : "Kiosk phone removed." });
     } catch (e) {
       setNotice({
@@ -206,16 +216,22 @@ export function OfficeHoursKioskPanel({
       >
         <div className="space-y-4">
           {members.map((member) => {
-            const draft = phoneDrafts[member.user_id] ?? "";
-            const isSaving = savingMemberId === member.user_id;
+            const draft = phoneDrafts[member.member_key] ?? "";
+            const isSaving = savingMemberId === member.member_key;
             return (
               <div
-                key={member.user_id}
+                key={member.member_key}
                 className="grid gap-4 rounded-[1.35rem] border border-[var(--admin-border-soft)] bg-white/78 p-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_auto]"
               >
                 <div className="space-y-1">
-                  <div className="text-sm font-semibold text-foreground">{member.display_name}</div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="text-sm font-semibold text-foreground">{member.display_name}</div>
+                    {member.entry_status === "awaiting_sign_in" ? (
+                      <span className="text-xs uppercase tracking-[0.12em] text-amber-700">Awaiting sign-in</span>
+                    ) : null}
+                  </div>
                   <div className="text-xs uppercase tracking-[0.12em] text-foreground/50">{member.role_label}</div>
+                  {member.email ? <div className="text-sm text-foreground/58">{member.email}</div> : null}
                   <div className="text-sm text-foreground/65">
                     {member.phone_configured && member.phone_last4
                       ? `Configured • ***-***-${member.phone_last4}`
@@ -229,7 +245,7 @@ export function OfficeHoursKioskPanel({
                     placeholder="(619) 555-1234"
                     value={draft}
                     onChange={(event) =>
-                      setPhoneDrafts((current) => ({ ...current, [member.user_id]: event.target.value }))
+                      setPhoneDrafts((current) => ({ ...current, [member.member_key]: event.target.value }))
                     }
                   />
                 </AdminField>
@@ -237,7 +253,7 @@ export function OfficeHoursKioskPanel({
                 <div className="flex flex-wrap items-end gap-2">
                   <Button
                     className="h-11 rounded-full px-4"
-                    onClick={() => void savePhone(member.user_id, draft || null)}
+                    onClick={() => void savePhone(member, draft || null)}
                     disabled={!schemaReady || isSaving || (!draft && !member.phone_configured)}
                   >
                     {isSaving ? "Saving..." : draft ? "Save phone" : "Clear phone"}
@@ -246,7 +262,7 @@ export function OfficeHoursKioskPanel({
                     <Button
                       variant="outline"
                       className="h-11 rounded-full px-4"
-                      onClick={() => void savePhone(member.user_id, null)}
+                      onClick={() => void savePhone(member, null)}
                       disabled={!schemaReady || isSaving}
                     >
                       Remove

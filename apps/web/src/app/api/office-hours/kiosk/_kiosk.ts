@@ -9,6 +9,7 @@ import {
   sortKioskMembers,
   verifyKioskOtpCode,
 } from "@/lib/office-hours-kiosk-auth.mjs";
+import { buildKioskAdminMembers } from "@/lib/office-hours-kiosk-admin-roster.mjs";
 import {
   getOfficeHoursConfigWithKioskFallback,
   isOfficeHoursKioskSchemaError,
@@ -35,6 +36,15 @@ export type KioskMember = {
   phone_configured: boolean;
   phone_last4: string | null;
   phone_updated_at: string | null;
+};
+
+export type KioskAdminMember = KioskMember & {
+  member_key: string;
+  source_type: "user" | "bootstrap_role_grant";
+  source_id: string;
+  entry_status: "active" | "awaiting_sign_in";
+  bootstrap_role_grant_id: string | null;
+  email: string | null;
 };
 
 type OtpChallengeRow = {
@@ -255,6 +265,81 @@ export async function listKioskMembers(admin: SupabaseClient): Promise<KioskMemb
   return sortKioskMembers(members) as KioskMember[];
 }
 
+export async function listKioskAdminMembers(admin: SupabaseClient): Promise<KioskAdminMember[]> {
+  const activeMembers = await listKioskMembers(admin);
+  const userIds = activeMembers.map((member) => member.user_id);
+  const currentTermId = await getCurrentTermId(admin);
+
+  const [
+    { data: emailsRaw, error: emailsErr },
+    { data: grantsRaw, error: grantsErr },
+    pendingPhonesResult,
+  ] = await Promise.all([
+    userIds.length > 0
+      ? admin.from("profile_private").select("id,email").in("id", userIds)
+      : Promise.resolve({ data: [] as Array<{ id: string; email: string | null }>, error: null }),
+    currentTermId
+      ? admin
+          .from("bootstrap_role_grants")
+          .select("id,email,role_key,notes")
+          .eq("term_id", currentTermId)
+          .eq("is_active", true)
+          .is("consumed_at", null)
+          .in("role_key", ["president", "executive", "board_member"])
+      : Promise.resolve({ data: [] as Array<{ id: string; email: string; role_key: string; notes: string | null }>, error: null }),
+    currentTermId
+      ? admin.from("office_hours_kiosk_pending_phone_allowlist").select("bootstrap_role_grant_id,phone_last4,updated_at")
+      : Promise.resolve({ data: [] as Array<{ bootstrap_role_grant_id: string; phone_last4: string | null; updated_at: string | null }>, error: null }),
+  ]);
+
+  if (emailsErr || grantsErr) {
+    throw new Error(emailsErr?.message || grantsErr?.message || "kiosk_admin_member_lookup_failed");
+  }
+
+  const pendingPhonesErr = pendingPhonesResult.error;
+  const pendingPhonesRaw = isOfficeHoursKioskSchemaError(pendingPhonesErr) ? [] : pendingPhonesResult.data;
+  if (pendingPhonesErr && !isOfficeHoursKioskSchemaError(pendingPhonesErr)) {
+    throw new Error(normalizeOfficeHoursKioskError(pendingPhonesErr, "kiosk_admin_member_lookup_failed"));
+  }
+
+  const emailByUserId = new Map<string, string | null>();
+  for (const row of (emailsRaw ?? []) as Array<{ id: string; email: string | null }>) {
+    emailByUserId.set(row.id, row.email ?? null);
+  }
+
+  const pendingPhoneByGrantId = new Map<string, { phone_last4: string | null; updated_at: string | null }>();
+  for (const row of (pendingPhonesRaw ?? []) as Array<{ bootstrap_role_grant_id: string; phone_last4: string | null; updated_at: string | null }>) {
+    pendingPhoneByGrantId.set(row.bootstrap_role_grant_id, {
+      phone_last4: row.phone_last4 ?? null,
+      updated_at: row.updated_at ?? null,
+    });
+  }
+
+  return buildKioskAdminMembers({
+    activeMembers: activeMembers.map((member) => ({
+      ...member,
+      member_key: `user:${member.user_id}`,
+      source_type: "user",
+      source_id: member.user_id,
+      entry_status: "active",
+      bootstrap_role_grant_id: null,
+      email: emailByUserId.get(member.user_id) ?? null,
+    })),
+    pendingGrants: ((grantsRaw ?? []) as Array<{ id: string; email: string; role_key: "president" | "executive" | "board_member"; notes: string | null }>).map((grant) => {
+      const pendingPhone = pendingPhoneByGrantId.get(grant.id);
+      return {
+        id: grant.id,
+        email: grant.email,
+        role_key: grant.role_key,
+        display_title: null,
+        notes: grant.notes,
+        phone_last4: pendingPhone?.phone_last4 ?? null,
+        phone_updated_at: pendingPhone?.updated_at ?? null,
+      };
+    }),
+  }) as KioskAdminMember[];
+}
+
 export async function getKioskMemberRole(
   admin: SupabaseClient,
   userId: string,
@@ -275,6 +360,32 @@ export async function getKioskMemberRole(
   if (rows.length === 0) return null;
   rows.sort((a, b) => roleRank(a.role_key) - roleRank(b.role_key));
   return { roleKey: rows[0]!.role_key, displayTitle: rows[0]!.display_title ?? null };
+}
+
+export async function getPendingKioskGrant(
+  admin: SupabaseClient,
+  grantId: string,
+): Promise<{ id: string; email: string; roleKey: "president" | "executive" | "board_member" } | null> {
+  const currentTermId = await getCurrentTermId(admin);
+  if (!currentTermId) return null;
+
+  const { data, error } = await admin
+    .from("bootstrap_role_grants")
+    .select("id,email,role_key")
+    .eq("id", grantId)
+    .eq("term_id", currentTermId)
+    .eq("is_active", true)
+    .is("consumed_at", null)
+    .in("role_key", ["president", "executive", "board_member"])
+    .maybeSingle();
+
+  if (error) throw new Error(error.message || "bootstrap_grant_lookup_failed");
+  if (!data?.id || !data.email || !data.role_key) return null;
+  return {
+    id: data.id,
+    email: data.email,
+    roleKey: data.role_key,
+  };
 }
 
 export async function getMatchedKioskPhone(

@@ -6,7 +6,7 @@ import { ensureOfficeHoursConfigWithKioskFallback } from "@/lib/office-hours-kio
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 import { requireAdminViewer, type OfficeConfigRow } from "@/lib/admin/server";
 
-import { listKioskMembers } from "@/app/api/office-hours/kiosk/_kiosk";
+import { listKioskAdminMembers } from "@/app/api/office-hours/kiosk/_kiosk";
 
 import { OfficeHoursSectionNav } from "./_components/office-hours-section-nav";
 import { OfficeHoursKioskPanel } from "./_components/office-hours-kiosk-panel";
@@ -19,7 +19,7 @@ export async function OfficeHoursKioskPage() {
 
   const admin = getSupabaseAdminClient();
   const [members, config] = await Promise.all([
-    listKioskMembers(admin),
+    listKioskAdminMembers(admin),
     ensureOfficeHoursConfigWithKioskFallback(admin),
   ]);
 
