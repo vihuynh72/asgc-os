@@ -19,30 +19,35 @@ export function mapDistanceToPreflightStatus({ distanceM, radiusM, graceRadiusM 
   return { band: "outside_grace", ...STATUS_BY_BAND.outside_grace };
 }
 
-export function deriveKioskEntryBranch({
-  emailValid,
+export function deriveKioskIntentBranch({
   statusResolved,
   hasOpenSession,
 }) {
-  if (!emailValid || !statusResolved) return "email";
+  if (!statusResolved) return "status";
   return hasOpenSession ? "check_out" : "check_in";
 }
 
-export function deriveKioskCheckInStep({
-  hasPhoto,
+export function deriveKioskVerificationStep({
+  otpVerified,
+  requiresLocation,
   preflightReady,
   preflightAllowed,
 }) {
-  if (!hasPhoto) return "selfie";
-  if (!preflightReady || !preflightAllowed) return "location";
+  if (!otpVerified) return "otp";
+  if (requiresLocation && (!preflightReady || !preflightAllowed)) return "location";
   return "action";
 }
 
 export function canSubmitKioskCheckIn({
-  emailValid,
-  hasPhoto,
+  otpVerified,
   preflightReady,
   preflightAllowed,
 }) {
-  return Boolean(emailValid && hasPhoto && preflightReady && preflightAllowed);
+  return Boolean(otpVerified && preflightReady && preflightAllowed);
+}
+
+export function canSubmitKioskCheckOut({
+  otpVerified,
+}) {
+  return Boolean(otpVerified);
 }

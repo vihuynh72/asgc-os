@@ -10,6 +10,7 @@ const SECTION_NAV = {
   office_hours: [
     { id: "sessions", label: "Sessions", href: "/admin/office-hours" },
     { id: "requirements", label: "Requirements", href: "/admin/office-hours/requirements" },
+    { id: "kiosk", label: "Kiosk", href: "/admin/office-hours/kiosk" },
     { id: "config", label: "Config", href: "/admin/office-hours/config" },
     { id: "export", label: "Export", href: "/admin/office-hours/export" },
   ],
@@ -30,7 +31,7 @@ const DOMAIN_META = {
   },
   office_hours: {
     label: "Office Hours",
-    description: "Sessions, requirements, and configuration.",
+    description: "Sessions, kiosk settings, requirements, and configuration.",
     href: "/admin/office-hours",
   },
   meetings: {
@@ -83,7 +84,7 @@ function buildPeoplePath(section) {
 
 function buildOfficeHoursPath(section) {
   if (!section || section === "overview" || section === "summary" || section === "sessions") return "/admin/office-hours";
-  if (section === "requirements" || section === "config") {
+  if (section === "requirements" || section === "config" || section === "kiosk") {
     return `/admin/office-hours/${section}`;
   }
   if (section === "export") return "/admin/office-hours/export";
