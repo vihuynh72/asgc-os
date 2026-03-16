@@ -1,12 +1,10 @@
 "use client";
 
 import { motion, useReducedMotion } from "motion/react";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { z } from "zod";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import {
   KioskActionBar,
-  KioskCameraCapture,
   KioskNotice,
   KioskShell,
   KioskStatusChip,
@@ -16,24 +14,22 @@ import {
 import { Button } from "@/components/ui/button";
 import {
   canSubmitKioskCheckIn,
-  deriveKioskCheckInStep,
-  deriveKioskEntryBranch,
+  canSubmitKioskCheckOut,
+  deriveKioskVerificationStep,
 } from "@/lib/office-hours-kiosk/entry-state.mjs";
-import type {
-  KioskCheckInStep,
-  KioskEntryBranch,
-  KioskLocationPreflightResult,
-} from "@/lib/office-hours-kiosk/types";
 import { cn } from "@/lib/utils";
 
-type KioskOpenSession = {
-  id: string;
-  checkin_at: string;
+type MemberOption = {
+  user_id: string;
+  display_name: string;
+  role_key: "president" | "executive" | "board_member";
+  role_label: string;
 };
 
-type KioskStatus = {
-  user_exists: boolean;
-  open_session: KioskOpenSession | null;
+type StatusPayload = {
+  intent: "check_in" | "check_out";
+  phone_last4: string;
+  open_session: { id: string; checkin_at: string } | null;
 };
 
 type LocationSnapshot = {
@@ -43,59 +39,60 @@ type LocationSnapshot = {
   acquiredAt: string;
 };
 
-type WizardStepId = "email" | "selfie" | "location" | "action";
+type LocationPreflight = {
+  ok: boolean;
+  band: "in_radius" | "in_grace" | "outside_grace";
+  statusTone: "critical" | "warning" | "neutral" | "good";
+  statusLabel: string;
+  distanceM: number;
+  radiusM: number;
+  graceRadiusM: number;
+};
 
-const WIZARD_STEPS: WizardStepId[] = ["email", "selfie", "location", "action"];
-const EmailSchema = z.string().email();
-
-function stepRank(stepId: WizardStepId): number {
-  return WIZARD_STEPS.indexOf(stepId) + 1;
-}
-
-function normalizeEmail(raw: string): string {
-  return raw.trim().toLowerCase();
-}
-
-function isGcccdEmail(email: string): boolean {
-  return email.endsWith("@gcccd.edu");
-}
+type StepId = "member" | "phone" | "otp" | "location" | "action";
 
 function friendlyError(code: string): string {
   switch (code) {
-    case "invalid_email":
-      return "Enter a valid email.";
-    case "email_not_allowed":
-      return "Access not enabled.";
-    case "email_disabled":
-      return "Access disabled.";
-    case "email_blocked":
-      return "Access blocked.";
+    case "invalid_phone":
+      return "Enter a valid US phone number.";
+    case "phone_not_allowed":
+      return "This phone number is not approved for the selected member.";
+    case "member_not_found":
+      return "This member is not active for kiosk check-in.";
+    case "otp_resend_too_soon":
+      return "Please wait a moment before requesting another code.";
+    case "otp_rate_limited":
+      return "Too many code requests. Try again in a few minutes.";
+    case "invalid_otp":
+      return "That code did not match.";
+    case "otp_expired":
+    case "verification_expired":
+      return "This code expired. Request a new one.";
+    case "verification_invalid":
+    case "verification_used":
+      return "Your verification expired. Start again.";
     case "outside_geofence":
-      return "Outside office range.";
-    case "already_checked_in":
-      return "Session already open.";
-    case "no_open_session":
-      return "No open session.";
-    case "office_location_not_configured":
-    case "office_location_missing":
-    case "office_config_missing":
-      return "Location unavailable.";
-    case "location_incomplete":
-      return "Location incomplete.";
+      return "You appear to be outside the office check-in area.";
     case "weekend_not_allowed":
-      return "Day not enabled.";
-    case "photo_required":
-      return "Selfie required.";
-    case "invalid_photo_type":
-      return "Photo type invalid.";
-    case "photo_too_large":
-      return "Photo too large.";
-    case "invalid_lat":
-    case "invalid_lon":
-      return "Location invalid.";
+      return "Office hours are not enabled today.";
+    case "already_checked_in":
+      return "This member already has an open session.";
+    case "no_open_session":
+      return "No open session was found to check out.";
+    case "sms_disabled":
+      return "Kiosk SMS is not enabled yet.";
     default:
       return code || "Something went wrong.";
   }
+}
+
+async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(url, init);
+  const json = (await response.json().catch(() => null)) as (T & { error?: string }) | null;
+  if (!response.ok) {
+    throw new Error(json?.error ?? `Request failed: ${response.status}`);
+  }
+  return json as T;
 }
 
 async function getCurrentPosition({
@@ -123,18 +120,8 @@ async function getCurrentPosition({
   });
 }
 
-function iconForTone(
-  tone: KioskLocationPreflightResult["statusTone"] | "neutral",
-): "triangle" | "clock" | "dot" | "check" {
-  if (tone === "critical") return "triangle";
-  if (tone === "warning") return "clock";
-  if (tone === "good") return "check";
-  return "dot";
-}
-
-function formatDistance(value: number): string {
-  if (!Number.isFinite(value)) return "—";
-  return `${Math.round(value)}m`;
+function stepIndex(stepId: StepId): number {
+  return ["member", "phone", "otp", "location", "action"].indexOf(stepId) + 1;
 }
 
 function formatWhen(iso: string): string {
@@ -145,130 +132,125 @@ function formatWhen(iso: string): string {
   }
 }
 
+function formatDistance(value: number): string {
+  if (!Number.isFinite(value)) return "—";
+  return `${Math.round(value)}m`;
+}
+
 function StepCard({
   step,
   title,
   summary,
-  statusLabel,
-  tone,
-  icon,
   active,
-  disabled,
+  tone,
+  statusLabel,
   onActivate,
   children,
 }: {
   step: number;
   title: string;
   summary: string;
-  statusLabel?: string;
-  tone: "critical" | "warning" | "neutral" | "good";
-  icon?: "triangle" | "clock" | "dot" | "check";
   active: boolean;
-  disabled?: boolean;
+  tone: "critical" | "warning" | "neutral" | "good";
+  statusLabel: string;
   onActivate: () => void;
   children: ReactNode;
 }) {
   return (
     <section className={cn("kiosk-section kiosk-step-card", active && "kiosk-step-card-active")}>
-      <button
-        type="button"
-        className="kiosk-step-trigger"
-        onClick={onActivate}
-        disabled={disabled && !active}
-      >
+      <button type="button" className="kiosk-step-trigger" onClick={onActivate}>
         <div className="min-w-0">
           <p className="kiosk-step-title">{step}. {title}</p>
           {!active ? <p className="kiosk-step-summary">{summary}</p> : null}
         </div>
         <KioskStatusChip
           tone={tone}
-          icon={icon}
-          label={statusLabel ?? summary}
+          label={statusLabel}
           className="max-w-full shrink-0 self-start sm:max-w-[58%] sm:self-center"
         />
       </button>
-
       {active ? <div className="kiosk-step-body">{children}</div> : null}
     </section>
   );
 }
 
+function selectedMemberLabel(members: MemberOption[], userId: string): string {
+  const member = members.find((row) => row.user_id === userId);
+  return member ? `${member.display_name} • ${member.role_label}` : "Choose a member";
+}
+
 export default function OfficeHoursKioskPage() {
   const reduceMotion = useReducedMotion();
+  const [members, setMembers] = useState<MemberOption[]>([]);
+  const [membersLoading, setMembersLoading] = useState(true);
+  const [selectedUserId, setSelectedUserId] = useState("");
+  const [phone, setPhone] = useState("");
 
-  const [email, setEmail] = useState("");
-  const [photo, setPhoto] = useState<File | null>(null);
-  const [status, setStatus] = useState<KioskStatus | null>(null);
+  const [statusResolved, setStatusResolved] = useState(false);
+  const [statusPayload, setStatusPayload] = useState<StatusPayload | null>(null);
   const [statusLoading, setStatusLoading] = useState(false);
-  const statusAbortRef = useRef<AbortController | null>(null);
+
+  const [challengeId, setChallengeId] = useState<string | null>(null);
+  const [otpCode, setOtpCode] = useState("");
+  const [otpSending, setOtpSending] = useState(false);
+  const [otpVerifying, setOtpVerifying] = useState(false);
+  const [verificationToken, setVerificationToken] = useState<string | null>(null);
 
   const [location, setLocation] = useState<LocationSnapshot | null>(null);
   const [locationLoading, setLocationLoading] = useState(false);
   const [locationError, setLocationError] = useState<string | null>(null);
-  const [geoPermission, setGeoPermission] = useState<
-    "granted" | "denied" | "prompt" | "unsupported"
-  >("prompt");
-
-  const [preflight, setPreflight] = useState<KioskLocationPreflightResult | null>(null);
+  const [preflight, setPreflight] = useState<LocationPreflight | null>(null);
   const [preflightLoading, setPreflightLoading] = useState(false);
-  const [preflightError, setPreflightError] = useState<string | null>(null);
-  const preflightAbortRef = useRef<AbortController | null>(null);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [focusedStep, setFocusedStep] = useState<WizardStepId>("email");
+  const [focusedStep, setFocusedStep] = useState<StepId>("member");
+  const [geoPermission, setGeoPermission] = useState<"granted" | "denied" | "prompt" | "unsupported">("prompt");
 
-  const emailNormalized = useMemo(() => normalizeEmail(email), [email]);
-  const emailValid = useMemo(
-    () => EmailSchema.safeParse(emailNormalized).success,
-    [emailNormalized],
-  );
-  const emailDomainOk = useMemo(
-    () => (emailValid ? isGcccdEmail(emailNormalized) : false),
-    [emailNormalized, emailValid],
-  );
-  const emailReady = useMemo(
-    () => emailValid && emailDomainOk,
-    [emailDomainOk, emailValid],
+  const intent = statusPayload?.intent ?? null;
+  const requiresLocation = intent === "check_in";
+
+  const verificationStep = useMemo(
+    () =>
+      deriveKioskVerificationStep({
+        otpVerified: Boolean(verificationToken),
+        requiresLocation,
+        preflightReady: Boolean(preflight) && !preflightLoading,
+        preflightAllowed: Boolean(preflight?.ok),
+      }),
+    [preflight, preflightLoading, requiresLocation, verificationToken],
   );
 
-  const resetCheckInState = useCallback(
-    ({ clearMessages = true }: { clearMessages?: boolean } = {}) => {
-      setPhoto(null);
-      setLocation(null);
-      setLocationLoading(false);
-      setLocationError(null);
-      preflightAbortRef.current?.abort();
-      preflightAbortRef.current = null;
-      setPreflight(null);
-      setPreflightLoading(false);
-      setPreflightError(null);
-      setFocusedStep("email");
-      if (clearMessages) {
-        setError(null);
-        setNotice(null);
-      }
-    },
-    [],
-  );
+  const currentStep = useMemo<StepId>(() => {
+    if (!selectedUserId) return "member";
+    if (!statusResolved) return "phone";
+    if (verificationStep === "otp") return "otp";
+    if (verificationStep === "location") return "location";
+    return "action";
+  }, [selectedUserId, statusResolved, verificationStep]);
 
   useEffect(() => {
-    try {
-      const saved = window.localStorage.getItem("officeHours.kioskEmail");
-      if (saved) setEmail(saved);
-    } catch {
-      // Ignore local storage read failures.
-    }
+    void (async () => {
+      try {
+        setMembersLoading(true);
+        const data = await fetchJson<{ members: MemberOption[] }>("/api/office-hours/kiosk/members");
+        setMembers(data.members ?? []);
+      } catch (e) {
+        setError(friendlyError(e instanceof Error ? e.message : "Could not load members."));
+      } finally {
+        setMembersLoading(false);
+      }
+    })();
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
     if (!navigator?.permissions?.query) {
       setGeoPermission("unsupported");
       return;
     }
 
+    let cancelled = false;
     navigator.permissions
       .query({ name: "geolocation" as PermissionName })
       .then((permission) => {
@@ -283,518 +265,442 @@ export default function OfficeHoursKioskPage() {
     };
   }, []);
 
-  const loadStatus = useCallback(async () => {
-    if (!emailReady) {
-      statusAbortRef.current?.abort();
-      statusAbortRef.current = null;
-      setStatus(null);
-      setStatusLoading(false);
-      return;
-    }
-
-    setStatusLoading(true);
-    statusAbortRef.current?.abort();
-    const controller = new AbortController();
-    statusAbortRef.current = controller;
-
-    try {
-      const response = await fetch(
-        `/api/office-hours/kiosk/status?email=${encodeURIComponent(emailNormalized)}`,
-        { signal: controller.signal },
-      );
-      const json = (await response.json().catch(() => null)) as
-        | { error?: string }
-        | KioskStatus
-        | null;
-
-      if (!response.ok) {
-        setStatus(null);
-        setError(friendlyError((json as { error?: string } | null)?.error ?? ""));
-        return;
-      }
-
-      setStatus((json as KioskStatus) ?? null);
-    } catch (e) {
-      if ((e as { name?: string } | null)?.name === "AbortError") return;
-      setStatus(null);
-      setError("Could not load status.");
-    } finally {
-      if (statusAbortRef.current === controller) {
-        statusAbortRef.current = null;
-        setStatusLoading(false);
-      }
-    }
-  }, [emailNormalized, emailReady]);
+  useEffect(() => {
+    setStatusResolved(false);
+    setStatusPayload(null);
+    setChallengeId(null);
+    setOtpCode("");
+    setVerificationToken(null);
+    setLocation(null);
+    setLocationError(null);
+    setPreflight(null);
+    if (selectedUserId) setFocusedStep("phone");
+  }, [selectedUserId, phone]);
 
   useEffect(() => {
-    resetCheckInState();
-    statusAbortRef.current?.abort();
-    statusAbortRef.current = null;
-    setStatus(null);
-    setStatusLoading(false);
+    setFocusedStep(currentStep);
+  }, [currentStep]);
 
-    if (!emailReady) return;
-    setStatusLoading(true);
-
-    const id = window.setTimeout(() => {
-      void loadStatus();
-    }, 220);
-    return () => window.clearTimeout(id);
-  }, [emailNormalized, emailReady, loadStatus, resetCheckInState]);
-
-  useEffect(() => {
-    return () => {
-      statusAbortRef.current?.abort();
-      statusAbortRef.current = null;
-      preflightAbortRef.current?.abort();
-      preflightAbortRef.current = null;
-    };
+  const resetFlow = useCallback(() => {
+    setSelectedUserId("");
+    setPhone("");
+    setStatusResolved(false);
+    setStatusPayload(null);
+    setChallengeId(null);
+    setOtpCode("");
+    setVerificationToken(null);
+    setLocation(null);
+    setLocationError(null);
+    setPreflight(null);
+    setFocusedStep("member");
   }, []);
 
-  const openSession = status?.open_session ?? null;
-  const statusResolved = emailReady && !statusLoading && status !== null;
-  const branch = useMemo<KioskEntryBranch>(
-    () =>
-      deriveKioskEntryBranch({
-        emailValid: emailReady,
-        statusResolved,
-        hasOpenSession: Boolean(openSession),
-      }),
-    [emailReady, openSession, statusResolved],
-  );
-
-  useEffect(() => {
-    if (branch === "check_out") {
-      resetCheckInState();
-    }
-  }, [branch, resetCheckInState]);
-
-  useEffect(() => {
-    if (!emailReady || branch !== "check_in" || !location) {
-      setPreflight(null);
-      setPreflightError(null);
-      setPreflightLoading(false);
-      preflightAbortRef.current?.abort();
-      preflightAbortRef.current = null;
+  const onResolveStatus = useCallback(async () => {
+    if (!selectedUserId || !phone.trim()) {
+      setError("Choose a member and enter the approved phone number.");
       return;
     }
 
-    preflightAbortRef.current?.abort();
-    const controller = new AbortController();
-    preflightAbortRef.current = controller;
-    setPreflightLoading(true);
-    setPreflightError(null);
+    setStatusLoading(true);
+    setError(null);
+    setNotice(null);
 
-    void (async () => {
-      try {
-        const response = await fetch("/api/office-hours/kiosk/location-check", {
+    try {
+      const data = await fetchJson<StatusPayload>("/api/office-hours/kiosk/status", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ userId: selectedUserId, phone }),
+      });
+      setStatusPayload(data);
+      setStatusResolved(true);
+      setNotice(`Verified phone ending in ${data.phone_last4}.`);
+      setFocusedStep("otp");
+    } catch (e) {
+      setStatusResolved(false);
+      setStatusPayload(null);
+      setError(friendlyError(e instanceof Error ? e.message : "Could not verify phone."));
+    } finally {
+      setStatusLoading(false);
+    }
+  }, [phone, selectedUserId]);
+
+  const onRequestOtp = useCallback(async () => {
+    if (!selectedUserId || !phone.trim()) return;
+
+    setOtpSending(true);
+    setError(null);
+    setNotice(null);
+
+    try {
+      const data = await fetchJson<{ challengeId: string; intent: "check_in" | "check_out"; expiresAt: string }>(
+        "/api/office-hours/kiosk/otp/request",
+        {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            email: emailNormalized,
-            lat: location.lat,
-            lon: location.lon,
-            intent: "check_in",
-          }),
-          signal: controller.signal,
-        });
-        const json = (await response.json().catch(() => null)) as
-          | KioskLocationPreflightResult
-          | { error?: string }
-          | null;
+          body: JSON.stringify({ userId: selectedUserId, phone }),
+        },
+      );
+      setChallengeId(data.challengeId);
+      setNotice(
+        data.intent === "check_in"
+          ? "A 6-digit code was sent for check-in."
+          : "A 6-digit code was sent for check-out.",
+      );
+    } catch (e) {
+      setError(friendlyError(e instanceof Error ? e.message : "Could not send code."));
+    } finally {
+      setOtpSending(false);
+    }
+  }, [phone, selectedUserId]);
 
-        if (!response.ok) {
-          setPreflight(null);
-          setPreflightError(
-            friendlyError((json as { error?: string } | null)?.error ?? "Location unavailable"),
-          );
-          return;
-        }
+  const onVerifyOtp = useCallback(async () => {
+    if (!selectedUserId || !phone.trim() || !challengeId || !intent) {
+      setError("Request a code first.");
+      return;
+    }
 
-        setPreflight(json as KioskLocationPreflightResult);
-      } catch (e) {
-        if ((e as { name?: string } | null)?.name === "AbortError") return;
-        setPreflight(null);
-        setPreflightError("Location unavailable.");
-      } finally {
-        if (preflightAbortRef.current === controller) {
-          preflightAbortRef.current = null;
-          setPreflightLoading(false);
-        }
-      }
-    })();
-  }, [branch, emailNormalized, emailReady, location]);
+    setOtpVerifying(true);
+    setError(null);
+    setNotice(null);
 
-  const checkInStep = useMemo<KioskCheckInStep>(
-    () =>
-      deriveKioskCheckInStep({
-        hasPhoto: Boolean(photo),
-        preflightReady: Boolean(preflight) && !preflightLoading,
-        preflightAllowed: Boolean(preflight?.ok),
-      }),
-    [photo, preflight, preflightLoading],
-  );
+    try {
+      const data = await fetchJson<{ verificationToken: string }>("/api/office-hours/kiosk/otp/verify", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          userId: selectedUserId,
+          phone,
+          challengeId,
+          intent,
+          code: otpCode,
+        }),
+      });
+      setVerificationToken(data.verificationToken);
+      setNotice(intent === "check_in" ? "Code verified. Continue with location." : "Code verified. Ready to check out.");
+      setFocusedStep(requiresLocation ? "location" : "action");
+    } catch (e) {
+      setError(friendlyError(e instanceof Error ? e.message : "Could not verify code."));
+    } finally {
+      setOtpVerifying(false);
+    }
+  }, [challengeId, intent, otpCode, phone, requiresLocation, selectedUserId]);
 
-  useEffect(() => {
-    if (branch !== "check_in") return;
+  const onRequestLocation = useCallback(async () => {
+    if (!verificationToken) return;
 
-    const autoStep = checkInStep as WizardStepId;
-    setFocusedStep((previous) => {
-      if (previous === "email") return autoStep;
-      const previousRank = stepRank(previous);
-      const autoRank = stepRank(autoStep);
-      if (previousRank === autoRank) return previous;
-      return autoStep;
-    });
-  }, [branch, checkInStep]);
-
-  const requestLocation = useCallback(async () => {
     setLocationLoading(true);
+    setPreflightLoading(true);
     setLocationError(null);
     setError(null);
+
     try {
       const coords = await getCurrentPosition();
       setLocation(coords);
-      setNotice(null);
-    } catch {
-      setLocationError("Location required.");
-    } finally {
-      setLocationLoading(false);
-    }
-  }, []);
-
-  const onCheckIn = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    setNotice(null);
-
-    try {
-      if (!emailReady) {
-        setError("Use your GCCCD email.");
-        return;
-      }
-
-      if (!photo) {
-        setError("Selfie required.");
-        return;
-      }
-
-      if (!location || !preflight?.ok) {
-        setError("Location required.");
-        return;
-      }
-
-      const form = new FormData();
-      form.set("email", emailNormalized);
-      form.set("lat", String(location.lat));
-      form.set("lon", String(location.lon));
-      form.set("photo", photo);
-
-      const response = await fetch("/api/office-hours/kiosk/check-in", {
-        method: "POST",
-        body: form,
-      });
-      const json = (await response.json().catch(() => null)) as
-        | { error?: string }
-        | { session?: { checkin_at?: string } }
-        | null;
-
-      if (!response.ok) {
-        setError(friendlyError((json as { error?: string } | null)?.error ?? ""));
-        return;
-      }
-
-      try {
-        window.localStorage.setItem("officeHours.kioskEmail", emailNormalized);
-      } catch {
-        // Ignore local storage write failures.
-      }
-
-      const checkinAt = (json as { session?: { checkin_at?: string } } | null)?.session?.checkin_at;
-      setNotice(checkinAt ? `Checked in ${formatWhen(checkinAt)}.` : "Checked in.");
-      setPhoto(null);
-      await loadStatus();
-    } catch {
-      setError("Check-in failed.");
-    } finally {
-      setLoading(false);
-    }
-  }, [emailNormalized, emailReady, loadStatus, location, photo, preflight?.ok]);
-
-  const onCheckOut = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    setNotice(null);
-
-    try {
-      if (!emailReady) {
-        setError("Use your GCCCD email.");
-        return;
-      }
-
-      const response = await fetch("/api/office-hours/kiosk/check-out", {
+      const result = await fetchJson<LocationPreflight>("/api/office-hours/kiosk/location-check", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ email: emailNormalized }),
+        body: JSON.stringify({
+          verificationToken,
+          lat: coords.lat,
+          lon: coords.lon,
+        }),
       });
-      const json = (await response.json().catch(() => null)) as
-        | { error?: string }
-        | { session?: { duration_minutes?: number } }
-        | null;
+      setPreflight(result);
+      setNotice(result.ok ? "Location verified." : friendlyError("outside_geofence"));
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Location unavailable.";
+      setLocationError(friendlyError(message));
+      setPreflight(null);
+    } finally {
+      setLocationLoading(false);
+      setPreflightLoading(false);
+    }
+  }, [verificationToken]);
 
-      if (!response.ok) {
-        setError(friendlyError((json as { error?: string } | null)?.error ?? ""));
-        return;
+  const onSubmit = useCallback(async () => {
+    if (!verificationToken || !intent) return;
+
+    setLoading(true);
+    setError(null);
+    setNotice(null);
+
+    try {
+      if (intent === "check_in") {
+        if (!location || !preflight?.ok) {
+          setError("Verify location before checking in.");
+          return;
+        }
+
+        const data = await fetchJson<{ session?: { checkin_at?: string } }>("/api/office-hours/kiosk/check-in", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            verificationToken,
+            lat: location.lat,
+            lon: location.lon,
+          }),
+        });
+        setNotice(data.session?.checkin_at ? `Checked in ${formatWhen(data.session.checkin_at)}.` : "Checked in.");
+      } else {
+        const data = await fetchJson<{ session?: { duration_minutes?: number } }>("/api/office-hours/kiosk/check-out", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ verificationToken }),
+        });
+        setNotice(
+          typeof data.session?.duration_minutes === "number"
+            ? `Checked out • ${data.session.duration_minutes}m.`
+            : "Checked out.",
+        );
       }
 
-      try {
-        window.localStorage.setItem("officeHours.kioskEmail", emailNormalized);
-      } catch {
-        // Ignore local storage write failures.
-      }
-
-      const minutes = (json as { session?: { duration_minutes?: number } } | null)?.session?.duration_minutes;
-      setNotice(typeof minutes === "number" ? `Checked out • ${minutes}m.` : "Checked out.");
-      await loadStatus();
-    } catch {
-      setError("Check-out failed.");
+      resetFlow();
+    } catch (e) {
+      setError(friendlyError(e instanceof Error ? e.message : "Kiosk action failed."));
     } finally {
       setLoading(false);
     }
-  }, [emailNormalized, emailReady, loadStatus]);
+  }, [intent, location, preflight?.ok, resetFlow, verificationToken]);
 
-  const emailSummary = !email.length
-    ? "Enter GCCCD email"
-    : statusLoading
-      ? "Checking…"
-      : !emailReady
-        ? "Use @gcccd.edu"
-        : branch === "check_out"
-          ? "Open session found"
-          : statusResolved
-            ? "Ready to continue"
-            : emailNormalized;
-  const selfieSummary = photo ? "Selfie ready" : "Selfie required";
-  const locationSummary = preflight
-    ? preflight.statusLabel
-    : location
-      ? "Location ready"
-      : "No location yet";
-  const canSubmitCheckIn = canSubmitKioskCheckIn({
-    emailValid: emailReady,
-    hasPhoto: Boolean(photo),
-    preflightReady: Boolean(preflight) && !preflightLoading,
-    preflightAllowed: Boolean(preflight?.ok),
-  });
-  const actionSummary = loading
-    ? "Checking in…"
-    : canSubmitCheckIn
-      ? "Ready to check in"
-      : "Complete steps";
-  const actionTone = loading ? "neutral" : canSubmitCheckIn ? "good" : "warning";
-  const emailStatusLabel = statusLoading ? "Checking" : emailReady ? "Ready" : "Email needed";
-  const selfieStatusLabel = photo ? "Ready" : "Needed";
-  const locationStatusLabel = preflightLoading
-    ? "Checking"
-    : preflight
-      ? preflight.statusLabel
-      : location
-        ? "Located"
-        : "Needs location";
-  const actionStatusLabel = loading ? "Checking" : canSubmitCheckIn ? "Ready" : "Pending";
-  const headerStep = branch === "check_out" ? 2 : stepRank(focusedStep);
-  const headerTotalSteps = branch === "check_out" ? 2 : 4;
-  const headerTitle = branch === "check_out" ? "Check out" : "Check in";
-  const headerSubtitle =
-    branch === "check_out"
-      ? "We found an open session for this email."
-      : "Type your GCCCD email to continue.";
+  const actionReady =
+    intent === "check_in"
+      ? canSubmitKioskCheckIn({
+          otpVerified: Boolean(verificationToken),
+          preflightReady: Boolean(preflight),
+          preflightAllowed: Boolean(preflight?.ok),
+        })
+      : canSubmitKioskCheckOut({ otpVerified: Boolean(verificationToken) });
 
   return (
-    <KioskShell className="kiosk-shell-main-inline" topNav={<KioskTopNav />}>
-      <h1 className="sr-only">Office Hours Kiosk</h1>
-
-      <div className="kiosk-panel kiosk-page-stack">
+    <KioskShell topNav={<KioskTopNav />}>
+      <div className="kiosk-panel kiosk-panel-with-sticky kiosk-page-stack">
         <KioskStepHeader
           eyebrow="Office Hours"
-          title={headerTitle}
-          subtitle={headerSubtitle}
-          step={headerStep}
-          totalSteps={headerTotalSteps}
+          title="Kiosk"
+          subtitle="Board and executive members verify with an approved phone before checking in or out."
+          step={stepIndex(currentStep)}
+          totalSteps={5}
         />
 
-        <motion.div
+        <motion.section
+          className="space-y-4"
           initial={reduceMotion ? false : { opacity: 0, y: 8 }}
           animate={reduceMotion ? undefined : { opacity: 1, y: 0 }}
-          transition={{ duration: 0.22, ease: "easeOut" }}
-          className="kiosk-page-stack"
+          transition={{ duration: 0.24, ease: "easeOut" }}
         >
           <StepCard
             step={1}
-            title="Email"
-            summary={emailSummary}
-            tone={statusLoading ? "neutral" : emailReady ? "good" : "warning"}
-            statusLabel={emailStatusLabel}
-            icon={statusLoading ? "dot" : emailReady ? "check" : "clock"}
-            active={branch === "email" || focusedStep === "email"}
-            onActivate={() => setFocusedStep("email")}
+            title="Member"
+            summary="Choose the active member."
+            active={focusedStep === "member"}
+            tone={selectedUserId ? "good" : "neutral"}
+            statusLabel={selectedUserId ? selectedMemberLabel(members, selectedUserId) : "Choose member"}
+            onActivate={() => setFocusedStep("member")}
           >
-            <input
-              type="email"
-              inputMode="email"
-              autoCapitalize="none"
-              autoCorrect="off"
-              className="kiosk-input"
-              placeholder="name@gcccd.edu"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              aria-label="ASGC email"
-              disabled={loading}
-            />
-            <div className="kiosk-control-row">
-              <span className="text-xs text-foreground/65">
-                {!email.length
-                  ? "Use your GCCCD email."
-                  : !emailReady
-                    ? "Use your @gcccd.edu email."
-                    : statusLoading
-                      ? "Checking your kiosk status…"
-                      : branch === "email"
-                        ? "We’ll show the next step after we verify your status."
-                        : branch === "check_out"
-                        ? "Open session found. Finish with check-out below."
-                        : "Continue with selfie and location."}
-              </span>
+            <label className="kiosk-control-label">
+              Member
+              <select
+                className="kiosk-input"
+                value={selectedUserId}
+                onChange={(event) => setSelectedUserId(event.target.value)}
+                disabled={membersLoading}
+              >
+                <option value="">{membersLoading ? "Loading members..." : "Select a member"}</option>
+                {members.map((member) => (
+                  <option key={member.user_id} value={member.user_id}>
+                    {member.display_name} — {member.role_label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </StepCard>
+
+          <StepCard
+            step={2}
+            title="Phone match"
+            summary="Confirm the approved phone number."
+            active={focusedStep === "phone"}
+            tone={statusResolved ? "good" : "neutral"}
+            statusLabel={statusResolved ? `Verified • ending ${statusPayload?.phone_last4 ?? ""}` : "Phone required"}
+            onActivate={() => setFocusedStep("phone")}
+          >
+            <div className="space-y-4">
+              <label className="kiosk-control-label">
+                Phone number
+                <input
+                  className="kiosk-input"
+                  inputMode="tel"
+                  autoComplete="tel"
+                  placeholder="(619) 555-1234"
+                  value={phone}
+                  onChange={(event) => setPhone(event.target.value)}
+                />
+              </label>
+              <KioskActionBar
+                primary={
+                  <Button
+                    className="h-12 rounded-xl"
+                    onClick={() => void onResolveStatus()}
+                    disabled={statusLoading || !selectedUserId || !phone.trim()}
+                  >
+                    {statusLoading ? "Verifying..." : "Continue"}
+                  </Button>
+                }
+                hint="This number must match the kiosk phone allowlist for the selected member."
+              />
             </div>
           </StepCard>
 
-          {branch === "check_in" ? (
-            <>
-              <StepCard
-                step={2}
-                title="Selfie"
-                summary={selfieSummary}
-                tone={photo ? "good" : "warning"}
-                statusLabel={selfieStatusLabel}
-                icon={photo ? "check" : "clock"}
-                active={focusedStep === "selfie"}
-                disabled={false}
-                onActivate={() => setFocusedStep("selfie")}
-              >
-                <KioskCameraCapture value={photo} disabled={loading || !emailReady} onChange={setPhoto} />
-              </StepCard>
-
-              <StepCard
-                step={3}
-                title="Location"
-                summary={preflightLoading ? "Checking range…" : locationSummary}
-                tone={preflight ? preflight.statusTone : location ? "neutral" : "warning"}
-                statusLabel={locationStatusLabel}
-                icon={preflight ? iconForTone(preflight.statusTone) : "dot"}
-                active={focusedStep === "location"}
-                disabled={!photo}
-                onActivate={() => {
-                  if (photo) setFocusedStep("location");
-                }}
-              >
-                <div className="kiosk-control-row">
+          <StepCard
+            step={3}
+            title="OTP verification"
+            summary="Request and confirm the SMS code."
+            active={focusedStep === "otp"}
+            tone={verificationToken ? "good" : challengeId ? "warning" : "neutral"}
+            statusLabel={verificationToken ? "Verified" : challengeId ? "Code sent" : "OTP required"}
+            onActivate={() => setFocusedStep("otp")}
+          >
+            <div className="space-y-4">
+              <div className="grid gap-4 sm:grid-cols-[1fr_auto]">
+                <label className="kiosk-control-label">
+                  6-digit code
+                  <input
+                    className="kiosk-input"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    placeholder="123456"
+                    value={otpCode}
+                    onChange={(event) => setOtpCode(event.target.value.replace(/\D/g, "").slice(0, 6))}
+                  />
+                </label>
+                <div className="flex items-end">
                   <Button
-                    type="button"
                     variant="outline"
                     className="h-12 rounded-xl px-4"
-                    onClick={() => void requestLocation()}
-                    disabled={locationLoading || loading || !emailReady}
+                    onClick={() => void onRequestOtp()}
+                    disabled={otpSending || !statusResolved}
                   >
-                    {locationLoading ? "Locating…" : location ? "Update location" : "Use location"}
+                    {otpSending ? "Sending..." : challengeId ? "Resend code" : "Send code"}
                   </Button>
-                  {location ? (
-                    <span className="text-xs text-foreground/65">
-                      {location.accuracyM ? `±${Math.round(location.accuracyM)}m` : "Updated"}
-                    </span>
-                  ) : null}
                 </div>
+              </div>
+              <KioskActionBar
+                primary={
+                  <Button
+                    className="h-12 rounded-xl"
+                    onClick={() => void onVerifyOtp()}
+                    disabled={otpVerifying || otpCode.length !== 6 || !challengeId}
+                  >
+                    {otpVerifying ? "Verifying..." : "Verify code"}
+                  </Button>
+                }
+                hint="The code expires in 5 minutes. Ask an admin to update the phone allowlist if you never receive it."
+              />
+            </div>
+          </StepCard>
 
+          {requiresLocation ? (
+            <StepCard
+              step={4}
+              title="Location"
+              summary="Verify the office geofence."
+              active={focusedStep === "location"}
+              tone={preflight?.ok ? "good" : locationError ? "critical" : "neutral"}
+              statusLabel={preflight?.statusLabel ?? locationError ?? "Location required"}
+              onActivate={() => setFocusedStep("location")}
+            >
+              <div className="space-y-4">
+                {location ? (
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <KioskStatusChip tone="neutral" label={`Lat ${location.lat.toFixed(5)}`} />
+                    <KioskStatusChip tone="neutral" label={`Lon ${location.lon.toFixed(5)}`} />
+                    <KioskStatusChip tone="neutral" label={`Accuracy ${formatDistance(location.accuracyM ?? NaN)}`} />
+                  </div>
+                ) : null}
                 {preflight ? (
-                  <p className="text-xs text-foreground/65">
-                    {formatDistance(preflight.distanceM)} from office · radius{" "}
-                    {formatDistance(preflight.radiusM)} · grace{" "}
+                  <p className="text-sm text-foreground/70">
+                    Distance {formatDistance(preflight.distanceM)} • Radius {formatDistance(preflight.radiusM)} • Grace{" "}
                     {formatDistance(preflight.graceRadiusM)}
                   </p>
                 ) : null}
                 {geoPermission === "denied" ? (
-                  <KioskNotice tone="critical">
-                    Location permission is blocked. Enable location, then retry.
-                  </KioskNotice>
-                ) : null}
-                {locationError ? <KioskNotice tone="critical">{locationError}</KioskNotice> : null}
-                {preflightError ? <KioskNotice tone="critical">{preflightError}</KioskNotice> : null}
-              </StepCard>
-
-              <StepCard
-                step={4}
-                title="Action"
-                summary={actionSummary}
-                tone={actionTone}
-                statusLabel={actionStatusLabel}
-                icon={iconForTone(actionTone)}
-                active={focusedStep === "action"}
-                disabled={false}
-                onActivate={() => setFocusedStep("action")}
-              >
-                <p className="text-sm text-foreground/75">Ready when you are.</p>
-                {!status?.user_exists ? (
-                  <KioskNotice tone="neutral">First kiosk check-in creates your account.</KioskNotice>
+                  <KioskNotice tone="critical">Location permission is blocked on this device.</KioskNotice>
                 ) : null}
                 <KioskActionBar
                   primary={
                     <Button
-                      type="button"
-                      className="h-14 rounded-xl text-base"
-                      onClick={() => void onCheckIn()}
-                      disabled={!canSubmitCheckIn || loading}
+                      className="h-12 rounded-xl"
+                      onClick={() => void onRequestLocation()}
+                      disabled={locationLoading || !verificationToken}
                     >
-                      {loading ? "Checking in…" : canSubmitCheckIn ? "Check in" : "Complete steps"}
+                      {locationLoading || preflightLoading ? "Checking..." : "Verify location"}
                     </Button>
                   }
-                  hint="Selfie + in-range location required."
+                  hint="Check-in only works inside the configured office area."
                 />
-              </StepCard>
-            </>
-          ) : null}
-
-          {branch === "check_out" ? (
-            <StepCard
-              step={2}
-              title="Check out"
-              summary={loading ? "Checking out…" : "Ready to check out"}
-              tone="good"
-              statusLabel={loading ? "Checking" : "Ready"}
-              icon={loading ? "clock" : "check"}
-              active
-              onActivate={() => undefined}
-            >
-              <p className="text-sm text-foreground/75">
-                Opened {openSession ? formatWhen(openSession.checkin_at) : "earlier"}.
-              </p>
-              <KioskActionBar
-                primary={
-                  <Button
-                    type="button"
-                    className="h-14 rounded-xl text-base"
-                    onClick={() => void onCheckOut()}
-                    disabled={loading || !emailReady}
-                  >
-                      {loading ? "Checking out…" : "Check out"}
-                    </Button>
-                  }
-                hint="Closes the active session for this email."
-              />
+              </div>
             </StepCard>
           ) : null}
-        </motion.div>
 
-        {notice ? <KioskNotice tone="good">{notice}</KioskNotice> : null}
-        {error ? <KioskNotice tone="critical">{error}</KioskNotice> : null}
+          <StepCard
+            step={requiresLocation ? 5 : 4}
+            title={intent === "check_out" ? "Check out" : "Check in"}
+            summary="Finish the kiosk flow."
+            active={focusedStep === "action"}
+            tone={actionReady ? "good" : "neutral"}
+            statusLabel={
+              actionReady
+                ? intent === "check_out"
+                  ? "Ready to check out"
+                  : "Ready to check in"
+                : "Finish the previous steps"
+            }
+            onActivate={() => setFocusedStep("action")}
+          >
+            <div className="space-y-4">
+              {statusPayload?.open_session ? (
+                <p className="text-sm text-foreground/70">
+                  Open since {formatWhen(statusPayload.open_session.checkin_at)}.
+                </p>
+              ) : (
+                <p className="text-sm text-foreground/70">No open session was found, so this kiosk flow will check in.</p>
+              )}
+              <KioskActionBar
+                primary={
+                  <Button className="h-12 rounded-xl" onClick={() => void onSubmit()} disabled={loading || !actionReady}>
+                    {loading
+                      ? intent === "check_out"
+                        ? "Checking out..."
+                        : "Checking in..."
+                      : intent === "check_out"
+                        ? "Check out"
+                        : "Check in"}
+                  </Button>
+                }
+                secondary={
+                  <Button variant="outline" className="h-12 rounded-xl px-4" onClick={resetFlow} disabled={loading}>
+                    Start over
+                  </Button>
+                }
+                hint={intent === "check_out" ? "The member must verify their phone and code again to check out." : "Hourly reminder texts will go to the verified phone number while the session stays open."}
+              />
+            </div>
+          </StepCard>
+        </motion.section>
+
+        {notice ? (
+          <KioskNotice tone="good">
+            <span role="status" aria-live="polite">
+              {notice}
+            </span>
+          </KioskNotice>
+        ) : null}
+
+        {error ? (
+          <KioskNotice tone="critical">
+            <span role="alert">{error}</span>
+          </KioskNotice>
+        ) : null}
       </div>
     </KioskShell>
   );

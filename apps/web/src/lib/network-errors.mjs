@@ -10,8 +10,20 @@ export function isProbablyNetworkError(error) {
   return (
     normalized.includes("failed to fetch") ||
     normalized.includes("fetch failed") ||
-    normalized.includes("networkerror")
+      normalized.includes("networkerror")
   );
+}
+
+export function isMissingAuthSessionError(error) {
+  if (!error) return false;
+  const message =
+    typeof error === "string"
+      ? error
+      : typeof error === "object" && "message" in error
+        ? error.message
+        : "";
+  const normalized = String(message).toLowerCase();
+  return normalized.includes("auth session missing");
 }
 
 export async function swallowNetworkError(fn) {
@@ -22,4 +34,3 @@ export async function swallowNetworkError(fn) {
     throw error;
   }
 }
-

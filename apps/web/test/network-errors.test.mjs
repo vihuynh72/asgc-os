@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { swallowNetworkError } from "../src/lib/network-errors.mjs";
+import { isMissingAuthSessionError, swallowNetworkError } from "../src/lib/network-errors.mjs";
 
 test("swallowNetworkError returns null on fetch failure", async () => {
   const result = await swallowNetworkError(async () => {
@@ -21,3 +21,8 @@ test("swallowNetworkError rethrows non-network errors", async () => {
   );
 });
 
+test("isMissingAuthSessionError matches the benign Supabase missing-session message", () => {
+  assert.equal(isMissingAuthSessionError("Auth session missing!"), true);
+  assert.equal(isMissingAuthSessionError(new Error("Auth session missing!")), true);
+  assert.equal(isMissingAuthSessionError("boom"), false);
+});
