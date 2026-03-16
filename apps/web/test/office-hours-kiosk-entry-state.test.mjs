@@ -3,35 +3,25 @@ import assert from "node:assert/strict";
 
 import {
   canSubmitKioskCheckIn,
-  deriveKioskCheckInStep,
-  deriveKioskEntryBranch,
+  canSubmitKioskCheckOut,
+  deriveKioskIntentBranch,
+  deriveKioskVerificationStep,
   mapDistanceToPreflightStatus,
 } from "../src/lib/office-hours-kiosk/entry-state.mjs";
 
-test("deriveKioskEntryBranch keeps invalid or unresolved email in the email branch", () => {
+test("deriveKioskIntentBranch keeps unresolved status in the status branch", () => {
   assert.equal(
-    deriveKioskEntryBranch({
-      emailValid: false,
+    deriveKioskIntentBranch({
       statusResolved: false,
       hasOpenSession: false,
     }),
-    "email",
-  );
-
-  assert.equal(
-    deriveKioskEntryBranch({
-      emailValid: true,
-      statusResolved: false,
-      hasOpenSession: false,
-    }),
-    "email",
+    "status",
   );
 });
 
-test("deriveKioskEntryBranch sends resolved users into the correct branch", () => {
+test("deriveKioskIntentBranch sends resolved users into the correct intent branch", () => {
   assert.equal(
-    deriveKioskEntryBranch({
-      emailValid: true,
+    deriveKioskIntentBranch({
       statusResolved: true,
       hasOpenSession: false,
     }),
@@ -39,8 +29,7 @@ test("deriveKioskEntryBranch sends resolved users into the correct branch", () =
   );
 
   assert.equal(
-    deriveKioskEntryBranch({
-      emailValid: true,
+    deriveKioskIntentBranch({
       statusResolved: true,
       hasOpenSession: true,
     }),
@@ -48,11 +37,10 @@ test("deriveKioskEntryBranch sends resolved users into the correct branch", () =
   );
 });
 
-test("canSubmitKioskCheckIn requires email, selfie, and allowed preflight", () => {
+test("canSubmitKioskCheckIn requires OTP verification and allowed location preflight", () => {
   assert.equal(
     canSubmitKioskCheckIn({
-      emailValid: true,
-      hasPhoto: true,
+      otpVerified: true,
       preflightReady: true,
       preflightAllowed: true,
     }),
@@ -61,8 +49,7 @@ test("canSubmitKioskCheckIn requires email, selfie, and allowed preflight", () =
 
   assert.equal(
     canSubmitKioskCheckIn({
-      emailValid: false,
-      hasPhoto: true,
+      otpVerified: false,
       preflightReady: true,
       preflightAllowed: true,
     }),
@@ -71,18 +58,7 @@ test("canSubmitKioskCheckIn requires email, selfie, and allowed preflight", () =
 
   assert.equal(
     canSubmitKioskCheckIn({
-      emailValid: true,
-      hasPhoto: false,
-      preflightReady: true,
-      preflightAllowed: true,
-    }),
-    false,
-  );
-
-  assert.equal(
-    canSubmitKioskCheckIn({
-      emailValid: true,
-      hasPhoto: true,
+      otpVerified: true,
       preflightReady: false,
       preflightAllowed: true,
     }),
@@ -91,8 +67,7 @@ test("canSubmitKioskCheckIn requires email, selfie, and allowed preflight", () =
 
   assert.equal(
     canSubmitKioskCheckIn({
-      emailValid: true,
-      hasPhoto: true,
+      otpVerified: true,
       preflightReady: true,
       preflightAllowed: false,
     }),
@@ -100,19 +75,37 @@ test("canSubmitKioskCheckIn requires email, selfie, and allowed preflight", () =
   );
 });
 
-test("deriveKioskCheckInStep progresses through selfie, location, and action", () => {
+test("canSubmitKioskCheckOut requires only OTP verification", () => {
   assert.equal(
-    deriveKioskCheckInStep({
-      hasPhoto: false,
-      preflightReady: false,
-      preflightAllowed: false,
+    canSubmitKioskCheckOut({
+      otpVerified: true,
     }),
-    "selfie",
+    true,
   );
 
   assert.equal(
-    deriveKioskCheckInStep({
-      hasPhoto: true,
+    canSubmitKioskCheckOut({
+      otpVerified: false,
+    }),
+    false,
+  );
+});
+
+test("deriveKioskVerificationStep progresses through otp, location, and action", () => {
+  assert.equal(
+    deriveKioskVerificationStep({
+      otpVerified: false,
+      requiresLocation: true,
+      preflightReady: false,
+      preflightAllowed: false,
+    }),
+    "otp",
+  );
+
+  assert.equal(
+    deriveKioskVerificationStep({
+      otpVerified: true,
+      requiresLocation: true,
       preflightReady: false,
       preflightAllowed: false,
     }),
@@ -120,10 +113,21 @@ test("deriveKioskCheckInStep progresses through selfie, location, and action", (
   );
 
   assert.equal(
-    deriveKioskCheckInStep({
-      hasPhoto: true,
+    deriveKioskVerificationStep({
+      otpVerified: true,
+      requiresLocation: true,
       preflightReady: true,
       preflightAllowed: true,
+    }),
+    "action",
+  );
+
+  assert.equal(
+    deriveKioskVerificationStep({
+      otpVerified: true,
+      requiresLocation: false,
+      preflightReady: false,
+      preflightAllowed: false,
     }),
     "action",
   );

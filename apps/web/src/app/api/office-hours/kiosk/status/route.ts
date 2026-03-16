@@ -3,51 +3,48 @@ import { z } from "zod";
 
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 
-import { getAllowlistDecision, getUserIdByEmail, normalizeKioskEmail } from "../_kiosk";
+import { getMatchedKioskPhone, getOpenKioskSession } from "../_kiosk";
 
 export const runtime = "nodejs";
 
-const EmailSchema = z.string().email().transform(normalizeKioskEmail);
+const BodySchema = z.object({
+  userId: z.string().uuid(),
+  phone: z.string().min(7),
+});
 
-export async function GET(request: NextRequest) {
-  const emailRaw = request.nextUrl.searchParams.get("email") ?? "";
-  const parsed = EmailSchema.safeParse(emailRaw);
+function mapErrorStatus(message: string): number {
+  switch (message) {
+    case "invalid_phone":
+      return 400;
+    case "member_not_found":
+      return 404;
+    case "phone_not_allowed":
+      return 403;
+    default:
+      return 500;
+  }
+}
+
+export async function POST(request: NextRequest) {
+  const parsed = BodySchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
-    return NextResponse.json({ error: "invalid_email" }, { status: 400 });
+    return NextResponse.json({ error: "invalid_request" }, { status: 400 });
   }
 
-  const email = parsed.data;
+  const { userId, phone } = parsed.data;
   const admin = getSupabaseAdminClient();
 
   try {
-    const decision = await getAllowlistDecision(admin, email);
-    if (!decision.allowed) {
-      const status = decision.reason === "email_blocked" ? 403 : 403;
-      return NextResponse.json({ error: decision.reason }, { status });
-    }
+    const matchedPhone = await getMatchedKioskPhone(admin, userId, phone);
+    const openSession = await getOpenKioskSession(admin, userId);
 
-    const userId = await getUserIdByEmail(admin, email);
-    if (!userId) {
-      return NextResponse.json({ user_exists: false, open_session: null });
-    }
-
-    const { data: openSession, error } = await admin
-      .from("office_hour_sessions")
-      .select("id,checkin_at")
-      .eq("user_id", userId)
-      .eq("status", "open")
-      .is("checkout_at", null)
-      .order("checkin_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
-
-    return NextResponse.json({ user_exists: true, open_session: openSession ?? null });
+    return NextResponse.json({
+      intent: openSession?.id ? "check_out" : "check_in",
+      phone_last4: matchedPhone.phoneLast4,
+      open_session: openSession ? { id: openSession.id, checkin_at: openSession.checkin_at } : null,
+    });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "unknown";
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return NextResponse.json({ error: msg }, { status: mapErrorStatus(msg) });
   }
 }

@@ -5,20 +5,18 @@ import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 import { shapeLocationCheckResult } from "@/lib/office-hours-kiosk/location-check.mjs";
 
 import {
-  getAllowlistDecision,
+  getVerifiedKioskChallenge,
   getOfficeGeo,
   haversineMeters,
   isWeekendInTimeZone,
-  normalizeKioskEmail,
 } from "../_kiosk";
 
 export const runtime = "nodejs";
 
 const BodySchema = z.object({
-  email: z.string().email().transform(normalizeKioskEmail),
+  verificationToken: z.string().uuid(),
   lat: z.number().finite().refine((v) => v >= -90 && v <= 90, { message: "invalid_lat" }),
   lon: z.number().finite().refine((v) => v >= -180 && v <= 180, { message: "invalid_lon" }),
-  intent: z.enum(["check_in", "check_out"]),
 });
 
 function mapStatusLabel(message: string): string {
@@ -43,26 +41,23 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: message }, { status: 400 });
   }
 
-  const { email, lat, lon, intent } = parsed.data;
+  const { verificationToken, lat, lon } = parsed.data;
   const admin = getSupabaseAdminClient();
 
   try {
-    const decision = await getAllowlistDecision(admin, email);
+    await getVerifiedKioskChallenge(admin, verificationToken, "check_in");
     const geo = await getOfficeGeo(admin);
     const distanceM = haversineMeters(lat, lon, geo.lat, geo.lon);
 
     const now = new Date();
-    let dayAllowed = true;
-    if (intent === "check_in") {
-      const { data: allowedData, error: allowedErr } = await admin.rpc("is_office_hours_day_allowed", {
-        _ts: now.toISOString(),
-      });
-      dayAllowed = !allowedErr ? Boolean(allowedData) : !isWeekendInTimeZone(now, geo.timezone);
-    }
+    const { data: allowedData, error: allowedErr } = await admin.rpc("is_office_hours_day_allowed", {
+      _ts: now.toISOString(),
+    });
+    const dayAllowed = !allowedErr ? Boolean(allowedData) : !isWeekendInTimeZone(now, geo.timezone);
 
     return NextResponse.json(
       shapeLocationCheckResult({
-        decision,
+        decision: { allowed: true },
         dayAllowed,
         distanceM,
         radiusM: geo.radiusM,
@@ -82,6 +77,6 @@ export async function POST(request: NextRequest) {
       statusTone: "critical",
       statusLabel: mapStatusLabel(msg),
       error: msg,
-    });
+    }, { status: 400 });
   }
 }
