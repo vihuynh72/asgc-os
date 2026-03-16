@@ -66,6 +66,34 @@ export function getEmailEnv(): EmailEnv {
   return parsed.data;
 }
 
+const SmsEnvSchema = z.object({
+  SMS_PROVIDER: z.enum(["twilio"]),
+  TWILIO_ACCOUNT_SID: z.string().min(1),
+  TWILIO_AUTH_TOKEN: z.string().min(1),
+  TWILIO_MESSAGING_SERVICE_SID: z.string().min(1),
+  OFFICE_HOURS_KIOSK_OTP_SECRET: z.string().min(16),
+});
+
+export type SmsEnv = z.infer<typeof SmsEnvSchema>;
+
+export function getSmsEnv(): SmsEnv {
+  const parsed = SmsEnvSchema.safeParse({
+    SMS_PROVIDER: process.env.SMS_PROVIDER,
+    TWILIO_ACCOUNT_SID: process.env.TWILIO_ACCOUNT_SID,
+    TWILIO_AUTH_TOKEN: process.env.TWILIO_AUTH_TOKEN,
+    TWILIO_MESSAGING_SERVICE_SID: process.env.TWILIO_MESSAGING_SERVICE_SID,
+    OFFICE_HOURS_KIOSK_OTP_SECRET: process.env.OFFICE_HOURS_KIOSK_OTP_SECRET,
+  });
+
+  if (!parsed.success) {
+    throw new Error(
+      "Missing SMS env. Set SMS_PROVIDER=twilio, TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_SERVICE_SID, and OFFICE_HOURS_KIOSK_OTP_SECRET in .env.local.",
+    );
+  }
+
+  return parsed.data;
+}
+
 const CronEnvSchema = z.object({
   CRON_SECRET: z.string().min(16),
 });

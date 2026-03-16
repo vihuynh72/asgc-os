@@ -40,6 +40,8 @@ type OfficeHourSessionRow = {
   within_grace: boolean | null;
   distance_m_at_checkin: number | null;
   distance_m_at_checkout: number | null;
+  kiosk_auth_method: string | null;
+  kiosk_phone_last4: string | null;
   kiosk_checkin_photo_path: string | null;
   kiosk_checkin_photo_deleted_at: string | null;
   admin_closed_by?: string | null;
@@ -115,7 +117,7 @@ export async function GET(request: NextRequest) {
   const max = clampLimit(limit);
 
   const baseSelect =
-    "id,user_id,office_location_id,checkin_at,checkout_at,status,within_radius,within_grace,distance_m_at_checkin,distance_m_at_checkout,kiosk_checkin_photo_path,kiosk_checkin_photo_deleted_at,created_at,updated_at";
+    "id,user_id,office_location_id,checkin_at,checkout_at,status,within_radius,within_grace,distance_m_at_checkin,distance_m_at_checkout,kiosk_auth_method,kiosk_phone_last4,kiosk_checkin_photo_path,kiosk_checkin_photo_deleted_at,created_at,updated_at";
   const selectWithAdminOverrides =
     `${baseSelect},admin_closed_by,admin_closed_at,admin_closed_reason,admin_adjusted_checkout_at,admin_exclude_from_totals`;
 
@@ -208,6 +210,8 @@ export async function GET(request: NextRequest) {
       duration_minutes: computeDurationMinutes(s.checkin_at, s.checkout_at),
       has_kiosk_selfie:
         userIsAllowlisted && !!s.kiosk_checkin_photo_path && !s.kiosk_checkin_photo_deleted_at,
+      kiosk_auth_method: s.kiosk_auth_method ?? null,
+      kiosk_phone_last4: s.kiosk_phone_last4 ?? null,
       user_display_name: userIsAllowlisted ? (displayNameById.get(s.user_id) ?? "") : "",
       user_email: userIsAllowlisted ? (emailById.get(s.user_id) ?? "") : "",
       office_location_name: s.office_location_id ? (locationById.get(s.office_location_id)?.name ?? "") : "",
