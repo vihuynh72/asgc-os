@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 
 import { AdminHero } from "@/components/admin/admin-hero";
 import { isOfficeHoursKioskManagerTier } from "@/lib/office-hours-kiosk-admin.mjs";
+import { ensureOfficeHoursConfigWithKioskFallback } from "@/lib/office-hours-kiosk-setup.mjs";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 import { requireAdminViewer, type OfficeConfigRow } from "@/lib/admin/server";
 
@@ -19,13 +20,7 @@ export async function OfficeHoursKioskPage() {
   const admin = getSupabaseAdminClient();
   const [members, config] = await Promise.all([
     listKioskMembers(admin),
-    admin
-      .from("office_config")
-      .select(
-        "primary_office_location_id,quiet_hours_enabled,quiet_hours_start_local,quiet_hours_end_local,weekly_hours_reminder_enabled,weekly_hours_reminder_weekday,weekly_hours_reminder_time_local,office_hours_allow_weekends,office_hours_allowed_weekdays,office_hours_extra_allowed_dates,kiosk_sms_enabled,kiosk_otp_ttl_minutes,kiosk_checkout_reminder_interval_minutes",
-      )
-      .eq("id", true)
-      .maybeSingle(),
+    ensureOfficeHoursConfigWithKioskFallback(admin),
   ]);
 
   const smsEnvReady = Boolean(
@@ -47,7 +42,7 @@ export async function OfficeHoursKioskPage() {
       <OfficeHoursKioskPanel
         initialMembers={members}
         initialConfig={
-          (config.data as OfficeConfigRow | null) ?? {
+          (config as OfficeConfigRow | null) ?? {
             primary_office_location_id: "",
             quiet_hours_enabled: false,
             quiet_hours_start_local: "18:00:00",

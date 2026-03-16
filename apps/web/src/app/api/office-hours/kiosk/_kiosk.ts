@@ -9,6 +9,11 @@ import {
   sortKioskMembers,
   verifyKioskOtpCode,
 } from "@/lib/office-hours-kiosk-auth.mjs";
+import {
+  getOfficeHoursConfigWithKioskFallback,
+  isOfficeHoursKioskSchemaError,
+  normalizeOfficeHoursKioskError,
+} from "@/lib/office-hours-kiosk-setup.mjs";
 
 export type KioskIntent = "check_in" | "check_out";
 
@@ -155,14 +160,17 @@ export async function getKioskSmsConfig(admin: SupabaseClient): Promise<{
   kioskSmsEnabled: boolean;
   otpTtlMinutes: number;
   reminderIntervalMinutes: number;
+  schemaReady: boolean;
 }> {
-  const { data, error } = await admin
-    .from("office_config")
-    .select("kiosk_sms_enabled,kiosk_otp_ttl_minutes,kiosk_checkout_reminder_interval_minutes")
-    .eq("id", true)
-    .maybeSingle();
-
-  if (error) throw new Error(error.message || "office_config_missing");
+  const data = await getOfficeHoursConfigWithKioskFallback(admin);
+  if (!data) {
+    return {
+      kioskSmsEnabled: false,
+      otpTtlMinutes: 5,
+      reminderIntervalMinutes: 60,
+      schemaReady: false,
+    };
+  }
 
   return {
     kioskSmsEnabled: Boolean(data?.kiosk_sms_enabled),
@@ -175,6 +183,7 @@ export async function getKioskSmsConfig(admin: SupabaseClient): Promise<{
       Number.isFinite(data.kiosk_checkout_reminder_interval_minutes)
         ? data.kiosk_checkout_reminder_interval_minutes
         : 60,
+    schemaReady: data?.kiosk_schema_ready !== false,
   };
 }
 
@@ -208,13 +217,19 @@ export async function listKioskMembers(admin: SupabaseClient): Promise<KioskMemb
   const userIds = Array.from(assignmentByUser.keys());
   if (userIds.length === 0) return [];
 
-  const [{ data: profilesRaw, error: profilesErr }, { data: phonesRaw, error: phonesErr }] = await Promise.all([
+  const [{ data: profilesRaw, error: profilesErr }, phonesResult] = await Promise.all([
     admin.from("profiles").select("id,display_name,status").in("id", userIds).eq("status", "active"),
     admin.from("office_hours_kiosk_phone_allowlist").select("user_id,phone_last4,updated_at").in("user_id", userIds),
   ]);
 
-  if (profilesErr || phonesErr) {
-    throw new Error(profilesErr?.message || phonesErr?.message || "kiosk_member_lookup_failed");
+  if (profilesErr) {
+    throw new Error(profilesErr.message || "kiosk_member_lookup_failed");
+  }
+
+  const phonesErr = phonesResult.error;
+  const phonesRaw = isOfficeHoursKioskSchemaError(phonesErr) ? [] : phonesResult.data;
+  if (phonesErr && !isOfficeHoursKioskSchemaError(phonesErr)) {
+    throw new Error(normalizeOfficeHoursKioskError(phonesErr, "kiosk_member_lookup_failed"));
   }
 
   const phoneByUserId = new Map<string, { phone_last4: string | null; updated_at: string | null }>();
@@ -279,7 +294,7 @@ export async function getMatchedKioskPhone(
     .eq("user_id", userId)
     .maybeSingle();
 
-  if (error) throw new Error(error.message || "phone_lookup_failed");
+  if (error) throw new Error(normalizeOfficeHoursKioskError(error, "phone_lookup_failed"));
   if (!data?.phone_e164 || data.phone_e164 !== normalized.e164) {
     throw new Error("phone_not_allowed");
   }
@@ -333,7 +348,7 @@ export async function createOrRefreshKioskOtpChallenge(
     .gte("created_at", fifteenMinutesAgoIso)
     .order("created_at", { ascending: false });
 
-  if (recentErr) throw new Error(recentErr.message || "otp_lookup_failed");
+  if (recentErr) throw new Error(normalizeOfficeHoursKioskError(recentErr, "otp_lookup_failed"));
 
   const recent = (recentRaw ?? []) as Array<Pick<OtpChallengeRow, "id" | "phone_e164" | "intent" | "attempt_count" | "send_count" | "expires_at" | "verified_at" | "used_at" | "created_at" | "updated_at">>;
 
@@ -371,7 +386,7 @@ export async function createOrRefreshKioskOtpChallenge(
       })
       .eq("id", latest.id);
 
-    if (error) throw new Error(error.message || "otp_update_failed");
+    if (error) throw new Error(normalizeOfficeHoursKioskError(error, "otp_update_failed"));
   } else {
     const { error } = await admin.from("office_hours_kiosk_otp_challenges").insert({
       id: challengeId,
@@ -386,7 +401,7 @@ export async function createOrRefreshKioskOtpChallenge(
       user_agent: userAgent,
     });
 
-    if (error) throw new Error(error.message || "otp_insert_failed");
+    if (error) throw new Error(normalizeOfficeHoursKioskError(error, "otp_insert_failed"));
   }
 
   return { challengeId, code, expiresAtIso };
@@ -418,7 +433,7 @@ export async function verifyKioskOtpChallengeCode(
     .eq("intent", intent)
     .maybeSingle();
 
-  if (error) throw new Error(error.message || "otp_lookup_failed");
+  if (error) throw new Error(normalizeOfficeHoursKioskError(error, "otp_lookup_failed"));
   const row = data as OtpChallengeRow | null;
   if (!row || row.used_at) throw new Error("invalid_otp");
   if (row.phone_e164 !== phoneE164) throw new Error("invalid_otp");
@@ -453,7 +468,7 @@ export async function verifyKioskOtpChallengeCode(
     })
     .eq("id", row.id);
 
-  if (updateErr) throw new Error(updateErr.message || "otp_verify_failed");
+  if (updateErr) throw new Error(normalizeOfficeHoursKioskError(updateErr, "otp_verify_failed"));
 
   return {
     challengeId: row.id,
@@ -474,7 +489,7 @@ export async function getVerifiedKioskChallenge(
     .eq("verification_token", verificationToken)
     .maybeSingle();
 
-  if (error) throw new Error(error.message || "verification_lookup_failed");
+  if (error) throw new Error(normalizeOfficeHoursKioskError(error, "verification_lookup_failed"));
 
   const row = data as {
     id: string;
@@ -501,7 +516,7 @@ export async function markKioskChallengeUsed(admin: SupabaseClient, challengeId:
     .update({ used_at: new Date().toISOString() })
     .eq("id", challengeId);
 
-  if (error) throw new Error(error.message || "verification_consume_failed");
+  if (error) throw new Error(normalizeOfficeHoursKioskError(error, "verification_consume_failed"));
 }
 
 export function nextCheckoutReminderAt(checkinAtIso: string, intervalMinutes: number): string | null {

@@ -4,6 +4,7 @@ import { sendEmail } from "@/lib/emailSender";
 import { isAuthorizedCronRequest } from "@/lib/cron-auth.mjs";
 import { getCronEnv, getSmsEnv } from "@/lib/envServer";
 import { buildKioskCheckoutReminderSmsText } from "@/lib/office-hours-kiosk-messages.mjs";
+import { isOfficeHoursKioskSchemaError } from "@/lib/office-hours-kiosk-setup.mjs";
 import { sendSms } from "@/lib/smsSender.mjs";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 
@@ -347,12 +348,14 @@ async function handle(request: NextRequest) {
     return NextResponse.json({ error: weeklyErr.message }, { status: 500 });
   }
 
-  const { data: kioskCheckoutSmsReminders, error: kioskCheckoutSmsErr } = await supabase.rpc(
+  let kioskCheckoutSmsReminders = 0;
+  const { data: kioskCheckoutSmsRemindersRaw, error: kioskCheckoutSmsErr } = await supabase.rpc(
     "enqueue_kiosk_checkout_sms_reminders"
   );
-  if (kioskCheckoutSmsErr) {
+  if (kioskCheckoutSmsErr && !isOfficeHoursKioskSchemaError(kioskCheckoutSmsErr)) {
     return NextResponse.json({ error: kioskCheckoutSmsErr.message }, { status: 500 });
   }
+  kioskCheckoutSmsReminders = Number(kioskCheckoutSmsRemindersRaw ?? 0) || 0;
 
   const lockId = `cron:${crypto.randomUUID()}`;
 
@@ -446,7 +449,7 @@ async function handle(request: NextRequest) {
     claimed: rows.length,
     sent,
     failed,
-    kiosk_checkout_sms_reminders: kioskCheckoutSmsReminders ?? 0,
+    kiosk_checkout_sms_reminders: kioskCheckoutSmsReminders,
   });
 }
 

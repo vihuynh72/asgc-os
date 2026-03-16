@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
 import { getSmsEnv } from "@/lib/envServer";
+import { normalizeOfficeHoursKioskError } from "@/lib/office-hours-kiosk-setup.mjs";
 import { buildKioskOtpSmsText } from "@/lib/office-hours-kiosk-messages.mjs";
 import { sendSms } from "@/lib/smsSender.mjs";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
@@ -31,6 +32,8 @@ function mapErrorStatus(message: string): number {
     case "otp_rate_limited":
     case "otp_resend_too_soon":
       return 403;
+    case "kiosk_setup_incomplete":
+      return 503;
     default:
       return 500;
   }
@@ -57,6 +60,9 @@ export async function POST(request: NextRequest) {
     const openSession = await getOpenKioskSession(admin, userId);
     const intent = openSession?.id ? "check_out" : "check_in";
     const config = await getKioskSmsConfig(admin);
+    if (!config.schemaReady) {
+      return NextResponse.json({ error: "kiosk_setup_incomplete" }, { status: 503 });
+    }
     if (!config.kioskSmsEnabled) {
       return NextResponse.json({ error: "sms_disabled" }, { status: 403 });
     }
@@ -77,7 +83,7 @@ export async function POST(request: NextRequest) {
       expiresInMinutes: config.otpTtlMinutes,
     });
 
-    const { data: queuedRow } = await admin
+    const { data: queuedRow, error: queueErr } = await admin
       .from("notification_log")
       .insert({
         actor_user_id: null,
@@ -95,6 +101,11 @@ export async function POST(request: NextRequest) {
       })
       .select("id")
       .maybeSingle();
+
+    if (queueErr) {
+      const message = normalizeOfficeHoursKioskError(queueErr, "notification_queue_failed");
+      return NextResponse.json({ error: message }, { status: mapErrorStatus(message) });
+    }
 
     try {
       const result = await sendSms({
@@ -123,7 +134,7 @@ export async function POST(request: NextRequest) {
       expiresAt: challenge.expiresAtIso,
     });
   } catch (e) {
-    const message = e instanceof Error ? e.message : "unknown";
+    const message = normalizeOfficeHoursKioskError(e, "unknown");
     return NextResponse.json({ error: message }, { status: mapErrorStatus(message) });
   }
 }
