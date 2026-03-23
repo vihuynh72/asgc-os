@@ -30,7 +30,7 @@ export function AdminDrawer({
             className,
           )}
         >
-          <div className="flex items-start justify-between gap-4 border-b border-black/6 pb-4 dark:border-white/8">
+          <div className="flex items-start justify-between gap-4 border-b border-black/6 pb-4">
             <div className="space-y-1">
               <DialogPrimitive.Title className="text-lg font-semibold tracking-[-0.02em]">
                 {title}
@@ -41,7 +41,7 @@ export function AdminDrawer({
                 </DialogPrimitive.Description>
               ) : null}
             </div>
-            <DialogPrimitive.Close className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-black/6 bg-white/72 text-sm text-foreground/70 transition hover:bg-white dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10">
+            <DialogPrimitive.Close className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-black/6 bg-white/72 text-sm text-foreground/70 transition hover:bg-white">
               Close
             </DialogPrimitive.Close>
           </div>

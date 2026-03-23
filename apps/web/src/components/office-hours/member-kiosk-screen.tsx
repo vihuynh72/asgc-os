@@ -2,14 +2,15 @@
 
 import Link from "next/link";
 import { motion, useReducedMotion } from "motion/react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { PageShell } from "@/components/page-shell";
 import {
+  KioskActionBar,
   KioskCameraCapture,
+  KioskShell,
   KioskNotice,
   KioskStatusChip,
-  KioskStickyAction,
+  KioskStepHeader,
 } from "@/components/office-hours/kiosk";
 import { Button } from "@/components/ui/button";
 import {
@@ -19,11 +20,13 @@ import {
   friendlyMemberActionError,
 } from "@/lib/office-hours-member-action.mjs";
 import {
+  getMemberKioskFlowModel,
   getMemberKioskStateSummary,
   normalizeMemberCheckInSession,
 } from "@/lib/office-hours-member-kiosk.mjs";
 import { OFFICE_HOURS_MEMBER_KIOSK_PATH } from "@/lib/office-hours-member-routing.mjs";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
+import { cn } from "@/lib/utils";
 
 type OpenSession = {
   id: string;
@@ -102,6 +105,12 @@ function formatStepLabel(step: string): string {
   }
 }
 
+function toneForStepState(state: string, activeTone: KioskTone): KioskTone {
+  if (state === "complete") return "good";
+  if (state === "current") return activeTone;
+  return "neutral";
+}
+
 export function MemberKioskScreen() {
   const reduceMotion = useReducedMotion();
   const supabase = useMemo(() => getSupabaseBrowserClient(), []);
@@ -159,6 +168,23 @@ export function MemberKioskScreen() {
   const locationLabel = locationError
     ? "Location unavailable"
     : preflight?.statusLabel ?? (location ? "Location captured" : locating ? "Refreshing location" : "Waiting for location");
+  const flowModel = useMemo(
+    () =>
+      getMemberKioskFlowModel({
+        mode,
+        hasPhoto: Boolean(photo),
+        preflightReady: Boolean(preflight) && !locating,
+        preflightAllowed: Boolean(preflight?.ok),
+      }),
+    [locating, mode, photo, preflight],
+  );
+  const selfieSection = flowModel.sections.find((section) => section.id === "selfie") ?? null;
+  const locationSection = flowModel.sections.find((section) => section.id === "location") ?? null;
+  const actionSection = flowModel.sections.find((section) => section.id === "action") ?? null;
+  const activeStepNumber = mode === "check_out" ? 2 : currentStep === "selfie" ? 1 : currentStep === "location" ? 2 : 3;
+  const locationSectionRef = useRef<HTMLElement | null>(null);
+  const actionSectionRef = useRef<HTMLElement | null>(null);
+  const previousStepRef = useRef(currentStep);
 
   const refreshOpenSession = useCallback(async () => {
     const { data: sessionRow } = await supabase
@@ -277,6 +303,29 @@ export function MemberKioskScreen() {
     }
   }, [mode]);
 
+  useEffect(() => {
+    const previousStep = previousStepRef.current;
+    previousStepRef.current = currentStep;
+
+    if (mode !== "check_in" || typeof window === "undefined" || window.innerWidth >= 768) {
+      return;
+    }
+
+    const target =
+      previousStep === "selfie" && currentStep === "location"
+        ? locationSectionRef.current
+        : previousStep === "location" && currentStep === "submit"
+          ? actionSectionRef.current
+          : null;
+
+    if (!target) return;
+
+    target.scrollIntoView({
+      behavior: reduceMotion ? "auto" : "smooth",
+      block: "start",
+    });
+  }, [currentStep, mode, reduceMotion]);
+
   async function onSubmit() {
     setLoading(true);
     setError(null);
@@ -344,191 +393,309 @@ export function MemberKioskScreen() {
   }
 
   return (
-    <PageShell
-      title="Office Hours kiosk"
-      description="Signed-in selfie check-in and lightweight check-out in one focused Office Hours flow."
-      containerClassName="max-w-6xl"
-      backHref="/dashboard"
+    <KioskShell
+      className="max-w-6xl items-start py-4 sm:py-6"
+      topNav={
+        <nav aria-label="Office Hours kiosk navigation" className="kiosk-top-nav">
+          <Link href="/dashboard" className="kiosk-top-nav-brand" aria-label="Go to dashboard">
+            <span className="kiosk-top-nav-mark" aria-hidden="true">
+              AS
+            </span>
+            <span className="kiosk-top-nav-copy">
+              <span className="kiosk-top-nav-title">ASGC OS</span>
+              <span className="kiosk-top-nav-subtitle">Office Hours</span>
+            </span>
+          </Link>
+
+          <Link href="/dashboard" className="kiosk-top-nav-action">
+            Dashboard
+          </Link>
+        </nav>
+      }
     >
-      <div className="relative overflow-hidden rounded-[2rem] border border-black/5 bg-[linear-gradient(180deg,rgba(249,251,255,0.96),rgba(243,246,250,0.92))] p-4 pb-28 shadow-[0_36px_110px_-54px_rgba(15,23,42,0.34)] sm:p-6 sm:pb-6">
-        <div
-          aria-hidden
-          className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.14),transparent_24%),radial-gradient(circle_at_bottom_right,rgba(34,197,94,0.1),transparent_24%)]"
-        />
+      <div className="grid gap-4 lg:grid-cols-[1.08fr_0.92fr]">
+        <motion.section
+          className="kiosk-panel"
+          initial={reduceMotion ? false : { opacity: 0, y: 10 }}
+          animate={reduceMotion ? undefined : { opacity: 1, y: 0 }}
+          transition={{ duration: 0.24, ease: "easeOut" }}
+        >
+          <KioskStepHeader
+            eyebrow={mode === "check_out" ? "Active session" : "Signed-in selfie kiosk"}
+            title={summary.title}
+            subtitle={
+              mode === "check_out"
+                ? "You are already checked in. Close the session when you are done."
+                : "Take your selfie first, then confirm the office location before you check in."
+            }
+            step={activeStepNumber}
+            totalSteps={mode === "check_out" ? 2 : 3}
+            actions={<KioskStatusChip tone={summaryTone} label={summary.chipLabel} />}
+          />
 
-        <div className="relative grid gap-5 lg:grid-cols-[1.12fr_0.88fr]">
-          <motion.section
-            className="rounded-[1.7rem] border border-white/75 bg-white/84 p-5 shadow-[0_24px_48px_-34px_rgba(15,23,42,0.4)] backdrop-blur-xl"
-            initial={reduceMotion ? false : { opacity: 0, y: 10 }}
-            animate={reduceMotion ? undefined : { opacity: 1, y: 0 }}
-            transition={{ duration: 0.24, ease: "easeOut" }}
-          >
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
-                  {mode === "check_out" ? "Active session" : "Signed-in selfie kiosk"}
-                </p>
-                <h2 className="mt-2 text-3xl font-semibold tracking-[-0.04em] text-slate-950">
-                  {summary.title}
-                </h2>
-                <p className="mt-2 max-w-xl text-sm leading-6 text-slate-600">
-                  {mode === "check_out"
-                    ? "You already have an open Office Hours session. Close it here when you are done."
-                    : "Capture a fresh selfie, then confirm your location is inside the office range."}
-                </p>
-              </div>
-              <div className="rounded-full bg-slate-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-slate-600">
-                Step: {formatStepLabel(currentStep)}
-              </div>
+          {notice ? (
+            <div className="mt-4">
+              <KioskNotice tone="good">{notice}</KioskNotice>
             </div>
+          ) : null}
+          {error ? (
+            <div className="mt-4">
+              <KioskNotice tone="critical">{error}</KioskNotice>
+            </div>
+          ) : null}
 
+          <div className="mt-4 kiosk-page-stack">
             {mode === "check_in" ? (
-              <div className="mt-6 space-y-4">
-                <div className="rounded-[1.5rem] border border-slate-200/80 bg-slate-50/72 p-4">
-                  <KioskCameraCapture value={photo} disabled={loading} autoStart={!photo} onChange={setPhoto} />
-                </div>
-
-                <article className="rounded-[1.35rem] border border-slate-200/80 bg-white/82 p-4 md:hidden">
-                  <div className="flex items-start justify-between gap-3">
+              <>
+                <section className={cn("kiosk-section kiosk-step-card", selfieSection?.expanded ? "kiosk-step-card-active" : undefined)}>
+                  <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
-                      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Status</div>
-                      <div className="mt-2 text-xl font-semibold tracking-[-0.03em] text-slate-950">{summary.title}</div>
-                      <p className="mt-2 text-sm leading-6 text-slate-600">{summary.detail}</p>
-                    </div>
-                    <KioskStatusChip tone={summaryTone} label={summary.chipLabel} />
-                  </div>
-                </article>
-
-                <div className="grid gap-3 md:grid-cols-2">
-                  <article className="rounded-[1.35rem] border border-slate-200/80 bg-white/78 p-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Location</div>
-                      <KioskStatusChip tone={locationTone} label={locationLabel} />
-                    </div>
-                    <div className="mt-3 text-sm text-slate-700">
-                      {location
-                        ? `Captured ${formatWhen(location.acquiredAt)}${location.accuracyM ? ` • ±${Math.round(location.accuracyM)}m` : ""}`
-                        : "Waiting for current location."}
-                    </div>
-                    {preflight ? (
-                      <div className="mt-2 text-sm text-slate-600">{preflight.distanceM}m from office</div>
-                    ) : null}
-                    {locationError ? <div className="mt-3 text-sm text-rose-700">{locationError}</div> : null}
-                    <Button variant="outline" className="mt-4 h-11 rounded-full px-4" onClick={() => void refreshLocation()} disabled={locating || loading}>
-                      {locating ? "Refreshing location..." : "Refresh location"}
-                    </Button>
-                  </article>
-
-                  <article className="rounded-[1.35rem] border border-slate-200/80 bg-white/78 p-4">
-                    <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Check-in rules</div>
-                    <div className="mt-3 space-y-2 text-sm leading-6 text-slate-600">
-                      <div>Fresh selfie required each time.</div>
-                      <div>Location must be inside the office radius or grace zone.</div>
-                      <div>Permission: {geoPermission}</div>
-                      <div>
-                        Geofence: {officeGeoStatus === "ready" ? `${officeGeo?.radiusM}m radius • ${officeGeo?.graceRadiusM}m grace` : "Not ready"}
-                      </div>
-                    </div>
-                  </article>
-                </div>
-              </div>
-            ) : (
-              <div className="mt-6 space-y-4">
-                <div className="rounded-[1.5rem] border border-slate-200/80 bg-slate-50/76 p-5">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Open session</div>
-                      <div className="mt-3 text-lg font-semibold text-slate-950">
-                        {openSession ? formatWhen(openSession.checkin_at) : "No open session"}
-                      </div>
+                      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">1. Selfie</div>
+                      <h2 className="mt-2 text-xl font-semibold tracking-[-0.03em] text-slate-950">Take a fresh selfie</h2>
                       <p className="mt-2 text-sm leading-6 text-slate-600">
-                        Closing here ends your active session immediately.
+                        {photo ? "Fresh selfie captured. Retake any time before you check in." : "Capture your selfie to continue."}
                       </p>
                     </div>
-                    <KioskStatusChip tone={summaryTone} label={summary.chipLabel} className="md:hidden" />
+                    <KioskStatusChip
+                      tone={toneForStepState(selfieSection?.state ?? "locked", "neutral")}
+                      label={selfieSection?.state === "complete" ? "Done" : "Required"}
+                    />
+                  </div>
+
+                  {selfieSection?.expanded ? (
+                    <div className="kiosk-step-body">
+                      <KioskCameraCapture value={photo} disabled={loading} autoStart={!photo} onChange={setPhoto} />
+                    </div>
+                  ) : (
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <Button variant="outline" className="h-11 rounded-full px-4" onClick={() => setPhoto(null)} disabled={loading}>
+                        Retake selfie
+                      </Button>
+                    </div>
+                  )}
+                </section>
+
+                <section
+                  ref={locationSectionRef}
+                  className={cn("kiosk-section kiosk-step-card", locationSection?.expanded ? "kiosk-step-card-active" : undefined)}
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">2. Location</div>
+                      <h2 className="mt-2 text-xl font-semibold tracking-[-0.03em] text-slate-950">Confirm your location</h2>
+                      <p className="mt-2 text-sm leading-6 text-slate-600">
+                        {locationSection?.state === "locked"
+                          ? "Finish the selfie first so we can confirm you are inside the office range."
+                          : locationError
+                            ? locationError
+                            : preflight
+                              ? `${locationLabel} • ${preflight.distanceM}m from office`
+                              : location
+                                ? "Location captured. Keep refreshing until you are in range."
+                                : "Waiting for current location."}
+                      </p>
+                    </div>
+                    <KioskStatusChip
+                      tone={toneForStepState(locationSection?.state ?? "locked", locationTone)}
+                      label={locationSection?.state === "locked" ? "Next" : locationLabel}
+                    />
+                  </div>
+
+                  {locationSection?.expanded ? (
+                    <div className="kiosk-step-body">
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <article className="rounded-[1.2rem] border border-slate-200/80 bg-white p-4">
+                          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Current reading</div>
+                          <div className="mt-3 text-sm text-slate-700">
+                            {location
+                              ? `Captured ${formatWhen(location.acquiredAt)}${location.accuracyM ? ` • ±${Math.round(location.accuracyM)}m` : ""}`
+                              : "Waiting for current location."}
+                          </div>
+                          {preflight ? <div className="mt-2 text-sm text-slate-600">{preflight.distanceM}m from office</div> : null}
+                          {locationError ? <div className="mt-3 text-sm text-rose-700">{locationError}</div> : null}
+                        </article>
+
+                        <article className="rounded-[1.2rem] border border-slate-200/80 bg-white p-4">
+                          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Rules</div>
+                          <div className="mt-3 space-y-2 text-sm leading-6 text-slate-600">
+                            <div>Location must be inside the office radius or grace zone.</div>
+                            <div>Permission: {geoPermission}</div>
+                            <div>
+                              Geofence: {officeGeoStatus === "ready" ? `${officeGeo?.radiusM}m radius • ${officeGeo?.graceRadiusM}m grace` : "Not ready"}
+                            </div>
+                          </div>
+                        </article>
+                      </div>
+
+                      <Button
+                        variant="outline"
+                        className="h-11 rounded-full px-4"
+                        onClick={() => void refreshLocation()}
+                        disabled={locating || loading}
+                      >
+                        {locating ? "Refreshing location..." : "Refresh location"}
+                      </Button>
+                    </div>
+                  ) : null}
+                </section>
+
+                <section
+                  ref={actionSectionRef}
+                  className={cn("kiosk-section kiosk-step-card", actionSection?.expanded ? "kiosk-step-card-active" : undefined)}
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">3. Check in</div>
+                      <h2 className="mt-2 text-xl font-semibold tracking-[-0.03em] text-slate-950">Start your session</h2>
+                      <p className="mt-2 text-sm leading-6 text-slate-600">
+                        {actionSection?.expanded ? "Everything is ready. Start your session when you are set." : "Selfie first, then location."}
+                      </p>
+                    </div>
+                    <KioskStatusChip
+                      tone={toneForStepState(actionSection?.state ?? "locked", summaryTone)}
+                      label={actionSection?.expanded ? summary.chipLabel : "Next"}
+                    />
+                  </div>
+
+                  {actionSection?.expanded ? (
+                    <div className="kiosk-step-body">
+                      <KioskActionBar
+                        primary={
+                          <Button className="h-12 rounded-full px-6" onClick={() => void onSubmit()} disabled={loading || !canSubmit}>
+                            {loading ? "Working..." : "Check in"}
+                          </Button>
+                        }
+                        secondary={
+                          <Link
+                            href="/dashboard"
+                            className="inline-flex h-11 items-center justify-center rounded-full border border-slate-200 bg-white px-5 text-sm font-medium text-slate-700"
+                          >
+                            Back to dashboard
+                          </Link>
+                        }
+                        hint={summary.hint}
+                      />
+                    </div>
+                  ) : null}
+                </section>
+              </>
+            ) : (
+              <>
+                <section className="kiosk-section kiosk-step-card">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">1. Open session</div>
+                      <h2 className="mt-2 text-xl font-semibold tracking-[-0.03em] text-slate-950">You are currently checked in</h2>
+                      <p className="mt-2 text-sm leading-6 text-slate-600">
+                        {openSession ? `Started ${formatWhen(openSession.checkin_at)}.` : "An open Office Hours session is already active."}
+                      </p>
+                    </div>
+                    <KioskStatusChip tone="good" label="Session open" />
+                  </div>
+                </section>
+
+                <section ref={actionSectionRef} className="kiosk-section kiosk-step-card kiosk-step-card-active">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">2. Check out</div>
+                      <h2 className="mt-2 text-xl font-semibold tracking-[-0.03em] text-slate-950">Close your session</h2>
+                      <p className="mt-2 text-sm leading-6 text-slate-600">When you are done, check out here to end the active session.</p>
+                    </div>
+                    <KioskStatusChip tone="good" label={summary.chipLabel} />
+                  </div>
+
+                  <div className="kiosk-step-body">
+                    <KioskActionBar
+                      primary={
+                        <Button className="h-12 rounded-full px-6" onClick={() => void onSubmit()} disabled={loading || !canSubmit}>
+                          {loading ? "Working..." : "Check out"}
+                        </Button>
+                      }
+                      secondary={
+                        <Link
+                          href="/dashboard"
+                          className="inline-flex h-11 items-center justify-center rounded-full border border-slate-200 bg-white px-5 text-sm font-medium text-slate-700"
+                        >
+                          Back to dashboard
+                        </Link>
+                      }
+                      hint={summary.hint}
+                    />
+                  </div>
+                </section>
+              </>
+            )}
+          </div>
+        </motion.section>
+
+        <motion.aside
+          className="hidden space-y-4 lg:block"
+          initial={reduceMotion ? false : { opacity: 0, y: 10 }}
+          animate={reduceMotion ? undefined : { opacity: 1, y: 0 }}
+          transition={{ duration: 0.24, delay: 0.04, ease: "easeOut" }}
+        >
+          <section className="kiosk-panel">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Status</div>
+                <div className="mt-3 text-3xl font-semibold tracking-[-0.04em] text-slate-950">{summary.title}</div>
+                <p className="mt-3 text-sm leading-6 text-slate-600">{summary.detail}</p>
+              </div>
+              <KioskStatusChip tone={summaryTone} label={summary.chipLabel} />
+            </div>
+
+            <div className="mt-5 space-y-3">
+              {flowModel.sections.map((section) => (
+                <div key={section.id} className="rounded-[1.2rem] border border-slate-200/80 bg-white px-4 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-sm font-medium text-slate-900">
+                      {section.id === "selfie"
+                        ? "Selfie"
+                        : section.id === "location"
+                          ? "Location"
+                          : section.id === "session"
+                            ? "Session"
+                            : "Action"}
+                    </div>
+                    <KioskStatusChip
+                      tone={toneForStepState(section.state, section.id === "location" ? locationTone : summaryTone)}
+                      label={section.state === "complete" ? "Done" : section.state === "current" ? "Current" : "Next"}
+                    />
+                  </div>
+                  <div className="mt-2 text-sm text-slate-600">
+                    {section.id === "selfie"
+                      ? photo
+                        ? "Fresh selfie captured."
+                        : "Waiting for selfie."
+                      : section.id === "location"
+                        ? preflight
+                          ? `${locationLabel} • ${preflight.distanceM}m from office`
+                          : locationError
+                            ? locationError
+                            : "Waiting for office location."
+                        : section.id === "session"
+                          ? openSession
+                            ? `Started ${formatWhen(openSession.checkin_at)}.`
+                            : "Open session active."
+                          : summary.hint}
                   </div>
                 </div>
+              ))}
+            </div>
+          </section>
 
-                <article className="rounded-[1.35rem] border border-slate-200/80 bg-white/82 p-4 md:hidden">
-                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Status</div>
-                  <div className="mt-2 text-xl font-semibold tracking-[-0.03em] text-slate-950">{summary.title}</div>
-                  <p className="mt-2 text-sm leading-6 text-slate-600">{summary.detail}</p>
-                </article>
-              </div>
-            )}
-
-            {notice ? (
-              <div className="mt-4">
-                <KioskNotice tone="good">{notice}</KioskNotice>
-              </div>
-            ) : null}
-            {error ? (
-              <div className="mt-4">
-                <KioskNotice tone="critical">{error}</KioskNotice>
-              </div>
-            ) : null}
-          </motion.section>
-
-          <motion.aside
-            className="hidden space-y-4 md:block"
-            initial={reduceMotion ? false : { opacity: 0, y: 10 }}
-            animate={reduceMotion ? undefined : { opacity: 1, y: 0 }}
-            transition={{ duration: 0.24, delay: 0.04, ease: "easeOut" }}
-          >
-            <section className="rounded-[1.7rem] border border-white/75 bg-[linear-gradient(180deg,rgba(255,255,255,0.88),rgba(248,250,252,0.72))] p-5 backdrop-blur-xl">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Status</div>
-                  <div className="mt-3 text-3xl font-semibold tracking-[-0.04em] text-slate-950">{summary.title}</div>
-                  <p className="mt-3 text-sm leading-6 text-slate-600">{summary.detail}</p>
-                </div>
-                <KioskStatusChip tone={summaryTone} label={summary.chipLabel} />
-              </div>
-
-              <div className="mt-5 grid gap-3">
-                <Button className="h-12 rounded-full px-6" onClick={() => void onSubmit()} disabled={loading || !canSubmit}>
-                  {loading ? "Working..." : mode === "check_out" ? "Check out" : "Check in"}
-                </Button>
-                <Link
-                  href="/dashboard"
-                  className="inline-flex h-11 items-center justify-center rounded-full border border-slate-200 bg-white px-5 text-sm font-medium text-slate-700"
-                >
-                  Back to dashboard
-                </Link>
-              </div>
-                <p className="text-sm leading-6 text-slate-600">{summary.hint}</p>
-            </section>
-            <section className="rounded-[1.7rem] border border-white/75 bg-white/76 p-5 backdrop-blur-xl">
-              <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Check-in rules</div>
-              <div className="mt-3 space-y-2 text-sm leading-6 text-slate-600">
-                <p>Fresh selfie required every time.</p>
-                <p>Location must be inside the office radius or grace zone.</p>
-                <p>Permission: {geoPermission}</p>
-              </div>
-            </section>
-          </motion.aside>
-        </div>
+          <section className="kiosk-panel">
+            <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Quick notes</div>
+            <div className="mt-3 space-y-2 text-sm leading-6 text-slate-600">
+              <p>Fresh selfie required every time.</p>
+              <p>Location must be inside the office radius or grace zone.</p>
+              <p>Permission: {geoPermission}</p>
+              {openSession ? <p>Session started: {formatWhen(openSession.checkin_at)}</p> : null}
+            </div>
+          </section>
+        </motion.aside>
       </div>
-
-      <KioskStickyAction
-        className="md:hidden"
-        status={<KioskStatusChip tone={summaryTone} label={summary.chipLabel} />}
-        primary={
-          <Button className="h-12 rounded-full px-6" onClick={() => void onSubmit()} disabled={loading || !canSubmit}>
-            {loading ? "Working..." : mode === "check_out" ? "Check out" : "Check in"}
-          </Button>
-        }
-        secondary={
-          <Link
-            href="/dashboard"
-            className="inline-flex h-11 items-center justify-center rounded-full border border-slate-200 bg-white px-5 text-sm font-medium text-slate-700"
-          >
-            Back to dashboard
-          </Link>
-        }
-        hint={summary.hint}
-      />
-    </PageShell>
+    </KioskShell>
   );
 }
 

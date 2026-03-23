@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 :root {
-  --background: #f4f4f1;
+  --background: #ffffff;
   --foreground: #17181a;
   --primary: #00685e;
   --primary-foreground: #ffffff;
@@ -58,11 +58,11 @@
   --admin-status-good-fg: rgb(6 95 70);
   --admin-status-good-border: rgb(16 185 129 / 0.24);
 
-  color-scheme: light dark;
+  color-scheme: light;
 }
 
 :root[data-design="v1"] {
-  --background: #f6f7f6;
+  --background: #ffffff;
   --foreground: #1d1d1f;
   --primary: #00685e;
   --primary-foreground: #ffffff;
@@ -112,62 +112,6 @@
   --color-ring: var(--ring);
   --font-sans: var(--app-font-sans);
   --font-mono: var(--font-code);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0b0c0d;
-    --foreground: #f5f5f7;
-    --primary: #00aaa3;
-    --primary-foreground: #051110;
-    --accent: #f0a533;
-    --accent-foreground: #1a1206;
-    --muted: #16171a;
-    --muted-foreground: #a0a0a6;
-    --card: #101113;
-    --card-foreground: #f5f5f7;
-    --border: #2c2c2e;
-    --input: #2c2c2e;
-    --ring: #3ad1c7;
-    --admin-surface-base: rgb(18 19 21 / 0.76);
-    --admin-surface-raised: rgb(22 24 27 / 0.9);
-    --admin-surface-muted: rgb(14 15 17 / 0.84);
-    --admin-border-soft: rgb(255 255 255 / 0.08);
-    --admin-border-strong: rgb(255 255 255 / 0.14);
-    --admin-shadow: 0 22px 40px -28px rgb(0 0 0 / 0.6);
-    --admin-shadow-strong: 0 34px 76px -42px rgb(0 0 0 / 0.75);
-    --admin-label: rgb(245 245 247 / 0.66);
-    --admin-badge-bg: rgb(255 255 255 / 0.08);
-    --admin-badge-fg: rgb(245 245 247 / 0.58);
-    --admin-status-critical-bg: rgb(248 113 113 / 0.18);
-    --admin-status-critical-fg: rgb(254 202 202);
-    --admin-status-critical-border: rgb(248 113 113 / 0.32);
-    --admin-status-warning-bg: rgb(245 158 11 / 0.18);
-    --admin-status-warning-fg: rgb(254 215 170);
-    --admin-status-warning-border: rgb(245 158 11 / 0.32);
-    --admin-status-neutral-bg: rgb(255 255 255 / 0.1);
-    --admin-status-neutral-fg: rgb(229 231 235);
-    --admin-status-neutral-border: rgb(255 255 255 / 0.18);
-    --admin-status-good-bg: rgb(16 185 129 / 0.18);
-    --admin-status-good-fg: rgb(167 243 208);
-    --admin-status-good-border: rgb(16 185 129 / 0.32);
-  }
-
-  :root[data-design="v1"] {
-    --background: #0b0c0d;
-    --foreground: #f5f5f7;
-    --primary: #00aaa3;
-    --primary-foreground: #051110;
-    --accent: #f0a533;
-    --accent-foreground: #1a1206;
-    --muted: #141516;
-    --muted-foreground: #a0a0a6;
-    --card: #111213;
-    --card-foreground: #f5f5f7;
-    --border: #2a2b2d;
-    --input: #2a2b2d;
-    --ring: #3ad1c7;
-  }
 }
 
 body {
@@ -1056,12 +1000,9 @@ body {
   pointer-events: none;
   position: absolute;
   inset: 0;
-  background:
-    radial-gradient(circle at 10% 10%, rgb(0 104 94 / 0.12), transparent 44%),
-    radial-gradient(circle at 88% 12%, rgb(234 150 16 / 0.1), transparent 40%),
-    linear-gradient(180deg, rgb(255 255 255 / 0.6), rgb(245 246 245 / 0.86));
-  filter: blur(22px);
-  opacity: 0.92;
+  background: #ffffff;
+  filter: none;
+  opacity: 1;
 }
 
 .kiosk-shell-main {
@@ -1756,7 +1697,7 @@ html {
 html[data-kiosk="true"] {
   scroll-padding-top: 0;
   color-scheme: light;
-  --background: #f4f4f1;
+  --background: #ffffff;
   --foreground: #17181a;
   --primary: #00685e;
   --primary-foreground: #ffffff;
@@ -1794,10 +1735,7 @@ html[data-kiosk="true"] #main-content {
 }
 
 html[data-kiosk="true"] body {
-  background:
-    radial-gradient(circle at 18% 8%, rgb(0 104 94 / 0.12), transparent 34%),
-    radial-gradient(circle at 80% 8%, rgb(234 150 16 / 0.1), transparent 30%),
-    #f2f3f1;
+  background: #ffffff;
 }
 
 :where(

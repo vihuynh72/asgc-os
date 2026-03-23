@@ -83,21 +83,21 @@ function statusPill(
   memberStatus: AdminWeeklyHoursPreviewRow["member_status"],
 ): { label: string; className: string } {
   if (memberStatus === "vacant") {
-    return { label: hoursStatusLabel({ statusKey, memberStatus }), className: "bg-slate-500/15 text-slate-700 dark:text-slate-300" };
+    return { label: hoursStatusLabel({ statusKey, memberStatus }), className: "bg-slate-500/15 text-slate-700" };
   }
   if (memberStatus === "no_show" && statusKey === "missing") {
-    return { label: hoursStatusLabel({ statusKey, memberStatus }), className: "bg-rose-500/15 text-rose-700 dark:text-rose-300" };
+    return { label: hoursStatusLabel({ statusKey, memberStatus }), className: "bg-rose-500/15 text-rose-700" };
   }
-  if (statusKey === "complete") return { label: "Complete", className: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300" };
-  if (statusKey === "missing") return { label: "Missing", className: "bg-red-500/15 text-red-700 dark:text-red-300" };
-  if (statusKey === "behind") return { label: "Behind", className: "bg-amber-500/15 text-amber-700 dark:text-amber-300" };
+  if (statusKey === "complete") return { label: "Complete", className: "bg-emerald-500/15 text-emerald-700" };
+  if (statusKey === "missing") return { label: "Missing", className: "bg-red-500/15 text-red-700" };
+  if (statusKey === "behind") return { label: "Behind", className: "bg-amber-500/15 text-amber-700" };
   return { label: "Not required", className: "bg-foreground/10 text-foreground/70" };
 }
 
 function rosterPill(memberStatus: AdminWeeklyHoursPreviewRow["member_status"]): { label: string; className: string } {
-  if (memberStatus === "vacant") return { label: "Vacant", className: "bg-slate-500/15 text-slate-700 dark:text-slate-300" };
-  if (memberStatus === "no_show") return { label: "No show", className: "bg-rose-500/15 text-rose-700 dark:text-rose-300" };
-  return { label: "Assigned", className: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300" };
+  if (memberStatus === "vacant") return { label: "Vacant", className: "bg-slate-500/15 text-slate-700" };
+  if (memberStatus === "no_show") return { label: "No show", className: "bg-rose-500/15 text-rose-700" };
+  return { label: "Assigned", className: "bg-emerald-500/15 text-emerald-700" };
 }
 
 function rowBackground(statusKey: ReturnType<typeof reportStatus>): string {
@@ -477,7 +477,7 @@ export function OfficeHoursCsvPanel({ initialWeekStart }: { initialWeekStart: st
                               <span className={`rounded-full px-2 py-0.5 text-xs ${roster.className}`}>{roster.label}</span>
                               <span className={`rounded-full px-2 py-0.5 text-xs ${pill.className}`}>{pill.label}</span>
                               {needsReview > 0 ? (
-                                <span className="rounded-full bg-indigo-500/15 px-2 py-0.5 text-xs text-indigo-700 dark:text-indigo-300">
+                                <span className="rounded-full bg-indigo-500/15 px-2 py-0.5 text-xs text-indigo-700">
                                   Needs review ({needsReview})
                                 </span>
                               ) : null}
@@ -599,7 +599,7 @@ export function OfficeHoursCsvPanel({ initialWeekStart }: { initialWeekStart: st
                           {status.label}
                         </span>
                         {needsReview > 0 ? (
-                          <div className="mt-1 text-xs text-indigo-700 dark:text-indigo-300">Needs review: {needsReview}</div>
+                          <div className="mt-1 text-xs text-indigo-700">Needs review: {needsReview}</div>
                         ) : null}
                       </td>
                     </tr>
