@@ -21,7 +21,12 @@ test("buildAuthCodeEmail formats a branded first-time code email without any sig
   assert.match(email.text, /10 minutes/);
   assert.doesNotMatch(email.text, /https?:\/\//);
   assert.match(email.html, /ASGC OS/);
-  assert.match(email.html, /123456/);
+  assert.match(email.html, /<table[^>]+role="presentation"/i);
+  assert.match(email.html, /display:none/i);
+  assert.match(email.html, /white-space:nowrap/i);
+  assert.match(email.html, />1<\/td>/);
+  assert.match(email.html, />6<\/td>/);
+  assert.doesNotMatch(email.html, />123456</);
   assert.doesNotMatch(email.html, /href=/);
 });
 

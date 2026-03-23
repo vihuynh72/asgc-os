@@ -30,6 +30,13 @@ const CHECK_OUT_SUMMARY = {
   hint: "Check out when you are done.",
 };
 
+function deriveCurrentStep({ mode, hasPhoto, preflightReady, preflightAllowed }) {
+  if (mode === "check_out") return "confirm";
+  if (!hasPhoto) return "selfie";
+  if (!preflightReady || !preflightAllowed) return "location";
+  return "submit";
+}
+
 export function normalizeMemberCheckInSession(rawValue) {
   const raw = Array.isArray(rawValue) ? rawValue[0] : rawValue;
   if (!raw || typeof raw !== "object") return null;
@@ -52,4 +59,42 @@ export function getMemberKioskStateSummary({ mode, currentStep }) {
   }
 
   return CHECK_IN_SUMMARIES[currentStep] ?? CHECK_IN_SUMMARIES.selfie;
+}
+
+export function getMemberKioskFlowModel({ mode, hasPhoto, preflightReady, preflightAllowed }) {
+  const currentStep = deriveCurrentStep({ mode, hasPhoto, preflightReady, preflightAllowed });
+
+  if (mode === "check_out") {
+    return {
+      currentStep,
+      nextSectionId: "action",
+      sections: [
+        { id: "session", state: "complete", expanded: false },
+        { id: "action", state: "current", expanded: true },
+      ],
+    };
+  }
+
+  return {
+    currentStep,
+    nextSectionId:
+      currentStep === "selfie" ? "selfie" : currentStep === "location" ? "location" : "action",
+    sections: [
+      {
+        id: "selfie",
+        state: currentStep === "selfie" ? "current" : hasPhoto ? "complete" : "locked",
+        expanded: currentStep === "selfie",
+      },
+      {
+        id: "location",
+        state: currentStep === "location" ? "current" : preflightReady && preflightAllowed ? "complete" : "locked",
+        expanded: currentStep === "location",
+      },
+      {
+        id: "action",
+        state: currentStep === "submit" ? "current" : "locked",
+        expanded: currentStep === "submit",
+      },
+    ],
+  };
 }

@@ -73,14 +73,9 @@ export default function OfficeHoursSetupPasswordPage() {
       containerClassName="max-w-3xl"
       backHref={OFFICE_HOURS_MEMBER_KIOSK_PATH}
     >
-      <div className="relative overflow-hidden rounded-[2rem] border border-black/5 bg-[linear-gradient(180deg,rgba(250,252,255,0.96),rgba(243,246,250,0.92))] p-5 shadow-[0_36px_100px_-52px_rgba(15,23,42,0.35)] sm:p-7">
-        <div
-          aria-hidden
-          className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(56,189,248,0.12),transparent_24%),radial-gradient(circle_at_bottom_left,rgba(34,197,94,0.10),transparent_25%)]"
-        />
-
-        <div className="relative grid gap-5 lg:grid-cols-[0.92fr_1.08fr]">
-          <section className="rounded-[1.6rem] border border-white/70 bg-white/72 p-5 backdrop-blur-xl">
+      <div className="rounded-[2rem] border border-black/6 bg-white p-5 shadow-[0_28px_84px_-52px_rgba(15,23,42,0.22)] sm:p-7">
+        <div className="grid gap-5 lg:grid-cols-[0.92fr_1.08fr]">
+          <section className="rounded-[1.6rem] border border-slate-200/80 bg-white p-5">
             <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Office Hours</p>
             <h2 className="mt-3 text-3xl font-semibold tracking-[-0.04em] text-slate-950">One-time setup.</h2>
             <p className="mt-3 text-sm leading-6 text-slate-600">
@@ -95,7 +90,7 @@ export default function OfficeHoursSetupPasswordPage() {
             </div>
           </section>
 
-          <section className="rounded-[1.6rem] border border-white/75 bg-white/84 p-5 shadow-[0_22px_48px_-34px_rgba(15,23,42,0.4)] backdrop-blur-xl">
+          <section className="rounded-[1.6rem] border border-slate-200/80 bg-white p-5 shadow-[0_18px_40px_-30px_rgba(15,23,42,0.16)]">
             {notice ? <AdminInlineNotice tone={notice.tone}>{notice.message}</AdminInlineNotice> : null}
 
             <form className="mt-4 space-y-4" onSubmit={onSubmit}>

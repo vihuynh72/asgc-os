@@ -4,6 +4,7 @@ import { sendEmail } from "@/lib/emailSender";
 import { isAuthorizedCronRequest } from "@/lib/cron-auth.mjs";
 import { getCronEnv, getSmsEnv } from "@/lib/envServer";
 import { buildKioskCheckoutReminderSmsText } from "@/lib/office-hours-kiosk-messages.mjs";
+import { buildOfficeHoursSessionEmail } from "@/lib/office-hours-session-email.mjs";
 import { isOfficeHoursKioskSchemaError } from "@/lib/office-hours-kiosk-setup.mjs";
 import { sendSms } from "@/lib/smsSender.mjs";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
@@ -97,7 +98,7 @@ async function cleanupKioskCheckinPhotos(supabase: ReturnType<typeof getSupabase
   return { attempted: candidates.length, deleted: deletedIds.length, error: null };
 }
 
-function renderEmailText(type: string, metadata: unknown, origin: string): { subject: string; text: string } {
+function renderEmail(type: string, metadata: unknown, origin: string): { subject: string; text: string; html?: string } {
   const m = (typeof metadata === "object" && metadata !== null ? (metadata as Record<string, unknown>) : {}) as Record<
     string,
     unknown
@@ -152,19 +153,24 @@ function renderEmailText(type: string, metadata: unknown, origin: string): { sub
     };
   }
 
-  // Phase 19: auto-close notifications
-  if (type === "office_hours.session_open_long") {
-    return {
-      subject: "Your office hours session is still open",
-      text: `Reminder: Your office hours session has been open for a while.\n\nChecked in: ${checkinLocal}${tz ? ` (${tz})` : ""}\n\nIf you forgot to check out, please do so now.\n\nOpen Office Hours: ${link}\n`,
-    };
-  }
-
-  if (type === "office_hours.session_auto_closed") {
-    return {
-      subject: "Your office hours session was auto-closed",
-      text: `Your office hours session was automatically closed because it exceeded the maximum allowed duration.\n\nChecked in: ${checkinLocal}${tz ? ` (${tz})` : ""}\nAuto-closed at: ${checkoutLocal}${tz ? ` (${tz})` : ""}\n\nThis session has been flagged for review.\n\nOpen Office Hours: ${link}\n`,
-    };
+  // Session reminder emails use a shared HTML + text renderer.
+  if (
+    type === "office_hours.session_open_long" ||
+    type === "office_hours.session_checkout_reminder" ||
+    type === "office_hours.session_auto_close_soon" ||
+    type === "office_hours.session_auto_closed"
+  ) {
+    return buildOfficeHoursSessionEmail({
+      type,
+      origin,
+      metadata: {
+        ...m,
+        checkin_at_local: checkinLocal || safeString(m.checkin_at_local),
+        checkout_at_local: checkoutLocal || safeString(m.checkout_at_local),
+        auto_close_at_local: safeString(m.auto_close_at_local),
+        office_tz: tz || safeString(m.office_tz),
+      },
+    });
   }
 
   // Phase 20: coverage notifications
@@ -320,11 +326,18 @@ async function handle(request: NextRequest) {
   }
 
   // Phase 19: enqueue session-open reminders and auto-close long sessions
-  const { data: sessionOpenReminders, error: sessionOpenErr } = await supabase.rpc(
-    "enqueue_session_open_reminders"
+  const { data: sessionCheckoutEmailReminders, error: sessionCheckoutEmailErr } = await supabase.rpc(
+    "enqueue_session_checkout_email_reminders"
   );
-  if (sessionOpenErr) {
-    return NextResponse.json({ error: sessionOpenErr.message }, { status: 500 });
+  if (sessionCheckoutEmailErr) {
+    return NextResponse.json({ error: sessionCheckoutEmailErr.message }, { status: 500 });
+  }
+
+  const { data: sessionAutoCloseSoonReminders, error: sessionAutoCloseSoonErr } = await supabase.rpc(
+    "enqueue_session_auto_close_soon_reminders"
+  );
+  if (sessionAutoCloseSoonErr) {
+    return NextResponse.json({ error: sessionAutoCloseSoonErr.message }, { status: 500 });
   }
 
   const { data: autoClosed, error: autoCloseErr } = await supabase.rpc("auto_close_sessions");
@@ -390,13 +403,14 @@ async function handle(request: NextRequest) {
           env: smsEnv,
         });
       } else {
-        const { subject, text } = renderEmailText(row.type, row.metadata, origin);
+        const { subject, text, html } = renderEmail(row.type, row.metadata, origin);
         const resolvedSubject = row.subject && row.subject.length > 0 ? row.subject : subject;
         if (!row.to_email) throw new Error("Missing email recipient");
         result = await sendEmail({
           to: row.to_email,
           subject: resolvedSubject,
           text,
+          html,
         });
       }
 
@@ -441,7 +455,8 @@ async function handle(request: NextRequest) {
     auto_checked_out_stale: autoCheckedOutStale ?? 0,
     kiosk_photo_cleanup: kioskPhotoCleanup,
     presence_debug: presenceDebug,
-    session_open_reminders: sessionOpenReminders ?? 0,
+    session_checkout_email_reminders: sessionCheckoutEmailReminders ?? 0,
+    session_auto_close_soon_reminders: sessionAutoCloseSoonReminders ?? 0,
     auto_closed: autoClosed ?? 0,
     enqueue: enqueueRes ?? null,
     missed_marked: missedCount ?? 0,

@@ -279,14 +279,9 @@ export default function LoginPage() {
 
   return (
     <PageShell title="Sign in" showHeader={false} containerClassName="max-w-6xl px-4 py-10 sm:py-14">
-      <section className="relative overflow-hidden rounded-[2rem] border border-black/5 bg-[linear-gradient(180deg,rgba(250,252,255,0.96),rgba(242,245,250,0.92))] shadow-[0_40px_120px_-56px_rgba(15,23,42,0.38)]">
-        <div
-          aria-hidden
-          className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(79,120,214,0.16),transparent_28%),radial-gradient(circle_at_bottom_right,rgba(16,185,129,0.12),transparent_26%),linear-gradient(135deg,rgba(255,255,255,0.8),rgba(255,255,255,0.5))]"
-        />
-
-        <div className="relative grid gap-6 p-4 sm:p-6 lg:grid-cols-[1.08fr_0.92fr] lg:p-8">
-          <section className="flex flex-col justify-between rounded-[1.8rem] border border-white/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.82),rgba(248,250,252,0.62))] p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.85)] backdrop-blur-xl sm:p-8">
+      <section className="rounded-[2rem] border border-black/6 bg-white shadow-[0_32px_90px_-54px_rgba(15,23,42,0.24)]">
+        <div className="grid gap-6 p-4 sm:p-6 lg:grid-cols-[1.08fr_0.92fr] lg:p-8">
+          <section className="flex flex-col justify-between rounded-[1.8rem] border border-slate-200/80 bg-white p-6 shadow-[0_22px_44px_-36px_rgba(15,23,42,0.14)] sm:p-8">
             <div className="space-y-6">
               <div className="inline-flex w-fit items-center gap-2 rounded-full border border-slate-200/80 bg-white/80 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.22em] text-slate-500">
                 <span>ASGC OS</span>
@@ -328,7 +323,7 @@ export default function LoginPage() {
             </div>
           </section>
 
-          <section className="rounded-[1.8rem] border border-white/75 bg-white/82 p-5 shadow-[0_24px_48px_-32px_rgba(15,23,42,0.44)] backdrop-blur-xl sm:p-6">
+          <section className="rounded-[1.8rem] border border-slate-200/80 bg-white p-5 shadow-[0_22px_44px_-34px_rgba(15,23,42,0.18)] sm:p-6">
             <div className="space-y-4">
               {existingUser ? (
                 <div className="rounded-[1.35rem] border border-emerald-200/70 bg-emerald-50/75 p-4">

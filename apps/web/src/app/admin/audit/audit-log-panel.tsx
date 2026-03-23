@@ -389,7 +389,7 @@ export function AuditLogPanel() {
           <>
             <div className="space-y-3 md:hidden">
               {logs.map((log) => (
-                <div key={log.id} className="rounded-2xl border border-black/6 bg-[color:var(--admin-surface-raised)] p-4 dark:border-white/8">
+                <div key={log.id} className="rounded-2xl border border-black/6 bg-[color:var(--admin-surface-raised)] p-4">
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <div className="text-sm font-medium">{log.actor_display_name || log.actor_email || log.actor_user_id?.slice(0, 8) || "System"}</div>

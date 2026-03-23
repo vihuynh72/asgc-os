@@ -723,7 +723,7 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
         </AdminToolbar>
 
         {error ? (
-          <div className="mt-4 rounded-2xl border border-red-500/30 bg-red-500/5 px-4 py-3 text-sm text-red-700 dark:text-red-300" role="alert">
+          <div className="mt-4 rounded-2xl border border-red-500/30 bg-red-500/5 px-4 py-3 text-sm text-red-700" role="alert">
             {error}
           </div>
         ) : null}
@@ -1074,11 +1074,11 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
                 className={cn(
                   "rounded-xl border px-3 py-2 text-xs",
                   overrideMessageKind === "error" &&
-                    "border-red-500/30 bg-red-500/5 text-red-700 dark:text-red-300",
+                    "border-red-500/30 bg-red-500/5 text-red-700",
                   overrideMessageKind === "warning" &&
-                    "border-amber-500/30 bg-amber-500/5 text-amber-800 dark:text-amber-300",
+                    "border-amber-500/30 bg-amber-500/5 text-amber-800",
                   (overrideMessageKind === "success" || overrideMessageKind === "") &&
-                    "border-emerald-500/30 bg-emerald-500/5 text-emerald-700 dark:text-emerald-300",
+                    "border-emerald-500/30 bg-emerald-500/5 text-emerald-700",
                 )}
               >
                 {overrideMessage}
@@ -1171,7 +1171,7 @@ function SessionCard({
             </button>
           ) : null}
           {session.within_radius === false ? (
-            <span className="flex items-center gap-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+            <span className="flex items-center gap-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">
               Outside
             </span>
           ) : null}
@@ -1195,7 +1195,7 @@ function SessionCard({
             </span>
           ) : null}
           {session.admin_exclude_from_totals ? (
-            <span className="rounded-full bg-amber-100 px-2 py-0.5 font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+            <span className="rounded-full bg-amber-100 px-2 py-0.5 font-medium text-amber-700">
               Excluded
             </span>
           ) : null}
@@ -1289,7 +1289,7 @@ function SelfieLightbox({
             </div>
           ) : error ? (
             <div className="space-y-3">
-              <div className="rounded-xl border border-red-500/30 bg-red-500/5 p-3 text-sm text-red-700 dark:text-red-300">
+              <div className="rounded-xl border border-red-500/30 bg-red-500/5 p-3 text-sm text-red-700">
                 {error}
               </div>
               <div className="flex gap-2">
@@ -1326,10 +1326,10 @@ function SelfieLightbox({
 
 function StatusBadge({ status }: { status: string }) {
   const styles = {
-    open: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400",
-    closed: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-400",
-    auto_closed: "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400",
-    voided: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400",
+    open: "bg-green-100 text-green-700",
+    closed: "bg-slate-100 text-slate-700",
+    auto_closed: "bg-orange-100 text-orange-700",
+    voided: "bg-red-100 text-red-700",
   };
   const style = styles[status as keyof typeof styles] || "bg-gray-100 text-gray-700";
 

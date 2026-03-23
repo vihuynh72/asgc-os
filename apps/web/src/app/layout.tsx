@@ -37,10 +37,10 @@ export default async function RootLayout({
   const design = getEffectiveDesign({ cookieValue: designCookie, defaultDesign: process.env.DESIGN_DEFAULT });
 
   return (
-    <html lang="en" data-design={design}>
+    <html lang="en" data-design={design} data-color-mode="light" style={{ colorScheme: "light" }}>
       <body
         suppressHydrationWarning
-        className={`${lato.variable} ${sourceCodePro.variable} antialiased`}
+        className={`${lato.variable} ${sourceCodePro.variable} bg-white antialiased`}
       >
         <div className="min-h-dvh">
           <a href="#main-content" className="skip-link">

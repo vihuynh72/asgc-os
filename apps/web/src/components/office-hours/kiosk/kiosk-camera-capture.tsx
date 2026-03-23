@@ -198,7 +198,7 @@ export function KioskCameraCapture({
           <Button variant="outline" className="kiosk-camera-secondary h-11 rounded-xl" onClick={stop} disabled={disabled}>
             Close camera
           </Button>
-          {cameraError ? <p className="text-xs text-rose-700 dark:text-rose-300">{cameraError}</p> : null}
+          {cameraError ? <p className="text-xs text-rose-700">{cameraError}</p> : null}
         </div>
       ) : null}
 
@@ -212,7 +212,7 @@ export function KioskCameraCapture({
           >
             {cameraState === "starting" ? "Requesting…" : "◎ Open camera"}
           </Button>
-          {cameraError ? <p className="text-xs text-rose-700 dark:text-rose-300">{cameraError}</p> : null}
+          {cameraError ? <p className="text-xs text-rose-700">{cameraError}</p> : null}
         </div>
       ) : null}
 

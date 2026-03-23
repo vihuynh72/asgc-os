@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   getMemberKioskStateSummary,
+  getMemberKioskFlowModel,
   normalizeMemberCheckInSession,
 } from "../src/lib/office-hours-member-kiosk.mjs";
 
@@ -77,6 +78,81 @@ test("getMemberKioskStateSummary keeps mobile status copy compact for check-in a
       title: "Ready to check out",
       detail: "You already have an open session.",
       hint: "Check out when you are done.",
+    },
+  );
+});
+
+test("getMemberKioskFlowModel reveals one mobile step at a time for check-in", () => {
+  assert.deepEqual(
+    getMemberKioskFlowModel({
+      mode: "check_in",
+      hasPhoto: false,
+      preflightReady: false,
+      preflightAllowed: false,
+    }),
+    {
+      currentStep: "selfie",
+      nextSectionId: "selfie",
+      sections: [
+        { id: "selfie", state: "current", expanded: true },
+        { id: "location", state: "locked", expanded: false },
+        { id: "action", state: "locked", expanded: false },
+      ],
+    },
+  );
+
+  assert.deepEqual(
+    getMemberKioskFlowModel({
+      mode: "check_in",
+      hasPhoto: true,
+      preflightReady: false,
+      preflightAllowed: false,
+    }),
+    {
+      currentStep: "location",
+      nextSectionId: "location",
+      sections: [
+        { id: "selfie", state: "complete", expanded: false },
+        { id: "location", state: "current", expanded: true },
+        { id: "action", state: "locked", expanded: false },
+      ],
+    },
+  );
+
+  assert.deepEqual(
+    getMemberKioskFlowModel({
+      mode: "check_in",
+      hasPhoto: true,
+      preflightReady: true,
+      preflightAllowed: true,
+    }),
+    {
+      currentStep: "submit",
+      nextSectionId: "action",
+      sections: [
+        { id: "selfie", state: "complete", expanded: false },
+        { id: "location", state: "complete", expanded: false },
+        { id: "action", state: "current", expanded: true },
+      ],
+    },
+  );
+});
+
+test("getMemberKioskFlowModel collapses the member kiosk into a lightweight checked-in state", () => {
+  assert.deepEqual(
+    getMemberKioskFlowModel({
+      mode: "check_out",
+      hasPhoto: false,
+      preflightReady: false,
+      preflightAllowed: false,
+    }),
+    {
+      currentStep: "confirm",
+      nextSectionId: "action",
+      sections: [
+        { id: "session", state: "complete", expanded: false },
+        { id: "action", state: "current", expanded: true },
+      ],
     },
   );
 });
