@@ -142,6 +142,8 @@ function formatMinutes(minutes: number): string {
 
 function formatAuthMethodLabel(method: string | null | undefined): string {
   switch (method) {
+    case "selfie":
+      return "Selfie";
     case "sms_otp":
       return "SMS OTP";
     default:
@@ -149,7 +151,8 @@ function formatAuthMethodLabel(method: string | null | undefined): string {
   }
 }
 
-function formatMaskedPhone(last4: string | null | undefined): string | null {
+function formatMaskedPhone(method: string | null | undefined, last4: string | null | undefined): string | null {
+  if (method !== "sms_otp") return null;
   if (!last4) return null;
   return `***-***-${last4}`;
 }
@@ -779,7 +782,9 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
                     </td>
                     <td className="px-3 py-2">
                       <div className="font-medium">{formatAuthMethodLabel(s.kiosk_auth_method)}</div>
-                      <div className="text-xs text-foreground/60">{formatMaskedPhone(s.kiosk_phone_last4) || "—"}</div>
+                      <div className="text-xs text-foreground/60">
+                        {formatMaskedPhone(s.kiosk_auth_method, s.kiosk_phone_last4) || "—"}
+                      </div>
                     </td>
                     <td className="px-3 py-2 font-mono">{formatTimeInTz(s.checkin_at, tz)}</td>
                     <td className="px-3 py-2 font-mono">{s.checkout_at ? formatTimeInTz(s.checkout_at, tz) : "—"}</td>
@@ -1005,7 +1010,9 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
               </div>
               <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-foreground/65">
                 <span>{formatAuthMethodLabel(overrideSession.kiosk_auth_method)}</span>
-                {overrideSession.kiosk_phone_last4 ? <span>{formatMaskedPhone(overrideSession.kiosk_phone_last4)}</span> : null}
+                {overrideSession.kiosk_phone_last4 ? (
+                  <span>{formatMaskedPhone(overrideSession.kiosk_auth_method, overrideSession.kiosk_phone_last4)}</span>
+                ) : null}
               </div>
               <div className="mt-2 text-xs text-foreground/70">
                 Check-in: {formatTimeInTz(overrideSession.checkin_at, tz)} • {formatDateHeading(formatDateKeyInTz(overrideSession.checkin_at, tz), tz)}
@@ -1176,7 +1183,7 @@ function SessionCard({
         </span>
         {session.kiosk_phone_last4 ? (
           <span className="rounded-full bg-foreground/10 px-2 py-0.5 font-medium text-foreground/70">
-            {formatMaskedPhone(session.kiosk_phone_last4)}
+            {formatMaskedPhone(session.kiosk_auth_method, session.kiosk_phone_last4)}
           </span>
         ) : null}
       </div>

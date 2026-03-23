@@ -1,11 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import Link from "next/link";
 
-import { AdminField } from "@/components/admin/admin-field";
-import { AdminInlineNotice } from "@/components/admin/admin-inline-notice";
 import { AdminSurface } from "@/components/admin/admin-surface";
-import { Button } from "@/components/ui/button";
 import type { OfficeConfigRow } from "@/lib/admin/server";
 
 type MemberRow = {
@@ -20,258 +17,123 @@ type MemberRow = {
   role_key: "president" | "executive" | "board_member";
   role_label: string;
   display_title: string | null;
-  phone_configured: boolean;
-  phone_last4: string | null;
-  phone_updated_at: string | null;
+  password_ready: boolean;
 };
-
-async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, init);
-  const json = (await response.json().catch(() => null)) as (T & { error?: string }) | null;
-  if (!response.ok) {
-    throw new Error(json?.error ?? `Request failed: ${response.status}`);
-  }
-  return json as T;
-}
-
-function updatedLabel(value: string | null): string {
-  if (!value) return "Not configured";
-  try {
-    return `Updated ${new Date(value).toLocaleString()}`;
-  } catch {
-    return value;
-  }
-}
-
-function friendlyAdminError(code: string): string {
-  switch (code) {
-    case "kiosk_setup_incomplete":
-      return "Office Hours kiosk setup is incomplete. Apply the March 16 kiosk migrations before editing phones or SMS settings.";
-    default:
-      return code || "Could not save kiosk settings.";
-  }
-}
 
 export function OfficeHoursKioskPanel({
   initialMembers,
   initialConfig,
-  smsEnvReady,
 }: {
   initialMembers: MemberRow[];
   initialConfig: OfficeConfigRow;
-  smsEnvReady: boolean;
 }) {
-  const schemaReady = (initialConfig as OfficeConfigRow & { kiosk_schema_ready?: boolean }).kiosk_schema_ready !== false;
-  const [members, setMembers] = useState<MemberRow[]>(initialMembers);
-  const [phoneDrafts, setPhoneDrafts] = useState<Record<string, string>>({});
-  const [savingMemberId, setSavingMemberId] = useState<string>("");
-  const [configSaving, setConfigSaving] = useState(false);
-  const [notice, setNotice] = useState<{ tone: "good" | "warning"; message: string } | null>(null);
-  const [config, setConfig] = useState({
-    kiosk_sms_enabled: initialConfig.kiosk_sms_enabled,
-    kiosk_otp_ttl_minutes: initialConfig.kiosk_otp_ttl_minutes,
-    kiosk_checkout_reminder_interval_minutes: initialConfig.kiosk_checkout_reminder_interval_minutes,
-  });
-
-  async function savePhone(member: MemberRow, phone: string | null) {
-    setSavingMemberId(member.member_key);
-    setNotice(null);
-
-    try {
-      const data = await fetchJson<{ phone_configured: boolean; phone_last4: string | null; phone_updated_at: string | null }>(
-        "/api/admin/office-hours/kiosk-phones",
-        {
-          method: "PUT",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            userId: member.user_id || null,
-            bootstrapRoleGrantId: member.bootstrap_role_grant_id,
-            phone,
-          }),
-        },
-      );
-
-      setMembers((current) =>
-        current.map((row) =>
-          row.member_key === member.member_key
-            ? {
-                ...row,
-                phone_configured: data.phone_configured,
-                phone_last4: data.phone_last4,
-                phone_updated_at: data.phone_updated_at,
-              }
-            : row,
-        ),
-      );
-      setPhoneDrafts((current) => ({ ...current, [member.member_key]: "" }));
-      setNotice({ tone: "good", message: phone ? "Kiosk phone updated." : "Kiosk phone removed." });
-    } catch (e) {
-      setNotice({
-        tone: "warning",
-        message: friendlyAdminError(e instanceof Error ? e.message : "Could not save kiosk phone."),
-      });
-    } finally {
-      setSavingMemberId("");
-    }
-  }
-
-  async function saveConfig() {
-    setConfigSaving(true);
-    setNotice(null);
-
-    try {
-      await fetchJson("/api/admin/office-config", {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          kiosk_sms_enabled: config.kiosk_sms_enabled,
-          kiosk_otp_ttl_minutes: Number(config.kiosk_otp_ttl_minutes),
-          kiosk_checkout_reminder_interval_minutes: Number(config.kiosk_checkout_reminder_interval_minutes),
-        }),
-      });
-      setNotice({ tone: "good", message: "Kiosk SMS settings saved." });
-    } catch (e) {
-      setNotice({
-        tone: "warning",
-        message: friendlyAdminError(e instanceof Error ? e.message : "Could not save kiosk settings."),
-      });
-    } finally {
-      setConfigSaving(false);
-    }
-  }
+  const activeMembers = initialMembers.filter((member) => member.entry_status === "active");
+  const awaitingMembers = initialMembers.filter((member) => member.entry_status === "awaiting_sign_in");
+  const passwordReadyCount = activeMembers.filter((member) => member.password_ready).length;
 
   return (
     <div className="space-y-8">
-      {notice ? <AdminInlineNotice tone={notice.tone}>{notice.message}</AdminInlineNotice> : null}
-
-      {!schemaReady ? (
-        <AdminInlineNotice tone="critical">
-          Office Hours kiosk setup is incomplete. Apply the March 16 kiosk migrations before saving phones or SMS settings.
-        </AdminInlineNotice>
-      ) : null}
-
-      {!smsEnvReady ? (
-        <AdminInlineNotice tone="critical">
-          Twilio env vars are missing on the server. The kiosk can be configured here, but OTP and reminder delivery will fail until the server env is updated.
-        </AdminInlineNotice>
-      ) : (
-        <AdminInlineNotice tone="good">
-          Twilio env vars are present. Kiosk OTP and reminder delivery can use the configured Messaging Service.
-        </AdminInlineNotice>
-      )}
-
       <AdminSurface
-        title="Kiosk SMS settings"
-        description="Keep the OTP expiry and the hourly reminder cadence in the same workspace as the phone allowlist."
+        title="Member check-in flow"
+        description="The public member picker and SMS OTP flow are retired. Members now sign in once, optionally trust the browser for 30 days, then use the signed-in Office Hours flow with a fresh selfie at every check-in."
       >
         <div className="grid gap-4 md:grid-cols-3">
-          <label className="flex items-center gap-3 rounded-[1.2rem] border border-[var(--admin-border-soft)] bg-white/80 px-4 py-4 text-sm text-foreground/72">
-            <input
-              type="checkbox"
-              checked={config.kiosk_sms_enabled}
-              onChange={(event) => setConfig((current) => ({ ...current, kiosk_sms_enabled: event.target.checked }))}
-            />
-            Enable kiosk SMS
-          </label>
-
-          <AdminField label="OTP expiry (minutes)">
-            <input
-              type="number"
-              min={1}
-              max={30}
-              value={config.kiosk_otp_ttl_minutes}
-              onChange={(event) =>
-                setConfig((current) => ({ ...current, kiosk_otp_ttl_minutes: Number(event.target.value || 5) }))
-              }
-            />
-          </AdminField>
-
-          <AdminField label="Checkout reminder interval">
-            <input
-              type="number"
-              min={15}
-              max={240}
-              step={15}
-              value={config.kiosk_checkout_reminder_interval_minutes}
-              onChange={(event) =>
-                setConfig((current) => ({
-                  ...current,
-                  kiosk_checkout_reminder_interval_minutes: Number(event.target.value || 60),
-                }))
-              }
-            />
-          </AdminField>
+          {[
+            { label: "Active roster", value: String(activeMembers.length), detail: "Current members can enter Office Hours directly from the app." },
+            { label: "Password ready", value: String(passwordReadyCount), detail: "Members who have completed the new password setup." },
+            { label: "Awaiting sign-in", value: String(awaitingMembers.length), detail: "Pending grants that still need first sign-in onboarding." },
+          ].map((card) => (
+            <article
+              key={card.label}
+              className="rounded-[1.35rem] border border-[var(--admin-border-soft)] bg-white/78 p-4"
+            >
+              <div className="text-xs uppercase tracking-[0.14em] text-[var(--admin-label)]">{card.label}</div>
+              <div className="mt-2 text-3xl font-semibold text-foreground">{card.value}</div>
+              <div className="mt-2 text-sm text-foreground/65">{card.detail}</div>
+            </article>
+          ))}
         </div>
 
-        <div className="mt-5 flex justify-end">
-          <Button className="h-11 rounded-full px-5" onClick={() => void saveConfig()} disabled={!schemaReady || configSaving}>
-            {configSaving ? "Saving..." : "Save kiosk settings"}
-          </Button>
+        <div className="mt-5 flex flex-wrap gap-3">
+          <Link
+            href="/office-hours"
+            className="inline-flex h-11 items-center justify-center rounded-full bg-foreground px-5 text-sm font-medium text-background"
+          >
+            Open member Office Hours
+          </Link>
+          <Link
+            href="/office-hours/kiosk/review"
+            className="inline-flex h-11 items-center justify-center rounded-full border border-[var(--admin-border-soft)] bg-white px-5 text-sm font-medium text-foreground/85"
+          >
+            Review selfies
+          </Link>
         </div>
       </AdminSurface>
 
       <AdminSurface
-        title="Approved kiosk phones"
-        description="Phone numbers stay masked after they are saved. Enter a replacement number when one changes, or clear the row to remove kiosk access."
+        title="Roster and onboarding"
+        description="Visibility only. Password setup and trusted-device management happen in the member-facing auth flow and Account page."
       >
         <div className="space-y-4">
-          {members.map((member) => {
-            const draft = phoneDrafts[member.member_key] ?? "";
-            const isSaving = savingMemberId === member.member_key;
-            return (
-              <div
-                key={member.member_key}
-                className="grid gap-4 rounded-[1.35rem] border border-[var(--admin-border-soft)] bg-white/78 p-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_auto]"
-              >
+          {initialMembers.map((member) => (
+            <article
+              key={member.member_key}
+              className="rounded-[1.35rem] border border-[var(--admin-border-soft)] bg-white/78 p-4"
+            >
+              <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="space-y-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <div className="text-sm font-semibold text-foreground">{member.display_name}</div>
+                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-slate-600">
+                      {member.role_label}
+                    </span>
                     {member.entry_status === "awaiting_sign_in" ? (
-                      <span className="text-xs uppercase tracking-[0.12em] text-amber-700">Awaiting sign-in</span>
+                      <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-amber-700">
+                        Awaiting sign-in
+                      </span>
+                    ) : null}
+                    {member.entry_status === "active" ? (
+                      <span
+                        className={
+                          member.password_ready
+                            ? "rounded-full bg-emerald-500/10 px-2 py-0.5 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-emerald-700"
+                            : "rounded-full bg-slate-200 px-2 py-0.5 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-slate-600"
+                        }
+                      >
+                        {member.password_ready ? "Password ready" : "Needs password setup"}
+                      </span>
                     ) : null}
                   </div>
-                  <div className="text-xs uppercase tracking-[0.12em] text-foreground/50">{member.role_label}</div>
                   {member.email ? <div className="text-sm text-foreground/58">{member.email}</div> : null}
-                  <div className="text-sm text-foreground/65">
-                    {member.phone_configured && member.phone_last4
-                      ? `Configured • ***-***-${member.phone_last4}`
-                      : "No kiosk phone configured"}
-                  </div>
-                  <div className="text-xs text-foreground/48">{updatedLabel(member.phone_updated_at)}</div>
                 </div>
 
-                <AdminField label="New approved phone" hint="US numbers only">
-                  <input
-                    placeholder="(619) 555-1234"
-                    value={draft}
-                    onChange={(event) =>
-                      setPhoneDrafts((current) => ({ ...current, [member.member_key]: event.target.value }))
-                    }
-                  />
-                </AdminField>
-
-                <div className="flex flex-wrap items-end gap-2">
-                  <Button
-                    className="h-11 rounded-full px-4"
-                    onClick={() => void savePhone(member, draft || null)}
-                    disabled={!schemaReady || isSaving || (!draft && !member.phone_configured)}
-                  >
-                    {isSaving ? "Saving..." : draft ? "Save phone" : "Clear phone"}
-                  </Button>
-                  {member.phone_configured ? (
-                    <Button
-                      variant="outline"
-                      className="h-11 rounded-full px-4"
-                      onClick={() => void savePhone(member, null)}
-                      disabled={!schemaReady || isSaving}
-                    >
-                      Remove
-                    </Button>
-                  ) : null}
+                <div className="text-xs text-foreground/55">
+                  {member.entry_status === "awaiting_sign_in"
+                    ? "Will enter through first-time email verification."
+                    : member.password_ready
+                      ? "Can use the password-first member flow immediately."
+                      : "Will be redirected into Office Hours password setup on first use."}
                 </div>
               </div>
-            );
-          })}
+            </article>
+          ))}
+        </div>
+      </AdminSurface>
+
+      <AdminSurface
+        title="Legacy config retained"
+        description="Historical SMS OTP records and config remain in the database for audit purposes, but they are no longer part of the active member check-in flow."
+      >
+        <div className="grid gap-4 md:grid-cols-3">
+          <article className="rounded-[1.35rem] border border-[var(--admin-border-soft)] bg-white/78 p-4 text-sm text-foreground/65">
+            Primary office location: <span className="font-medium text-foreground">{initialConfig.primary_office_location_id || "Not set"}</span>
+          </article>
+          <article className="rounded-[1.35rem] border border-[var(--admin-border-soft)] bg-white/78 p-4 text-sm text-foreground/65">
+            Quiet hours: <span className="font-medium text-foreground">{initialConfig.quiet_hours_enabled ? "Enabled" : "Disabled"}</span>
+          </article>
+          <article className="rounded-[1.35rem] border border-[var(--admin-border-soft)] bg-white/78 p-4 text-sm text-foreground/65">
+            Allowed weekdays: <span className="font-medium text-foreground">{(initialConfig.office_hours_allowed_weekdays ?? []).join(", ") || "Mon-Fri"}</span>
+          </article>
         </div>
       </AdminSurface>
     </div>

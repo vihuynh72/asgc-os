@@ -22,25 +22,34 @@ export async function OfficeHoursKioskPage() {
     listKioskAdminMembers(admin),
     ensureOfficeHoursConfigWithKioskFallback(admin),
   ]);
+  const activeUserIds = members
+    .map((member) => member.user_id)
+    .filter((value): value is string => typeof value === "string" && value.length > 0);
 
-  const smsEnvReady = Boolean(
-    process.env.SMS_PROVIDER &&
-      process.env.TWILIO_ACCOUNT_SID &&
-      process.env.TWILIO_AUTH_TOKEN &&
-      process.env.TWILIO_MESSAGING_SERVICE_SID &&
-      process.env.OFFICE_HOURS_KIOSK_OTP_SECRET,
+  const { data: passwordReadyRows } =
+    activeUserIds.length > 0
+      ? await admin.from("profile_private").select("id,password_ready_at").in("id", activeUserIds)
+      : { data: [] as Array<{ id: string; password_ready_at: string | null }> };
+
+  const passwordReadyIds = new Set(
+    ((passwordReadyRows ?? []) as Array<{ id: string; password_ready_at: string | null }>)
+      .filter((row) => !!row.password_ready_at)
+      .map((row) => row.id),
   );
 
   return (
     <div className="admin-page space-y-8">
       <AdminHero
         eyebrow="Office Hours"
-        title="Kiosk"
-        description="Manage the public kiosk roster, approved phone numbers, and the SMS verification cadence without exposing full phone numbers."
+        title="Check-In"
+        description="Monitor the new member sign-in + selfie check-in workflow, reviewer access, and onboarding readiness."
       />
       <OfficeHoursSectionNav activeId="kiosk" />
       <OfficeHoursKioskPanel
-        initialMembers={members}
+        initialMembers={members.map((member) => ({
+          ...member,
+          password_ready: member.user_id ? passwordReadyIds.has(member.user_id) : false,
+        }))}
         initialConfig={
           (config as OfficeConfigRow | null) ?? {
             primary_office_location_id: "",
@@ -58,7 +67,6 @@ export async function OfficeHoursKioskPage() {
             kiosk_checkout_reminder_interval_minutes: 60,
           }
         }
-        smsEnvReady={smsEnvReady}
       />
     </div>
   );

@@ -1,12 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 
 export function ChangePasswordPanel() {
-  const supabase = useMemo(() => getSupabaseBrowserClient(), []);
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [status, setStatus] = useState<"idle" | "saving" | "success" | "error">("idle");
@@ -30,10 +28,15 @@ export function ChangePasswordPanel() {
       return;
     }
 
-    const { error } = await supabase.auth.updateUser({ password });
-    if (error) {
+    const response = await fetch("/api/auth/setup-password", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ password, redirectTo: "/account" }),
+    });
+
+    if (!response.ok) {
       setStatus("error");
-      setMessage(error.message);
+      setMessage("Could not update password.");
       return;
     }
 
@@ -44,10 +47,10 @@ export function ChangePasswordPanel() {
   }
 
   return (
-    <section className="rounded-md border p-4">
-      <h2 className="text-sm font-semibold">Password</h2>
-      <p className="mt-1 text-sm text-foreground/70">
-        Set a password once, then you can sign in without email OTP on trusted devices.
+    <section className="rounded-[1.5rem] border border-foreground/10 bg-white/72 p-5 shadow-[0_22px_44px_-34px_rgba(15,23,42,0.38)] backdrop-blur">
+      <h2 className="text-base font-semibold tracking-tight">Password</h2>
+      <p className="mt-1 text-sm text-foreground/65">
+        Update the password used by the new member sign-in flow. Saving it here also refreshes your Office Hours password-ready flag.
       </p>
 
       <form className="mt-4 space-y-3" onSubmit={onSubmit}>
@@ -56,7 +59,7 @@ export function ChangePasswordPanel() {
           <input
             type="password"
             autoComplete="new-password"
-            className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+            className="h-11 w-full rounded-[1rem] border bg-background px-3 text-sm"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
           />
@@ -67,14 +70,14 @@ export function ChangePasswordPanel() {
           <input
             type="password"
             autoComplete="new-password"
-            className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+            className="h-11 w-full rounded-[1rem] border bg-background px-3 text-sm"
             value={confirm}
             onChange={(e) => setConfirm(e.target.value)}
           />
         </label>
 
         <div className="flex flex-wrap items-center gap-3">
-          <Button type="submit" disabled={!canSubmit}>
+          <Button type="submit" disabled={!canSubmit} className="h-11 rounded-full px-5">
             {status === "saving" ? "Saving..." : "Update password"}
           </Button>
           {message ? <span className="text-sm text-foreground/70">{message}</span> : null}
@@ -83,4 +86,3 @@ export function ChangePasswordPanel() {
     </section>
   );
 }
-
