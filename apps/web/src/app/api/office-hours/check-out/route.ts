@@ -1,25 +1,9 @@
-import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
-import { getPublicEnv } from "@/lib/env";
+import { getSupabaseRouteHandlerClient } from "@/lib/supabaseServer";
 
 export const runtime = "nodejs";
-
-function getSupabaseForRequest(request: NextRequest) {
-  const env = getPublicEnv();
-
-  return createServerClient(env.NEXT_PUBLIC_SUPABASE_URL, env.NEXT_PUBLIC_SUPABASE_ANON_KEY, {
-    cookies: {
-      getAll() {
-        return request.cookies.getAll();
-      },
-      setAll() {
-        // No-op: API responses don't need to refresh auth cookies.
-      },
-    },
-  });
-}
 
 const BodySchema = z
   .object({
@@ -34,6 +18,8 @@ function mapErrorStatus(message: string): number {
   switch (message) {
     case "unauthorized":
       return 401;
+    case "password_setup_required":
+      return 403;
     case "no_open_session":
       return 409;
     case "location_incomplete":
@@ -47,7 +33,7 @@ function mapErrorStatus(message: string): number {
 }
 
 export async function POST(request: NextRequest) {
-  const supabase = getSupabaseForRequest(request);
+  const supabase = await getSupabaseRouteHandlerClient();
 
   const {
     data: { user },
@@ -55,6 +41,16 @@ export async function POST(request: NextRequest) {
 
   if (!user) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+
+  const { data: profile } = await supabase
+    .from("profile_private")
+    .select("password_ready_at")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  if (!profile?.password_ready_at) {
+    return NextResponse.json({ error: "password_setup_required" }, { status: 403 });
   }
 
   const parsed = BodySchema.safeParse(await request.json().catch(() => ({})));

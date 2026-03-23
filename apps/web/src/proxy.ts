@@ -2,25 +2,15 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
 import { DESIGN_COOKIE_NAME, DESIGN_PARAM_NAME, normalizeDesign } from "@/lib/design-toggle.mjs";
+import {
+  getOfficeHoursPasswordSetupRedirect,
+  isLegacyOfficeHoursKioskPath,
+  isOfficeHoursSelfServicePath,
+  requiresProtectedAuth,
+  requiresStepUpMfa,
+} from "@/lib/office-hours-gates.mjs";
 import { getPublicEnv, hasPublicSupabaseEnv } from "@/lib/env";
 import { POST_AUTH_REDIRECT_COOKIE } from "@/lib/redirects";
-
-const PROTECTED_PREFIXES = [
-  "/dashboard",
-  "/account",
-  "/mfa",
-  "/office-hours",
-  "/tasks",
-  "/meetings",
-  "/docs",
-  "/finance",
-  "/admin",
-  "/projects",
-];
-
-const UNPROTECTED_PREFIXES = ["/office-hours/kiosk"];
-const KIOSK_FALLBACK_PREFIXES = ["/office-hours/check-in", "/office-hours/check-out"];
-const MFA_EXEMPT_PREFIXES = ["/mfa", "/auth", "/login", "/unauthorized"];
 
 export async function proxy(request: NextRequest) {
   if (!hasPublicSupabaseEnv()) {
@@ -61,29 +51,16 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(redirectUrl);
   }
 
-  const isExplicitlyPublic = UNPROTECTED_PREFIXES.some(
-    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
-  );
-
-  const isProtected = PROTECTED_PREFIXES.some(
-    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
-  );
-
-  if (isExplicitlyPublic && !hasMagicParams) {
-    return NextResponse.next({ request });
-  }
-
-  const shouldFallbackToKiosk = KIOSK_FALLBACK_PREFIXES.some(
-    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
-  );
+  const isLegacyKioskEntry = isLegacyOfficeHoursKioskPath(pathname);
+  const isProtected = requiresProtectedAuth(pathname);
 
   const hasSupabaseAuthCookie = request.cookies.getAll().some((c) => c.name.startsWith("sb-"));
   if (!hasSupabaseAuthCookie) {
-    if (shouldFallbackToKiosk) {
+    if (isLegacyKioskEntry) {
       const redirectUrl = request.nextUrl.clone();
-      redirectUrl.pathname = "/office-hours/kiosk";
+      redirectUrl.pathname = "/login";
       redirectUrl.search = "";
-      redirectUrl.searchParams.set("redirectTo", requestedPath);
+      redirectUrl.searchParams.set("redirectTo", "/office-hours");
       return NextResponse.redirect(redirectUrl);
     }
 
@@ -129,11 +106,11 @@ export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request });
 
   if (!user) {
-    if (shouldFallbackToKiosk) {
+    if (isLegacyKioskEntry) {
       const redirectUrl = request.nextUrl.clone();
-      redirectUrl.pathname = "/office-hours/kiosk";
+      redirectUrl.pathname = "/login";
       redirectUrl.search = "";
-      redirectUrl.searchParams.set("redirectTo", requestedPath);
+      redirectUrl.searchParams.set("redirectTo", "/office-hours");
       response = NextResponse.redirect(redirectUrl);
     } else if (isProtected) {
       const redirectUrl = request.nextUrl.clone();
@@ -149,25 +126,27 @@ export async function proxy(request: NextRequest) {
         maxAge: 60 * 15,
       });
     }
-  } else if (pathname.startsWith("/admin")) {
-    // Require 2FA (AAL2) before allowing any admin access checks.
-    const isMfaExempt = MFA_EXEMPT_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
-    if (!isMfaExempt) {
-      const { data: aalData, error: aalErr } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
-      const currentLevel = (aalData?.currentLevel as string | undefined) ?? null;
-      if (aalErr || currentLevel !== "aal2") {
-        const redirectUrl = request.nextUrl.clone();
-        redirectUrl.pathname = "/mfa";
-        redirectUrl.search = "";
-        redirectUrl.searchParams.set("redirectTo", requestedPath);
-        response = NextResponse.redirect(redirectUrl);
+  } else {
+    if (isLegacyKioskEntry) {
+      const redirectUrl = request.nextUrl.clone();
+      redirectUrl.pathname = "/office-hours";
+      redirectUrl.search = "";
+      response = NextResponse.redirect(redirectUrl);
+    } else if (isOfficeHoursSelfServicePath(pathname) && pathname !== "/office-hours/setup-password") {
+      const { data: profile } = await supabase
+        .from("profile_private")
+        .select("password_ready_at")
+        .eq("id", user.id)
+        .maybeSingle();
+
+      if (!profile?.password_ready_at) {
+        response = NextResponse.redirect(new URL(getOfficeHoursPasswordSetupRedirect(requestedPath), request.url));
       }
     }
 
     if (response.headers.get("location")) {
-      // Already redirected to /mfa.
-    } else {
-      // Use get_admin_tier for tiered admin access (full, partial, read-only)
+      // Already redirected.
+    } else if (pathname.startsWith("/admin")) {
       const { data: tierData, error: tierErr } = await supabase.rpc("get_admin_tier", { _uid: user.id });
 
       const tier = tierData?.tier as string | null;
@@ -182,9 +161,7 @@ export async function proxy(request: NextRequest) {
         response = NextResponse.redirect(redirectUrl);
       }
     }
-  } else if (isProtected) {
-    const isMfaExempt = MFA_EXEMPT_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
-    if (!isMfaExempt) {
+    if (!response.headers.get("location") && requiresStepUpMfa(pathname)) {
       const { data: aalData, error: aalErr } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
       const currentLevel = (aalData?.currentLevel as string | undefined) ?? null;
       if (aalErr || currentLevel !== "aal2") {

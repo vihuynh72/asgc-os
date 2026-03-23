@@ -21,10 +21,12 @@ function PreviewImage({ file }: { file: File }) {
 export function KioskCameraCapture({
   value,
   disabled,
+  autoStart = false,
   onChange,
 }: {
   value: File | null;
   disabled: boolean;
+  autoStart?: boolean;
   onChange: (file: File | null) => void;
 }) {
   const {
@@ -57,6 +59,11 @@ export function KioskCameraCapture({
       stop();
     }
   }, [stop, value]);
+
+  useEffect(() => {
+    if (!autoStart || disabled || value || !canUseCamera || cameraState !== "idle") return;
+    void start({ facingMode: "user" });
+  }, [autoStart, cameraState, canUseCamera, disabled, start, value]);
 
   const surface = resolveKioskCameraSurface({
     hasValue: Boolean(value),

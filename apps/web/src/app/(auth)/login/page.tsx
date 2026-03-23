@@ -4,61 +4,15 @@ import { Suspense, useEffect, useMemo, useState, useSyncExternalStore } from "re
 import { useSearchParams } from "next/navigation";
 
 import { AdminInlineNotice } from "@/components/admin/admin-inline-notice";
-import { AdminSurface } from "@/components/admin/admin-surface";
 import { Button } from "@/components/ui/button";
 import { PageShell } from "@/components/page-shell";
-import {
-  getLoginModeContent,
-  getLoginPrimaryActionLabel,
-  getLoginStatusNotice,
-  getLoginVerifyNotice,
-} from "@/lib/login-view.mjs";
 import { safePostAuthRedirectPath } from "@/lib/redirects";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 
+type AuthPanelMode = "password" | "password_otp" | "first_time" | "first_time_verify";
+
 function normalizeEmail(raw: string): string {
   return raw.trim().toLowerCase();
-}
-
-const REMEMBERED_EMAILS_KEY = "asgc:remembered_emails:v1";
-
-function readRememberedEmails(): string[] {
-  try {
-    const raw = window.localStorage.getItem(REMEMBERED_EMAILS_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .map((v) => (typeof v === "string" ? normalizeEmail(v) : ""))
-      .filter(Boolean)
-      .slice(0, 5);
-  } catch {
-    return [];
-  }
-}
-
-function writeRememberedEmails(emails: string[]) {
-  try {
-    window.localStorage.setItem(REMEMBERED_EMAILS_KEY, JSON.stringify(emails.slice(0, 5)));
-  } catch {
-    // Ignore.
-  }
-}
-
-function rememberEmailOnDevice(email: string) {
-  const normalized = normalizeEmail(email);
-  if (!normalized) return;
-  const prev = readRememberedEmails();
-  const next = [normalized, ...prev.filter((e) => e !== normalized)].slice(0, 5);
-  writeRememberedEmails(next);
-}
-
-function forgetRememberedEmails() {
-  try {
-    window.localStorage.removeItem(REMEMBERED_EMAILS_KEY);
-  } catch {
-    // Ignore.
-  }
 }
 
 function AuthCallbackErrorBanner() {
@@ -67,18 +21,15 @@ function AuthCallbackErrorBanner() {
 
   const message =
     error === "auth_callback_failed"
-      ? "That sign-in link could not be verified. Please request a new link and try again."
+      ? "That sign-in link could not be verified. Request a fresh email and try again."
       : error === "not_allowlisted"
-        ? "Your email is not invited (or access was revoked). Please contact an admin."
+        ? "Your email is not invited right now. Contact an admin if you need access."
         : error === "server_error"
-          ? "Sign-in failed due to a server error. Please try again or contact an admin."
+          ? "Sign-in failed due to a server error. Try again or contact an admin."
           : null;
 
   if (!message) return null;
-
-  return (
-    <AdminInlineNotice tone="critical">{message}</AdminInlineNotice>
-  );
+  return <AdminInlineNotice tone="critical">{message}</AdminInlineNotice>;
 }
 
 function SupabaseHashErrorBanner() {
@@ -99,11 +50,11 @@ function SupabaseHashErrorBanner() {
     const errorCode = params.get("error_code");
 
     if (error === "access_denied" && errorCode === "otp_expired") {
-      return "That sign-in link is invalid or has already been used. Please request a new email. If your email provider rewrites links (Safe Links), switch to one-time code sign-in instead of clicking the link.";
+      return "That email link is invalid or already used. Request a fresh email or use the code entry instead.";
     }
 
     if (error === "access_denied") {
-      return params.get("error_description") ?? "Access denied. Please request a new sign-in email.";
+      return params.get("error_description") ?? "Access denied. Request a new sign-in email.";
     }
 
     return null;
@@ -113,38 +64,50 @@ function SupabaseHashErrorBanner() {
   return <AdminInlineNotice tone="critical">{message}</AdminInlineNotice>;
 }
 
+function loginPanelCopy(mode: AuthPanelMode) {
+  switch (mode) {
+    case "password_otp":
+      return {
+        eyebrow: "Email check",
+        title: "Verify this browser",
+        detail: "Enter the code we sent after your password was accepted.",
+      };
+    case "first_time":
+      return {
+        eyebrow: "First sign-in",
+        title: "Start with your campus email",
+        detail: "We’ll email a link and code so you can create your account cleanly.",
+      };
+    case "first_time_verify":
+      return {
+        eyebrow: "Email code",
+        title: "Finish your first sign-in",
+        detail: "Use the code if the email link does not open cleanly on this device.",
+      };
+    default:
+      return {
+        eyebrow: "Member sign-in",
+        title: "Sign in with your password",
+        detail: "Returning members use password first. New browsers get a quick email check.",
+      };
+  }
+}
+
 export default function LoginPage() {
   const [existingUser, setExistingUser] = useState<{ email: string | null } | null>(null);
   const [postAuthRedirectTo, setPostAuthRedirectTo] = useState<string>("/dashboard");
 
+  const [panelMode, setPanelMode] = useState<AuthPanelMode>("password");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [rememberEmail, setRememberEmail] = useState(false);
-  const [rememberedEmails, setRememberedEmails] = useState<string[]>([]);
-  const [token, setToken] = useState("");
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isVerifying, setIsVerifying] = useState(false);
-  const [isSigningIn, setIsSigningIn] = useState(false);
-  const [isResettingPassword, setIsResettingPassword] = useState(false);
-  const [status, setStatus] = useState<"idle" | "sent" | "error">("idle");
-  const [verifyStatus, setVerifyStatus] = useState<"idle" | "error">("idle");
-  const [passwordStatus, setPasswordStatus] = useState<"idle" | "error">("idle");
-  const [resetStatus, setResetStatus] = useState<"idle" | "sent" | "error">("idle");
-  const [authMode, setAuthMode] = useState<"email" | "password">("email");
+  const [code, setCode] = useState("");
+  const [trustDevice, setTrustDevice] = useState(true);
+
+  const [busyAction, setBusyAction] = useState<"idle" | "password" | "verify" | "first_time" | "reset">("idle");
+  const [notice, setNotice] = useState<{ tone: "good" | "critical"; message: string } | null>(null);
 
   const normalizedEmail = useMemo(() => normalizeEmail(email), [email]);
-  const emailMode = useMemo(() => getLoginModeContent("email"), []);
-  const passwordMode = useMemo(() => getLoginModeContent("password"), []);
-  const modeContent = authMode === "password" ? passwordMode : emailMode;
-  const statusNotice = useMemo(
-    () => getLoginStatusNotice({ authMode, status, passwordStatus, resetStatus }),
-    [authMode, passwordStatus, resetStatus, status],
-  );
-  const verifyNotice = useMemo(() => getLoginVerifyNotice(verifyStatus), [verifyStatus]);
-  const primaryActionLabel = useMemo(
-    () => getLoginPrimaryActionLabel({ authMode, isSubmitting, isSigningIn }),
-    [authMode, isSigningIn, isSubmitting],
-  );
+  const copy = useMemo(() => loginPanelCopy(panelMode), [panelMode]);
 
   useEffect(() => {
     let cancelled = false;
@@ -154,19 +117,7 @@ export default function LoginPage() {
         const redirectTo = safePostAuthRedirectPath(new URLSearchParams(window.location.search).get("redirectTo"));
         if (!cancelled) setPostAuthRedirectTo(redirectTo);
       } catch {
-        // Ignore; fallback to default.
-      }
-
-      try {
-        const saved = readRememberedEmails();
-        if (!cancelled) {
-          setRememberedEmails(saved);
-          if (saved.length > 0) {
-            setEmail((prev) => (prev.trim().length === 0 ? saved[0] : prev));
-          }
-        }
-      } catch {
-        // Ignore.
+        // Ignore; fallback stays in place.
       }
 
       try {
@@ -174,8 +125,9 @@ export default function LoginPage() {
         const {
           data: { user },
         } = await supabase.auth.getUser();
-        if (cancelled) return;
-        if (user) setExistingUser({ email: user.email ?? null });
+        if (!cancelled && user) {
+          setExistingUser({ email: user.email ?? null });
+        }
       } catch {
         // Ignore.
       }
@@ -189,416 +141,371 @@ export default function LoginPage() {
 
   function getRedirectToForRequests(): string | undefined {
     try {
-      const safe = safePostAuthRedirectPath(new URLSearchParams(window.location.search).get("redirectTo"));
-      return safe;
+      return safePostAuthRedirectPath(new URLSearchParams(window.location.search).get("redirectTo"));
     } catch {
       return undefined;
     }
   }
 
-  async function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
-
-    setIsSubmitting(true);
-    setStatus("idle");
-    setVerifyStatus("idle");
-    setPasswordStatus("idle");
-    setResetStatus("idle");
-
-    const redirectTo = getRedirectToForRequests();
+  async function onPasswordSubmit(event: React.FormEvent) {
+    event.preventDefault();
+    setBusyAction("password");
+    setNotice(null);
 
     try {
-      if (rememberEmail) {
-        rememberEmailOnDevice(normalizedEmail);
-        setRememberedEmails(readRememberedEmails());
-      }
-
-      const res = await fetch("/api/auth/request-magic-link", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ email: normalizedEmail, redirectTo }),
-      });
-
-      if (!res.ok) {
-        setStatus("error");
-        return;
-      }
-
-      setStatus("sent");
-    } catch {
-      setStatus("error");
-    } finally {
-      setIsSubmitting(false);
-    }
-  }
-
-  async function onPasswordSignIn(e: React.FormEvent) {
-    e.preventDefault();
-
-    setIsSigningIn(true);
-    setPasswordStatus("idle");
-    setStatus("idle");
-    setVerifyStatus("idle");
-    setResetStatus("idle");
-
-    const redirectTo = getRedirectToForRequests();
-
-    try {
-      if (rememberEmail) {
-        rememberEmailOnDevice(normalizedEmail);
-        setRememberedEmails(readRememberedEmails());
-      }
-
-      const res = await fetch("/api/auth/signin-password", {
+      const redirectTo = getRedirectToForRequests();
+      const response = await fetch("/api/auth/signin-password", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ email: normalizedEmail, password, redirectTo }),
       });
 
-      if (!res.ok) {
-        setPasswordStatus("error");
+      const json = (await response.json().catch(() => null)) as
+        | { redirectTo?: string; nextStep?: "email_otp" }
+        | null;
+
+      if (!response.ok) {
+        setNotice({ tone: "critical", message: "Sign-in failed. Check your email or password." });
         return;
       }
 
-      const json = (await res.json().catch(() => null)) as { redirectTo?: string } | null;
+      if (json?.nextStep === "email_otp") {
+        setCode("");
+        setPanelMode("password_otp");
+        setNotice({ tone: "good", message: "Password accepted. Enter the code we emailed to finish sign-in." });
+        return;
+      }
+
       const next = typeof json?.redirectTo === "string" && json.redirectTo.startsWith("/") ? json.redirectTo : "/dashboard";
       window.location.assign(next);
     } catch {
-      setPasswordStatus("error");
+      setNotice({ tone: "critical", message: "Sign-in failed. Try again." });
     } finally {
-      setIsSigningIn(false);
+      setBusyAction("idle");
     }
   }
 
-  async function onRequestPasswordReset() {
-    setIsResettingPassword(true);
-    setResetStatus("idle");
-    setPasswordStatus("idle");
+  async function onFirstTimeSubmit(event: React.FormEvent) {
+    event.preventDefault();
+    setBusyAction("first_time");
+    setNotice(null);
 
     try {
-      const redirectTo = "/account";
-
-      const res = await fetch("/api/auth/request-password-reset", {
+      const redirectTo = getRedirectToForRequests();
+      const response = await fetch("/api/auth/request-magic-link", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ email: normalizedEmail, redirectTo }),
       });
 
-      if (!res.ok) {
-        setResetStatus("error");
+      if (!response.ok) {
+        setNotice({ tone: "critical", message: "Could not send the sign-in email. Try again." });
         return;
       }
 
-      setResetStatus("sent");
+      setCode("");
+      setPanelMode("first_time_verify");
+      setNotice({ tone: "good", message: "Check your email. The code below works if the link is rewritten by your email provider." });
     } catch {
-      setResetStatus("error");
+      setNotice({ tone: "critical", message: "Could not send the sign-in email. Try again." });
     } finally {
-      setIsResettingPassword(false);
+      setBusyAction("idle");
     }
   }
 
-  async function onVerify(e: React.FormEvent) {
-    e.preventDefault();
-
-    setIsVerifying(true);
-    setVerifyStatus("idle");
-    setPasswordStatus("idle");
-    setResetStatus("idle");
-
-    const redirectTo = getRedirectToForRequests();
+  async function onVerifySubmit(event: React.FormEvent) {
+    event.preventDefault();
+    setBusyAction("verify");
+    setNotice(null);
 
     try {
-      if (rememberEmail) {
-        rememberEmailOnDevice(normalizedEmail);
-        setRememberedEmails(readRememberedEmails());
-      }
+      const redirectTo = getRedirectToForRequests();
+      const endpoint = panelMode === "password_otp" ? "/api/auth/complete-password-signin" : "/api/auth/verify-otp";
+      const payload =
+        panelMode === "password_otp"
+          ? { email: normalizedEmail, code, trustDevice, redirectTo }
+          : { email: normalizedEmail, token: code, redirectTo };
 
-      const res = await fetch("/api/auth/verify-otp", {
+      const response = await fetch(endpoint, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ email: normalizedEmail, token, redirectTo }),
+        body: JSON.stringify(payload),
       });
 
-      if (!res.ok) {
-        setVerifyStatus("error");
+      const json = (await response.json().catch(() => null)) as { redirectTo?: string } | null;
+      if (!response.ok) {
+        setNotice({
+          tone: "critical",
+          message:
+            panelMode === "password_otp"
+              ? "That browser verification code did not match. Request a fresh sign-in if needed."
+              : "That code could not be verified. Request a new sign-in email.",
+        });
         return;
       }
 
-      const json = (await res.json().catch(() => null)) as { redirectTo?: string } | null;
       const next = typeof json?.redirectTo === "string" && json.redirectTo.startsWith("/") ? json.redirectTo : "/dashboard";
       window.location.assign(next);
     } catch {
-      setVerifyStatus("error");
+      setNotice({ tone: "critical", message: "Verification failed. Try again." });
     } finally {
-      setIsVerifying(false);
+      setBusyAction("idle");
+    }
+  }
+
+  async function onRequestPasswordReset() {
+    setBusyAction("reset");
+    setNotice(null);
+
+    try {
+      const response = await fetch("/api/auth/request-password-reset", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: normalizedEmail, redirectTo: "/account" }),
+      });
+
+      if (!response.ok) {
+        setNotice({ tone: "critical", message: "Could not send a reset email. Try again." });
+        return;
+      }
+
+      setNotice({ tone: "good", message: "If invited, a password reset email is on the way." });
+    } catch {
+      setNotice({ tone: "critical", message: "Could not send a reset email. Try again." });
+    } finally {
+      setBusyAction("idle");
     }
   }
 
   return (
-    <PageShell title="Sign in" showHeader={false} containerClassName="login-shell max-w-6xl">
-      <section className="login-page">
-        <div aria-hidden className="login-page-backdrop" />
+    <PageShell title="Sign in" showHeader={false} containerClassName="max-w-6xl px-4 py-10 sm:py-14">
+      <section className="relative overflow-hidden rounded-[2rem] border border-black/5 bg-[linear-gradient(180deg,rgba(250,252,255,0.96),rgba(242,245,250,0.92))] shadow-[0_40px_120px_-56px_rgba(15,23,42,0.38)]">
+        <div
+          aria-hidden
+          className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(79,120,214,0.16),transparent_28%),radial-gradient(circle_at_bottom_right,rgba(16,185,129,0.12),transparent_26%),linear-gradient(135deg,rgba(255,255,255,0.8),rgba(255,255,255,0.5))]"
+        />
 
-        <div className="login-layout">
-          <section className="login-hero-panel" aria-label="Sign-in overview">
-            <div className="login-chip-row">
-              <span className="login-chip">Invite-only</span>
-              <span className="login-chip login-chip-accent">GCCCD</span>
-              <span className="login-chip">{modeContent.label}</span>
+        <div className="relative grid gap-6 p-4 sm:p-6 lg:grid-cols-[1.08fr_0.92fr] lg:p-8">
+          <section className="flex flex-col justify-between rounded-[1.8rem] border border-white/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.82),rgba(248,250,252,0.62))] p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.85)] backdrop-blur-xl sm:p-8">
+            <div className="space-y-6">
+              <div className="inline-flex w-fit items-center gap-2 rounded-full border border-slate-200/80 bg-white/80 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.22em] text-slate-500">
+                <span>ASGC OS</span>
+                <span className="h-1 w-1 rounded-full bg-slate-300" />
+                <span>Member Access</span>
+              </div>
+
+              <div className="space-y-3">
+                <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">{copy.eyebrow}</p>
+                <h1 className="max-w-xl text-4xl font-semibold tracking-[-0.04em] text-slate-950 sm:text-5xl">
+                  One sign-in surface for the whole ASGC app.
+                </h1>
+                <p className="max-w-xl text-sm leading-6 text-slate-600 sm:text-base">
+                  Password is the default. First-time members start with email verification, and returning members only
+                  see the extra code step on browsers the system does not trust yet.
+                </p>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-3">
+                {[
+                  ["Password first", "Primary flow for returning members"],
+                  ["Quick email check", "Only on untrusted browsers"],
+                  ["Office Hours ready", "Same identity flows into selfie check-in"],
+                ].map(([title, detail]) => (
+                  <article
+                    key={title}
+                    className="rounded-[1.5rem] border border-white/70 bg-white/74 px-4 py-4 shadow-[0_16px_34px_-28px_rgba(15,23,42,0.42)] backdrop-blur"
+                  >
+                    <div className="text-sm font-semibold text-slate-900">{title}</div>
+                    <div className="mt-1 text-xs leading-5 text-slate-600">{detail}</div>
+                  </article>
+                ))}
+              </div>
             </div>
 
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <p className="login-hero-eyebrow">{modeContent.eyebrow}</p>
-                <h1 className="login-hero-title">Sign in</h1>
-                <p className="login-hero-subtitle">Campus email only. Clean, fast, and consistent with the rest of ASGC OS.</p>
-              </div>
-
-              <div className="login-hero-grid" aria-hidden="true">
-                <article className="login-hero-card">
-                  <span className="login-hero-card-label">Campus only</span>
-                  <strong>@gcccd.edu</strong>
-                </article>
-                <article className="login-hero-card">
-                  <span className="login-hero-card-label">Link or code</span>
-                  <strong>Works with Safe Links</strong>
-                </article>
-                <article className="login-hero-card">
-                  <span className="login-hero-card-label">Fast return</span>
-                  <strong>Recent email stays nearby</strong>
-                </article>
-              </div>
+            <div className="mt-8 rounded-[1.5rem] border border-dashed border-slate-300/80 bg-white/55 px-4 py-4 text-sm text-slate-600">
+              Campus email only. After your first successful sign-in, Office Hours takes you straight into the signed-in
+              app flow instead of the old public kiosk flow.
             </div>
           </section>
 
-          <div className="login-auth-stack">
-            {existingUser ? (
-              <AdminSurface
-                title="Already signed in"
-                description={existingUser.email ?? "Unknown account"}
-                className="login-existing-surface"
-              >
-                <div className="login-action-row">
-                  <Button
-                    type="button"
-                    className="login-primary-button"
-                    onClick={() => window.location.assign(postAuthRedirectTo)}
-                  >
-                    Continue
-                  </Button>
-                  <form action="/auth/signout" method="post">
-                    <Button type="submit" variant="outline" className="login-secondary-button">
-                      Sign out
+          <section className="rounded-[1.8rem] border border-white/75 bg-white/82 p-5 shadow-[0_24px_48px_-32px_rgba(15,23,42,0.44)] backdrop-blur-xl sm:p-6">
+            <div className="space-y-4">
+              {existingUser ? (
+                <div className="rounded-[1.35rem] border border-emerald-200/70 bg-emerald-50/75 p-4">
+                  <div className="text-xs font-semibold uppercase tracking-[0.22em] text-emerald-700">Already signed in</div>
+                  <div className="mt-2 text-sm text-emerald-950">{existingUser.email ?? "Current account"}</div>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <Button className="h-11 rounded-full px-5" onClick={() => window.location.assign(postAuthRedirectTo)}>
+                      Continue
                     </Button>
-                  </form>
+                    <form action="/auth/signout" method="post">
+                      <Button type="submit" variant="outline" className="h-11 rounded-full px-5">
+                        Sign out
+                      </Button>
+                    </form>
+                  </div>
                 </div>
-              </AdminSurface>
-            ) : null}
+              ) : null}
 
-            <div className="login-notice-stack">
               <Suspense fallback={null}>
                 <AuthCallbackErrorBanner />
               </Suspense>
               <SupabaseHashErrorBanner />
-            </div>
+              {notice ? <AdminInlineNotice tone={notice.tone}>{notice.message}</AdminInlineNotice> : null}
 
-            <AdminSurface
-              title={modeContent.title}
-              description={modeContent.detail}
-              className="login-auth-surface"
-              contentClassName="login-auth-content"
-              action={
-                <div className="login-mode-switch" role="tablist" aria-label="Sign-in method">
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={authMode === "email"}
-                    className={authMode === "email" ? "login-mode-button login-mode-button-active" : "login-mode-button"}
-                    onClick={() => {
-                      setAuthMode("email");
-                      setPasswordStatus("idle");
-                      setResetStatus("idle");
-                    }}
-                  >
-                    {emailMode.label}
-                  </button>
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={authMode === "password"}
-                    className={authMode === "password" ? "login-mode-button login-mode-button-active" : "login-mode-button"}
-                    onClick={() => {
-                      setAuthMode("password");
-                      setStatus("idle");
-                      setVerifyStatus("idle");
-                    }}
-                  >
-                    {passwordMode.label}
-                  </button>
-                </div>
-              }
-            >
-              {statusNotice ? (
-                <AdminInlineNotice tone={statusNotice.tone}>{statusNotice.message}</AdminInlineNotice>
-              ) : null}
+              <div className="space-y-1">
+                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">{copy.eyebrow}</p>
+                <h2 className="text-2xl font-semibold tracking-[-0.03em] text-slate-950">{copy.title}</h2>
+                <p className="text-sm leading-6 text-slate-600">{copy.detail}</p>
+              </div>
 
-              <form
-                onSubmit={authMode === "password" ? onPasswordSignIn : onSubmit}
-                className="login-form-grid"
-              >
-                <div className="admin-field">
-                  <label htmlFor="email" className="login-field-label">
-                    Email
+              {(panelMode === "password" || panelMode === "first_time") ? (
+                <form className="space-y-4" onSubmit={panelMode === "password" ? onPasswordSubmit : onFirstTimeSubmit}>
+                  <label className="block space-y-2">
+                    <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Campus email</span>
+                    <input
+                      type="email"
+                      autoComplete="email"
+                      required
+                      value={email}
+                      onChange={(event) => setEmail(event.target.value)}
+                      placeholder="name@gcccd.edu"
+                      className="h-12 w-full rounded-[1.2rem] border border-slate-200 bg-white/90 px-4 text-[15px] text-slate-950 shadow-[inset_0_1px_0_rgba(255,255,255,0.85)] outline-none transition focus:border-slate-400"
+                    />
                   </label>
-                  <input
-                    id="email"
-                    name="email"
-                    type="email"
-                    autoComplete="email"
-                    required
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className="login-input"
-                    placeholder="name@gcccd.edu"
-                  />
-                </div>
 
-                {authMode === "password" ? (
-                  <div className="admin-field">
-                    <label htmlFor="password" className="login-field-label">
-                      Password
+                  {panelMode === "password" ? (
+                    <label className="block space-y-2">
+                      <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Password</span>
+                      <input
+                        type="password"
+                        autoComplete="current-password"
+                        value={password}
+                        onChange={(event) => setPassword(event.target.value)}
+                        placeholder="Password"
+                        className="h-12 w-full rounded-[1.2rem] border border-slate-200 bg-white/90 px-4 text-[15px] text-slate-950 shadow-[inset_0_1px_0_rgba(255,255,255,0.85)] outline-none transition focus:border-slate-400"
+                      />
                     </label>
-                    <input
-                      id="password"
-                      name="password"
-                      type="password"
-                      autoComplete="current-password"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      className="login-input"
-                      placeholder="Password"
-                    />
-                  </div>
-                ) : null}
-
-                {rememberedEmails.length > 0 ? (
-                  <details className="login-details">
-                    <summary className="login-details-summary">Recent emails</summary>
-                    <div className="login-pill-row">
-                      {rememberedEmails.map((saved) => (
-                        <button
-                          key={saved}
-                          type="button"
-                          className="login-email-pill"
-                          onClick={() => setEmail(saved)}
-                        >
-                          {saved}
-                        </button>
-                      ))}
-                      <button
-                        type="button"
-                        className="login-email-pill login-email-pill-muted"
-                        onClick={() => {
-                          forgetRememberedEmails();
-                          setRememberedEmails([]);
-                        }}
-                      >
-                        Forget
-                      </button>
-                    </div>
-                  </details>
-                ) : null}
-
-                <label className="login-checkbox-row">
-                  <input
-                    type="checkbox"
-                    checked={rememberEmail}
-                    onChange={(e) => setRememberEmail(e.target.checked)}
-                  />
-                  <span>Remember this email</span>
-                </label>
-
-                <div className="login-action-row">
-                  <Button
-                    type="submit"
-                    className="login-primary-button"
-                    disabled={
-                      authMode === "password"
-                        ? isSigningIn || normalizedEmail.length === 0 || password.length === 0
-                        : isSubmitting || normalizedEmail.length === 0
-                    }
-                  >
-                    {primaryActionLabel}
-                  </Button>
-
-                  {authMode === "password" ? (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="login-secondary-button"
-                      disabled={isResettingPassword || normalizedEmail.length === 0}
-                      onClick={() => void onRequestPasswordReset()}
-                    >
-                      {isResettingPassword ? "Sending..." : "Reset password"}
-                    </Button>
                   ) : null}
-                </div>
-              </form>
-            </AdminSurface>
 
-            {authMode === "email" && status === "sent" ? (
-              <AdminSurface
-                title="Enter code"
-                description="Use the code if the link does not open cleanly."
-                className="login-verify-surface"
-              >
-                <form onSubmit={onVerify} className="login-form-grid">
-                  <div className="admin-field">
-                    <label htmlFor="token" className="login-field-label">
-                      One-time code
-                    </label>
-                    <input
-                      id="token"
-                      name="token"
-                      inputMode="numeric"
-                      autoComplete="one-time-code"
-                      value={token}
-                      onChange={(e) => setToken(e.target.value)}
-                      className="login-input"
-                      placeholder="Code"
-                    />
-                  </div>
-
-                  <div className="login-action-row">
+                  <div className="flex flex-col gap-3 pt-2 sm:flex-row sm:items-center">
                     <Button
                       type="submit"
-                      className="login-primary-button"
-                      disabled={isVerifying || normalizedEmail.length === 0 || token.trim().length === 0}
+                      className="h-12 rounded-full px-6"
+                      disabled={
+                        busyAction !== "idle" ||
+                        normalizedEmail.length === 0 ||
+                        (panelMode === "password" && password.length === 0)
+                      }
                     >
-                      {isVerifying ? "Verifying..." : "Verify code"}
+                      {busyAction === "password"
+                        ? "Signing in..."
+                        : busyAction === "first_time"
+                          ? "Sending..."
+                          : panelMode === "password"
+                            ? "Sign in"
+                            : "Send sign-in email"}
                     </Button>
+
+                    {panelMode === "password" ? (
+                      <>
+                        <button
+                          type="button"
+                          className="text-sm font-medium text-slate-600 transition hover:text-slate-950"
+                          onClick={() => {
+                            setPanelMode("first_time");
+                            setNotice(null);
+                            setCode("");
+                          }}
+                        >
+                          First time signing in?
+                        </button>
+                        <button
+                          type="button"
+                          className="text-sm font-medium text-slate-500 transition hover:text-slate-900"
+                          disabled={busyAction === "reset" || normalizedEmail.length === 0}
+                          onClick={() => void onRequestPasswordReset()}
+                        >
+                          {busyAction === "reset" ? "Sending reset..." : "Reset password"}
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        className="text-sm font-medium text-slate-600 transition hover:text-slate-950"
+                        onClick={() => {
+                          setPanelMode("password");
+                          setNotice(null);
+                          setCode("");
+                        }}
+                      >
+                        Back to password sign-in
+                      </button>
+                    )}
+                  </div>
+                </form>
+              ) : null}
+
+              {(panelMode === "password_otp" || panelMode === "first_time_verify") ? (
+                <form className="space-y-4" onSubmit={onVerifySubmit}>
+                  <div className="rounded-[1.25rem] border border-slate-200/80 bg-slate-50/75 px-4 py-3 text-sm text-slate-600">
+                    {panelMode === "password_otp"
+                      ? "This browser is not trusted yet. Enter the email code to finish signing in."
+                      : "Open the email link if you can. If the link is rewritten or blocked, enter the code instead."}
                   </div>
 
-                  {verifyNotice ? (
-                    <AdminInlineNotice tone={verifyNotice.tone}>{verifyNotice.message}</AdminInlineNotice>
-                  ) : null}
-                </form>
-              </AdminSurface>
-            ) : null}
+                  <label className="block space-y-2">
+                    <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Code</span>
+                    <input
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      value={code}
+                      onChange={(event) => setCode(event.target.value)}
+                      placeholder="6-digit code"
+                      className="h-12 w-full rounded-[1.2rem] border border-slate-200 bg-white/90 px-4 text-[15px] text-slate-950 shadow-[inset_0_1px_0_rgba(255,255,255,0.85)] outline-none transition focus:border-slate-400"
+                    />
+                  </label>
 
-            <details className="login-help-panel">
-              <summary className="login-help-summary">Need help?</summary>
-              <div className="login-help-copy">
-                <p>If your email provider rewrites links, use the one-time code instead.</p>
-                <p>After you sign in, you can set a password from Account.</p>
-                {process.env.NODE_ENV !== "production" ? (
-                  <p className="text-xs text-foreground/60">
-                    Local dev emails appear in Supabase Inbucket at http://localhost:54324.
-                  </p>
-                ) : null}
+                  {panelMode === "password_otp" ? (
+                    <label className="flex items-center gap-3 rounded-[1.2rem] border border-slate-200/80 bg-white/75 px-4 py-3 text-sm text-slate-600">
+                      <input
+                        type="checkbox"
+                        checked={trustDevice}
+                        onChange={(event) => setTrustDevice(event.target.checked)}
+                      />
+                      Trust this browser for 30 days
+                    </label>
+                  ) : null}
+
+                  <div className="flex flex-col gap-3 pt-1 sm:flex-row sm:items-center">
+                    <Button
+                      type="submit"
+                      className="h-12 rounded-full px-6"
+                      disabled={busyAction !== "idle" || normalizedEmail.length === 0 || code.trim().length === 0}
+                    >
+                      {busyAction === "verify" ? "Verifying..." : "Verify code"}
+                    </Button>
+                    <button
+                      type="button"
+                      className="text-sm font-medium text-slate-600 transition hover:text-slate-950"
+                      onClick={() => {
+                        setCode("");
+                        setNotice(null);
+                        setPanelMode(panelMode === "password_otp" ? "password" : "first_time");
+                      }}
+                    >
+                      Start over
+                    </button>
+                  </div>
+                </form>
+              ) : null}
+
+              <div className="rounded-[1.25rem] border border-dashed border-slate-300/85 bg-white/52 px-4 py-4 text-sm leading-6 text-slate-600">
+                <p>Use your GCCCD email. If your email provider rewrites links, the one-time code flow is the reliable fallback.</p>
+                <p className="mt-2">After the first successful sign-in, Office Hours can send you into the password-setup step automatically when needed.</p>
               </div>
-            </details>
-          </div>
+            </div>
+          </section>
         </div>
       </section>
     </PageShell>

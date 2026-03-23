@@ -637,84 +637,119 @@ export default function OfficeHoursPage() {
   return (
     <PageShell
       title="Office Hours"
-      description="Check in when you arrive. We’ll keep your session accurate and check you out if you leave."
-      containerClassName="max-w-4xl"
+      description="Signed-in, selfie-based Office Hours check-in with the rest of your weekly progress and session history in one place."
+      containerClassName="max-w-5xl"
     >
       <div className="space-y-6">
-        <section className="rounded-3xl bg-card p-6 shadow-sm ring-1 ring-border/70">
-          <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
+        <section className="relative overflow-hidden rounded-[2rem] border border-black/5 bg-[linear-gradient(180deg,rgba(249,251,255,0.96),rgba(242,246,250,0.92))] p-6 shadow-[0_36px_110px_-56px_rgba(15,23,42,0.34)]">
+          <div
+            aria-hidden
+            className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.14),transparent_24%),radial-gradient(circle_at_bottom_right,rgba(34,197,94,0.10),transparent_24%)]"
+          />
+
+          <div className="relative flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
             <div className="space-y-1">
               <div className="flex flex-wrap items-center gap-2">
-                <h2 className="text-lg font-semibold tracking-tight">Status</h2>
+                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Member flow</p>
                 <span
                   className={
                     openSession
-                      ? "rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-700"
-                      : "rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-foreground/70"
+                      ? "rounded-full bg-emerald-500/10 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-emerald-700"
+                      : "rounded-full bg-slate-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-slate-600"
                   }
                 >
                   {openSession ? "Checked in" : "Not checked in"}
                 </span>
               </div>
 
+              <h2 className="text-3xl font-semibold tracking-[-0.04em] text-slate-950">
+                {openSession ? "Your session is active." : "Ready for a fresh selfie check-in."}
+              </h2>
+
               {openSession ? (
-                <div className="text-sm text-foreground/80">
-                  Since <span className="font-medium text-foreground">{formatInOfficeTz(openSession.checkin_at)}</span>
+                <div className="text-sm text-slate-700">
+                  Since <span className="font-medium text-slate-950">{formatInOfficeTz(openSession.checkin_at)}</span>
                   {elapsedMinutes !== null ? ` • ${formatMinutes(elapsedMinutes)}` : ""}
                 </div>
               ) : (
-                <div className="text-sm text-foreground/70">
-                  When you’re at the office, tap <span className="font-medium text-foreground">Check In</span>.
+                <div className="max-w-2xl text-sm leading-6 text-slate-600">
+                  When you arrive, open the unified action screen. It starts the front camera, confirms your location,
+                  and checks you in without the old public kiosk flow.
                 </div>
               )}
 
-              <div className="mt-3 text-xs text-foreground/60">
-                If you close the tab, we try to check you out immediately; otherwise it auto-checks out within ~1 minute.
+              <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                {[
+                  ["Selfie required", "Every check-in uses a fresh photo."],
+                  ["Signed-in flow", "No public member picker or SMS OTP."],
+                  ["Fast return", "Trusted browsers cut down repeat verification."],
+                ].map(([title, detail]) => (
+                  <article
+                    key={title}
+                    className="rounded-[1.35rem] border border-white/70 bg-white/72 px-4 py-4 shadow-[0_16px_32px_-28px_rgba(15,23,42,0.36)] backdrop-blur"
+                  >
+                    <div className="text-sm font-semibold text-slate-900">{title}</div>
+                    <div className="mt-1 text-xs leading-5 text-slate-600">{detail}</div>
+                  </article>
+                ))}
               </div>
             </div>
 
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-col gap-3 rounded-[1.6rem] border border-white/75 bg-white/80 p-4 shadow-[0_20px_44px_-32px_rgba(15,23,42,0.42)] backdrop-blur-xl sm:min-w-[16rem]">
+              <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Next action</div>
+              <div className="text-sm leading-6 text-slate-600">
+                {openSession
+                  ? "Use the same action screen to confirm check-out."
+                  : "Open the camera-first flow when you are physically at the office."}
+              </div>
               <Button
-                onClick={() => router.push(openSession ? "/office-hours/check-out" : "/office-hours/check-in")}
+                className="h-12 rounded-full px-6"
+                onClick={() => router.push("/office-hours/check-in")}
                 disabled={loading}
               >
-                {openSession ? "Check Out" : "Check In"}
+                {openSession ? "Open action screen" : "Check in with selfie"}
               </Button>
               {canViewKioskSelfies ? (
-                <Button variant="outline" onClick={() => window.open("/office-hours/kiosk/review", "_blank", "noopener,noreferrer")} disabled={loading}>
+                <Button
+                  variant="outline"
+                  className="h-11 rounded-full px-5"
+                  onClick={() => window.open("/office-hours/kiosk/review", "_blank", "noopener,noreferrer")}
+                  disabled={loading}
+                >
                   Selfies
                 </Button>
               ) : null}
-              <Button variant="ghost" onClick={refresh} disabled={loading}>
+              <Button variant="ghost" className="h-10 rounded-full" onClick={refresh} disabled={loading}>
                 Refresh
               </Button>
             </div>
           </div>
 
           {notice ? (
-            <div className="mt-4 rounded-2xl bg-muted/40 px-4 py-3 text-sm text-foreground/80" role="status" aria-live="polite">
+            <div className="relative mt-4 rounded-[1.2rem] bg-white/72 px-4 py-3 text-sm text-slate-700" role="status" aria-live="polite">
               {notice}
             </div>
           ) : null}
           {error ? (
-            <div className="mt-4 rounded-2xl bg-red-500/10 px-4 py-3 text-sm text-red-700" role="alert">
+            <div className="relative mt-4 rounded-[1.2rem] bg-rose-50 px-4 py-3 text-sm text-rose-700" role="alert">
               {error}
             </div>
           ) : null}
 
           {!openSession ? (
-            <div className="mt-5 rounded-2xl bg-muted/40 px-4 py-4 text-sm text-foreground/75">
-              <div className="font-medium text-foreground">How it works</div>
+            <div className="relative mt-5 rounded-[1.4rem] border border-white/70 bg-white/68 px-4 py-4 text-sm text-slate-600">
+              <div className="font-medium text-slate-950">How it works</div>
               <ol className="mt-2 list-decimal space-y-1 pl-5">
-                <li>Arrive at the office and tap Check In.</li>
-                <li>Do your work as usual.</li>
-                <li>Tap Check Out when you leave (or we auto-checkout if you forget).</li>
+                <li>Arrive at the office and open the action screen.</li>
+                <li>Take the required selfie and let location confirm you are in range.</li>
+                <li>Work as usual.</li>
+                <li>Return to the same screen to check out when you leave.</li>
               </ol>
             </div>
           ) : null}
         </section>
 
-        <div className="rounded-lg border border-foreground/10 p-4">
+        <div className="rounded-[1.7rem] border border-foreground/10 bg-white/72 p-5 shadow-[0_22px_44px_-34px_rgba(15,23,42,0.38)] backdrop-blur">
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div className="space-y-1">
               <div className="text-sm font-medium">{selectedWeekLabel}</div>
