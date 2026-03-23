@@ -7,6 +7,7 @@ import { getSupabaseServerComponentClient } from "@/lib/supabaseServerComponent"
 
 import { ChangePasswordPanel } from "./change-password-panel";
 import { SecurityPanel } from "./security-panel";
+import { TrustedDevicesPanel } from "./trusted-devices-panel";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -58,9 +59,9 @@ export default async function AccountPage() {
   const isAdmin = !adminErr && !!isAdminData;
 
   return (
-    <PageShell title="Account" description="Your sign-in status and current roles.">
+    <PageShell title="Account" description="Your sign-in status, security settings, and trusted devices.">
       <div className="space-y-6">
-        <section className="rounded-md border p-4">
+        <section className="rounded-[1.5rem] border border-foreground/10 bg-white/72 p-5 shadow-[0_22px_44px_-34px_rgba(15,23,42,0.38)] backdrop-blur">
           <div className="text-xs text-foreground/60">Signed in as</div>
           <div className="mt-1 truncate font-medium">{user.email ?? user.id}</div>
           <div className="mt-3 text-sm text-foreground/70">
@@ -68,8 +69,8 @@ export default async function AccountPage() {
           </div>
         </section>
 
-        <section className="rounded-md border p-4">
-          <h2 className="text-sm font-semibold">Roles</h2>
+        <section className="rounded-[1.5rem] border border-foreground/10 bg-white/72 p-5 shadow-[0_22px_44px_-34px_rgba(15,23,42,0.38)] backdrop-blur">
+          <h2 className="text-base font-semibold tracking-tight">Roles</h2>
           {activeAssignments.length === 0 ? (
             <p className="mt-2 text-sm text-foreground/70">No active roles assigned.</p>
           ) : (
@@ -92,6 +93,8 @@ export default async function AccountPage() {
         </section>
 
         <ChangePasswordPanel />
+
+        <TrustedDevicesPanel />
 
         <SecurityPanel />
 
