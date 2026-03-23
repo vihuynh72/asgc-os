@@ -5,6 +5,9 @@ import { buildOfficeHoursNotificationEmail } from "../office-hours-notification-
 import { buildAdminOverrideNotification } from "../office-hours-admin-overrides.mjs";
 import { buildRoleUpdateEmail } from "../role-update-email.mjs";
 
+const SAMPLE_MODE = "sample";
+const REAL_MODE = "real";
+
 const TEST_EMAIL_TEMPLATE = {
   subject: "ASGC OS: Test email",
   text: "This is a test email from ASGC OS.",
@@ -60,6 +63,64 @@ function buildOfficeHoursNotificationPreview({ type, origin }) {
   });
 }
 
+function buildOfficeHoursNotificationFromSource({ type, origin, source }) {
+  return buildOfficeHoursNotificationEmail({
+    type,
+    origin,
+    metadata: source?.data ?? {},
+  });
+}
+
+function buildOfficeHoursAdminUpdateFromSource(source) {
+  const data = source?.data ?? {};
+  return buildAdminOverrideNotification({
+    memberName: typeof data.memberName === "string" ? data.memberName : "",
+    checkoutAtIso:
+      typeof data.checkoutAtIso === "string"
+        ? data.checkoutAtIso
+        : typeof data.checkout_at === "string"
+          ? data.checkout_at
+          : typeof data.admin_adjusted_checkout_at === "string"
+            ? data.admin_adjusted_checkout_at
+            : "",
+    excludeFromTotals:
+      data.excludeFromTotals === true ||
+      data.exclude_from_totals === true ||
+      data.admin_exclude_from_totals === true,
+    reason:
+      typeof data.reason === "string"
+        ? data.reason
+        : typeof data.admin_closed_reason === "string"
+          ? data.admin_closed_reason
+          : "",
+  });
+}
+
+function buildRoleUpdateFromSource(source) {
+  const data = source?.data ?? {};
+  return buildRoleUpdateEmail({
+    roleLabel:
+      typeof data.roleLabel === "string"
+        ? data.roleLabel
+        : typeof data.role_label === "string"
+          ? data.role_label
+          : typeof data.roleKey === "string"
+            ? data.roleKey
+            : typeof data.role_key === "string"
+              ? data.role_key
+              : "Role",
+    termLabel:
+      typeof data.termLabel === "string"
+        ? data.termLabel
+        : typeof data.term_label === "string"
+          ? data.term_label
+          : typeof data.term_id === "string" && data.term_id
+            ? data.term_id
+            : "Global",
+    note: typeof data.note === "string" ? data.note : "",
+  });
+}
+
 const TEMPLATE_DEFINITIONS = [
   {
     id: "auth_signin_code",
@@ -67,7 +128,9 @@ const TEMPLATE_DEFINITIONS = [
     label: "Sign-in code",
     description: "Returning member password sign-in browser verification.",
     scenarios: [SCENARIOS.default],
-    buildEmail: () =>
+    supportedModes: [SAMPLE_MODE],
+    sourceType: null,
+    buildSampleEmail: () =>
       buildAuthCodeEmail({
         kind: PASSWORD_SIGNIN_CHALLENGE_KIND,
         code: "246813",
@@ -80,7 +143,9 @@ const TEMPLATE_DEFINITIONS = [
     label: "First sign-in code",
     description: "First-time member onboarding code.",
     scenarios: [SCENARIOS.default],
-    buildEmail: () =>
+    supportedModes: [SAMPLE_MODE],
+    sourceType: null,
+    buildSampleEmail: () =>
       buildAuthCodeEmail({
         kind: FIRST_TIME_SIGNIN_CHALLENGE_KIND,
         code: "135790",
@@ -93,7 +158,9 @@ const TEMPLATE_DEFINITIONS = [
     label: "Password reset",
     description: "Campus password reset email.",
     scenarios: [SCENARIOS.default],
-    buildEmail: ({ origin }) =>
+    supportedModes: [SAMPLE_MODE],
+    sourceType: null,
+    buildSampleEmail: ({ origin }) =>
       buildPasswordResetEmail({
         resetLink: `${origin}/auth/callback?redirectTo=%2Fdashboard&token_hash=sample-password-reset&type=recovery`,
       }),
@@ -104,7 +171,9 @@ const TEMPLATE_DEFINITIONS = [
     label: "MFA recovery",
     description: "2FA reset / recover access email.",
     scenarios: [SCENARIOS.default],
-    buildEmail: ({ origin }) =>
+    supportedModes: [SAMPLE_MODE],
+    sourceType: null,
+    buildSampleEmail: ({ origin }) =>
       buildMfaRecoveryEmail({
         recoveryLink: `${origin}/auth/callback?redirectTo=%2Fmfa%2Frecover&token_hash=sample-mfa-recovery&type=recovery`,
         emailOtp: "902410",
@@ -116,7 +185,15 @@ const TEMPLATE_DEFINITIONS = [
     label: "Weekly hours reminder",
     description: "Weekly progress reminder email.",
     scenarios: [SCENARIOS.default, SCENARIOS.reminder_gap],
-    buildEmail: ({ origin, scenarioId }) => buildOfficeHoursWeeklyPreview({ origin, scenarioId }),
+    supportedModes: [SAMPLE_MODE, REAL_MODE],
+    sourceType: "office_hours_weekly",
+    buildSampleEmail: ({ origin, scenarioId }) => buildOfficeHoursWeeklyPreview({ origin, scenarioId }),
+    buildRealEmail: ({ origin, source }) =>
+      buildOfficeHoursNotificationFromSource({
+        type: "office_hours.weekly_hours_reminder",
+        origin,
+        source,
+      }),
   },
   {
     id: "office_hours_session_checkout_reminder",
@@ -124,7 +201,15 @@ const TEMPLATE_DEFINITIONS = [
     label: "Open-session reminder",
     description: "Recurring reminder to check out.",
     scenarios: [SCENARIOS.default],
-    buildEmail: ({ origin }) => buildOfficeHoursNotificationPreview({ type: "office_hours.session_checkout_reminder", origin }),
+    supportedModes: [SAMPLE_MODE, REAL_MODE],
+    sourceType: "office_hours_session",
+    buildSampleEmail: ({ origin }) => buildOfficeHoursNotificationPreview({ type: "office_hours.session_checkout_reminder", origin }),
+    buildRealEmail: ({ origin, source }) =>
+      buildOfficeHoursNotificationFromSource({
+        type: "office_hours.session_checkout_reminder",
+        origin,
+        source,
+      }),
   },
   {
     id: "office_hours_session_auto_close_soon",
@@ -132,7 +217,15 @@ const TEMPLATE_DEFINITIONS = [
     label: "Auto-close warning",
     description: "15-minute warning before auto-close.",
     scenarios: [SCENARIOS.default],
-    buildEmail: ({ origin }) => buildOfficeHoursNotificationPreview({ type: "office_hours.session_auto_close_soon", origin }),
+    supportedModes: [SAMPLE_MODE, REAL_MODE],
+    sourceType: "office_hours_session",
+    buildSampleEmail: ({ origin }) => buildOfficeHoursNotificationPreview({ type: "office_hours.session_auto_close_soon", origin }),
+    buildRealEmail: ({ origin, source }) =>
+      buildOfficeHoursNotificationFromSource({
+        type: "office_hours.session_auto_close_soon",
+        origin,
+        source,
+      }),
   },
   {
     id: "office_hours_session_auto_closed",
@@ -140,7 +233,15 @@ const TEMPLATE_DEFINITIONS = [
     label: "Auto-closed notice",
     description: "Sent after a session auto-closes.",
     scenarios: [SCENARIOS.default],
-    buildEmail: ({ origin }) => buildOfficeHoursNotificationPreview({ type: "office_hours.session_auto_closed", origin }),
+    supportedModes: [SAMPLE_MODE, REAL_MODE],
+    sourceType: "office_hours_session",
+    buildSampleEmail: ({ origin }) => buildOfficeHoursNotificationPreview({ type: "office_hours.session_auto_closed", origin }),
+    buildRealEmail: ({ origin, source }) =>
+      buildOfficeHoursNotificationFromSource({
+        type: "office_hours.session_auto_closed",
+        origin,
+        source,
+      }),
   },
   {
     id: "office_hours_admin_session_updated",
@@ -148,7 +249,10 @@ const TEMPLATE_DEFINITIONS = [
     label: "Admin session update",
     description: "Admin-corrected checkout notification.",
     scenarios: [SCENARIOS.default],
-    buildEmail: () => buildOfficeHoursAdminUpdatePreview(),
+    supportedModes: [SAMPLE_MODE, REAL_MODE],
+    sourceType: "office_hours_admin_override",
+    buildSampleEmail: () => buildOfficeHoursAdminUpdatePreview(),
+    buildRealEmail: ({ source }) => buildOfficeHoursAdminUpdateFromSource(source),
   },
   {
     id: "people_invite_onboarding",
@@ -156,7 +260,9 @@ const TEMPLATE_DEFINITIONS = [
     label: "Invite / onboarding",
     description: "First-time invite email for new members.",
     scenarios: [SCENARIOS.default],
-    buildEmail: () =>
+    supportedModes: [SAMPLE_MODE],
+    sourceType: null,
+    buildSampleEmail: () =>
       buildAuthCodeEmail({
         kind: FIRST_TIME_SIGNIN_CHALLENGE_KIND,
         code: "314159",
@@ -169,12 +275,15 @@ const TEMPLATE_DEFINITIONS = [
     label: "Role update",
     description: "Role revoked / updated notification.",
     scenarios: [SCENARIOS.default],
-    buildEmail: () =>
+    supportedModes: [SAMPLE_MODE, REAL_MODE],
+    sourceType: "role_update",
+    buildSampleEmail: () =>
       buildRoleUpdateEmail({
         roleLabel: "Executive",
         termLabel: "Spring 2026",
         note: "Term closed after transition.",
       }),
+    buildRealEmail: ({ source }) => buildRoleUpdateFromSource(source),
   },
   {
     id: "system_connectivity_test",
@@ -182,11 +291,13 @@ const TEMPLATE_DEFINITIONS = [
     label: "Connectivity test",
     description: "Basic email delivery test.",
     scenarios: [SCENARIOS.default],
-    buildEmail: () => ({ ...TEST_EMAIL_TEMPLATE }),
+    supportedModes: [SAMPLE_MODE],
+    sourceType: null,
+    buildSampleEmail: () => ({ ...TEST_EMAIL_TEMPLATE }),
   },
 ];
 
-function getTemplateById(templateId) {
+export function getAdminCommunicationTemplateById(templateId) {
   return TEMPLATE_DEFINITIONS.find((template) => template.id === templateId) ?? null;
 }
 
@@ -233,28 +344,61 @@ export function getAdminCommunicationTemplates(access) {
     label: template.label,
     description: template.description,
     scenarios: template.scenarios,
+    supportedModes: template.supportedModes,
+    sourceType: template.sourceType,
   }));
 }
 
-export function buildAdminCommunicationPreview({ access, templateId, scenarioId, origin }) {
-  const template = getTemplateById(templateId);
+export function buildAdminCommunicationPreview({ access, templateId, scenarioId, mode = SAMPLE_MODE, source, origin }) {
+  const template = getAdminCommunicationTemplateById(templateId);
   if (!template) throw new Error("not_found");
   if (!access.allowedGroupIds.includes(template.groupId)) throw new Error("forbidden");
 
-  const scenario = template.scenarios.find((entry) => entry.id === scenarioId) ?? template.scenarios[0];
-  if (!scenario) throw new Error("scenario_not_found");
-
-  const email = template.buildEmail({ origin, scenarioId: scenario.id });
   const group = GROUPS.find((entry) => entry.id === template.groupId);
   if (!group) throw new Error("group_not_found");
 
+  if (mode === REAL_MODE) {
+    if (!template.supportedModes.includes(REAL_MODE) || typeof template.buildRealEmail !== "function") {
+      throw new Error("real_mode_not_supported");
+    }
+    if (!source) throw new Error("source_required");
+
+    return {
+      group,
+      mode,
+      template: {
+        id: template.id,
+        groupId: template.groupId,
+        label: template.label,
+        description: template.description,
+        supportedModes: template.supportedModes,
+        sourceType: template.sourceType,
+      },
+      source: {
+        id: source.id,
+        templateId: source.templateId,
+        sourceType: source.sourceType,
+        label: source.label,
+        description: source.description,
+      },
+      email: template.buildRealEmail({ origin, source }),
+    };
+  }
+
+  const scenario = template.scenarios.find((entry) => entry.id === scenarioId) ?? template.scenarios[0];
+  if (!scenario) throw new Error("scenario_not_found");
+  const email = template.buildSampleEmail({ origin, scenarioId: scenario.id });
+
   return {
     group,
+    mode,
     template: {
       id: template.id,
       groupId: template.groupId,
       label: template.label,
       description: template.description,
+      supportedModes: template.supportedModes,
+      sourceType: template.sourceType,
     },
     scenario,
     email,

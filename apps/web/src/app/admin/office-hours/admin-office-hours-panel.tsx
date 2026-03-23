@@ -70,11 +70,14 @@ type CommunicationsTemplate = {
   label: string;
   description: string;
   scenarios: CommunicationsScenario[];
+  supportedModes: string[];
+  sourceType: string | null;
 };
 
 type CommunicationSelection = {
   groupId: string;
   templateId: string;
+  mode: string;
   scenarioId: string;
 } | null;
 
@@ -669,6 +672,7 @@ export function AdminOfficeHoursPanel({
           canSend={communications.canSend}
           mode="compact"
           fullLabHref="/admin/communications?group=office_hours"
+          contextUserId={selectedUserId || null}
         />
       </AdminSurface>
 

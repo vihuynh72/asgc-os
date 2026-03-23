@@ -23,23 +23,39 @@ type CommunicationsTemplate = {
   label: string;
   description: string;
   scenarios: CommunicationsScenario[];
+  supportedModes: string[];
+  sourceType: string | null;
 };
 
 type CommunicationSelection = {
   groupId: string;
   templateId: string;
+  mode: string;
   scenarioId: string;
 } | null;
 
+type CommunicationSource = {
+  id: string;
+  templateId: string;
+  sourceType: string;
+  recordType?: string;
+  label: string;
+  description: string;
+};
+
 type CommunicationPreview = {
   group: CommunicationsGroup;
+  mode: string;
   template: {
     id: string;
     groupId: string;
     label: string;
     description: string;
+    supportedModes: Array<"sample" | "real">;
+    sourceType: string | null;
   };
-  scenario: CommunicationsScenario;
+  scenario?: CommunicationsScenario;
+  source?: CommunicationSource;
   email: {
     subject: string;
     text: string;
@@ -53,7 +69,9 @@ type SendResult = {
   providerMessageId: string | null;
   notificationId: string | null;
   templateId: string;
-  scenarioId: string;
+  mode: "sample" | "real";
+  scenarioId: string | null;
+  sourceId: string | null;
 };
 
 async function postJson<T>(url: string, body: unknown): Promise<T> {
@@ -79,6 +97,7 @@ export function AdminCommunicationsLab({
   canSend,
   mode = "full",
   fullLabHref = "/admin/communications",
+  contextUserId = null,
 }: {
   groups: CommunicationsGroup[];
   templates: CommunicationsTemplate[];
@@ -86,11 +105,17 @@ export function AdminCommunicationsLab({
   canSend: boolean;
   mode?: "full" | "compact";
   fullLabHref?: string;
+  contextUserId?: string | null;
 }) {
   const isCompact = mode === "compact";
   const [groupId, setGroupId] = useState(initialSelection?.groupId ?? groups[0]?.id ?? "");
   const [templateId, setTemplateId] = useState(initialSelection?.templateId ?? templates[0]?.id ?? "");
+  const [dataMode, setDataMode] = useState<"sample" | "real">(initialSelection?.mode === "real" ? "real" : "sample");
   const [scenarioId, setScenarioId] = useState(initialSelection?.scenarioId ?? templates[0]?.scenarios[0]?.id ?? "default");
+  const [sourceId, setSourceId] = useState<string>("");
+  const [sources, setSources] = useState<CommunicationSource[]>([]);
+  const [sourcesLoading, setSourcesLoading] = useState(false);
+  const [sourcesError, setSourcesError] = useState("");
   const [preview, setPreview] = useState<CommunicationPreview | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -113,6 +138,12 @@ export function AdminCommunicationsLab({
     () => selectedTemplate?.scenarios.find((scenario) => scenario.id === scenarioId) ?? selectedTemplate?.scenarios[0] ?? null,
     [scenarioId, selectedTemplate],
   );
+  const selectedSource = useMemo(
+    () => sources.find((source) => source.id === sourceId) ?? sources[0] ?? null,
+    [sourceId, sources],
+  );
+  const supportsRealMode = Boolean(selectedTemplate?.supportedModes.includes("real"));
+  const templateCapabilityLabel = supportsRealMode ? "Real data available" : "Sample only";
 
   useEffect(() => {
     if (!selectedTemplate) return;
@@ -121,13 +152,76 @@ export function AdminCommunicationsLab({
       return;
     }
 
+    if (dataMode === "real" && !selectedTemplate.supportedModes.includes("real")) {
+      setDataMode("sample");
+      return;
+    }
+
     if (selectedScenario && selectedScenario.id !== scenarioId) {
       setScenarioId(selectedScenario.id);
     }
-  }, [scenarioId, selectedScenario, selectedTemplate, templateId]);
+  }, [dataMode, scenarioId, selectedScenario, selectedTemplate, templateId]);
 
   useEffect(() => {
-    if (!selectedTemplate || !selectedScenario) {
+    if (dataMode !== "real" || !selectedTemplate || !supportsRealMode) {
+      setSources([]);
+      setSourceId("");
+      setSourcesError("");
+      setSourcesLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    const params = new URLSearchParams({ templateId: selectedTemplate.id });
+    if (contextUserId) params.set("userId", contextUserId);
+
+    setSourcesLoading(true);
+    setSourcesError("");
+
+    void fetch(`/api/admin/communications/sources?${params.toString()}`)
+      .then(async (response) => {
+        const data = (await response.json().catch(() => ({}))) as { error?: string; sources?: CommunicationSource[] };
+        if (!response.ok) {
+          throw new Error(data.error || `Request failed: ${response.status}`);
+        }
+        return data.sources ?? [];
+      })
+      .then((nextSources) => {
+        if (cancelled) return;
+        setSources(nextSources);
+        if (!nextSources.some((source) => source.id === sourceId)) {
+          setSourceId(nextSources[0]?.id ?? "");
+        }
+      })
+      .catch((nextError) => {
+        if (cancelled) return;
+        setSources([]);
+        setSourceId("");
+        setSourcesError(nextError instanceof Error ? nextError.message : "Failed to load real records.");
+      })
+      .finally(() => {
+        if (!cancelled) setSourcesLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [contextUserId, dataMode, selectedTemplate, supportsRealMode]);
+
+  useEffect(() => {
+    if (!selectedTemplate) {
+      setPreview(null);
+      setLoading(false);
+      return;
+    }
+
+    if (dataMode === "sample" && !selectedScenario) {
+      setPreview(null);
+      setLoading(false);
+      return;
+    }
+
+    if (dataMode === "real" && !selectedSource) {
       setPreview(null);
       setLoading(false);
       return;
@@ -139,7 +233,9 @@ export function AdminCommunicationsLab({
 
     void postJson<{ ok: true; preview: CommunicationPreview }>("/api/admin/communications/preview", {
       templateId: selectedTemplate.id,
-      scenarioId: selectedScenario.id,
+      mode: dataMode,
+      scenarioId: dataMode === "sample" ? selectedScenario?.id : undefined,
+      sourceId: dataMode === "real" ? selectedSource?.id : undefined,
     })
       .then((data) => {
         if (cancelled) return;
@@ -158,10 +254,12 @@ export function AdminCommunicationsLab({
     return () => {
       cancelled = true;
     };
-  }, [selectedScenario, selectedTemplate]);
+  }, [dataMode, selectedScenario, selectedSource, selectedTemplate]);
 
   async function onSend() {
-    if (!selectedTemplate || !selectedScenario) return;
+    if (!selectedTemplate) return;
+    if (dataMode === "sample" && !selectedScenario) return;
+    if (dataMode === "real" && !selectedSource) return;
 
     setSending(true);
     setSendError("");
@@ -169,7 +267,9 @@ export function AdminCommunicationsLab({
     try {
       const data = await postJson<SendResult & { ok: true }>("/api/admin/communications/send", {
         templateId: selectedTemplate.id,
-        scenarioId: selectedScenario.id,
+        mode: dataMode,
+        scenarioId: dataMode === "sample" ? selectedScenario?.id : undefined,
+        sourceId: dataMode === "real" ? selectedSource?.id : undefined,
       });
       setSendResult({
         to: data.to,
@@ -177,7 +277,9 @@ export function AdminCommunicationsLab({
         providerMessageId: data.providerMessageId,
         notificationId: data.notificationId,
         templateId: data.templateId,
+        mode: data.mode,
         scenarioId: data.scenarioId,
+        sourceId: data.sourceId,
       });
     } catch (nextError) {
       setSendError(nextError instanceof Error ? nextError.message : "Failed to send test email.");
@@ -211,7 +313,7 @@ export function AdminCommunicationsLab({
 
       {!isCompact ? (
         <div className="rounded-[1.45rem] border border-black/6 bg-[color:var(--admin-surface-raised)] p-4 text-sm text-foreground/68">
-          {groups.find((group) => group.id === groupId)?.description ?? "Preview and test real production emails safely."}
+          {groups.find((group) => group.id === groupId)?.description ?? "Preview sample templates or build them from a specific real record."}
         </div>
       ) : null}
 
@@ -233,29 +335,108 @@ export function AdminCommunicationsLab({
               </select>
             </label>
 
-            <label className="space-y-1">
-              <div className="text-[0.72rem] font-semibold uppercase tracking-[0.14em] text-foreground/48">Scenario</div>
-              <select
-                className="h-12 w-full rounded-[1rem] border border-black/8 bg-white px-4 text-sm"
-                value={selectedScenario?.id ?? ""}
-                onChange={(event) => setScenarioId(event.target.value)}
-                disabled={!selectedTemplate}
-              >
-                {(selectedTemplate?.scenarios ?? []).map((scenario) => (
-                  <option key={scenario.id} value={scenario.id}>
-                    {scenario.label}
-                  </option>
-                ))}
-              </select>
-            </label>
+            {dataMode === "sample" ? (
+              <label className="space-y-1">
+                <div className="text-[0.72rem] font-semibold uppercase tracking-[0.14em] text-foreground/48">Scenario</div>
+                <select
+                  className="h-12 w-full rounded-[1rem] border border-black/8 bg-white px-4 text-sm"
+                  value={selectedScenario?.id ?? ""}
+                  onChange={(event) => setScenarioId(event.target.value)}
+                  disabled={!selectedTemplate}
+                >
+                  {(selectedTemplate?.scenarios ?? []).map((scenario) => (
+                    <option key={scenario.id} value={scenario.id}>
+                      {scenario.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : (
+              <label className="space-y-1">
+                <div className="text-[0.72rem] font-semibold uppercase tracking-[0.14em] text-foreground/48">Real record</div>
+                <select
+                  className="h-12 w-full rounded-[1rem] border border-black/8 bg-white px-4 text-sm"
+                  value={selectedSource?.id ?? ""}
+                  onChange={(event) => setSourceId(event.target.value)}
+                  disabled={!selectedTemplate || sourcesLoading || sources.length === 0}
+                >
+                  {sources.length === 0 ? <option value="">{sourcesLoading ? "Loading records…" : "No eligible records"}</option> : null}
+                  {sources.map((source) => (
+                    <option key={source.id} value={source.id}>
+                      {source.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
           </div>
 
           <div className="rounded-[1.2rem] border border-black/6 bg-white px-4 py-3">
-            <div className="text-[0.72rem] font-semibold uppercase tracking-[0.14em] text-foreground/48">Selected email</div>
-            <div className="mt-2 text-lg font-semibold tracking-[-0.03em] text-foreground">
-              {selectedTemplate?.label ?? "No template selected"}
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="text-[0.72rem] font-semibold uppercase tracking-[0.14em] text-foreground/48">Selected email</div>
+              <div
+                className={cn(
+                  "rounded-full border px-3 py-1 text-[0.72rem] font-semibold uppercase tracking-[0.14em]",
+                  supportsRealMode
+                    ? "border-[rgb(0_104_94_/_0.14)] bg-[rgb(230_248_244)] text-[rgb(0_104_94)]"
+                    : "border-black/8 bg-[rgb(248_249_246)] text-foreground/55",
+                )}
+              >
+                {templateCapabilityLabel}
+              </div>
             </div>
+            <div className="mt-2 text-lg font-semibold tracking-[-0.03em] text-foreground">{selectedTemplate?.label ?? "No template selected"}</div>
             <div className="mt-1 text-sm leading-6 text-foreground/65">{selectedTemplate?.description ?? "Choose a template to load its preview."}</div>
+            <div className="mt-3 flex flex-wrap gap-2">
+      <button
+                type="button"
+                className={cn(
+                  "rounded-full border px-4 py-2 text-sm font-medium transition",
+                  dataMode === "sample"
+                    ? "border-[rgb(0_104_94_/_0.18)] bg-[rgb(230_248_244)] text-[rgb(0_104_94)]"
+                    : "border-black/8 bg-white text-foreground/68",
+                )}
+                onClick={() => setDataMode("sample")}
+              >
+                Sample
+              </button>
+              <button
+                type="button"
+                className={cn(
+                  "rounded-full border px-4 py-2 text-sm font-medium transition",
+                  dataMode === "real"
+                    ? "border-[rgb(0_104_94_/_0.18)] bg-[rgb(230_248_244)] text-[rgb(0_104_94)]"
+                    : "border-black/8 bg-white text-foreground/68",
+                  !supportsRealMode && "cursor-not-allowed opacity-60",
+                )}
+                onClick={() => supportsRealMode && setDataMode("real")}
+                disabled={!supportsRealMode}
+              >
+                Real data
+              </button>
+            </div>
+            <div className="mt-3 text-sm leading-6 text-foreground/62">
+              {dataMode === "sample"
+                ? "Sample mode uses safe fixtures so you can test layout and delivery without depending on live records."
+                : "Real-data mode builds the email from a specific live record, but the test send still goes only to your admin email."}
+            </div>
+            {dataMode === "real" && selectedSource ? (
+              <div className="mt-3 rounded-[1rem] border border-black/6 bg-[rgb(248_249_246)] px-4 py-3 text-sm text-foreground/68">
+                <div className="font-medium text-foreground">{selectedSource.label}</div>
+                <div className="mt-1">{selectedSource.description}</div>
+                <div className="mt-1 text-[0.78rem] uppercase tracking-[0.14em] text-foreground/48">
+                  {selectedSource.sourceType} • {selectedSource.id}
+                </div>
+              </div>
+            ) : null}
+            {dataMode === "real" && sourcesError ? (
+              <div className="mt-3 rounded-[1rem] border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{sourcesError}</div>
+            ) : null}
+            {dataMode === "real" && !sourcesError && !sourcesLoading && sources.length === 0 ? (
+              <div className="mt-3 rounded-[1rem] border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                No eligible live records are available for this template right now.
+              </div>
+            ) : null}
           </div>
 
           <div className="flex flex-wrap gap-2">
@@ -316,7 +497,15 @@ export function AdminCommunicationsLab({
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
               {canSend ? (
-                <Button onClick={() => void onSend()} disabled={sending || !selectedTemplate || !selectedScenario} className="h-11 rounded-full px-5">
+                <Button
+                  onClick={() => void onSend()}
+                  disabled={
+                    sending ||
+                    !selectedTemplate ||
+                    (dataMode === "sample" ? !selectedScenario : !selectedSource)
+                  }
+                  className="h-11 rounded-full px-5"
+                >
                   {sending ? "Sending…" : "Send to my email"}
                 </Button>
               ) : (
@@ -331,7 +520,7 @@ export function AdminCommunicationsLab({
               ) : null}
             </div>
             <div className="mt-3 text-sm leading-6 text-foreground/62">
-              Test sends only go to the signed-in admin email. No member-facing workflow is triggered from this panel.
+              Test sends only go to the signed-in admin email. Sample mode is fixture-based, and real-data mode reuses a specific live record without emailing the underlying member.
             </div>
           </div>
 
@@ -341,6 +530,8 @@ export function AdminCommunicationsLab({
               <div className="mt-2 font-medium">{sendResult.to}</div>
               <div className="mt-1 text-emerald-800/85">Message ID: {sendResult.providerMessageId ?? "Pending"}</div>
               <div className="text-emerald-800/85">Log ID: {sendResult.notificationId ?? "Not recorded"}</div>
+              <div className="text-emerald-800/85">Mode: {sendResult.mode}</div>
+              {sendResult.sourceId ? <div className="text-emerald-800/85">Source: {sendResult.sourceId}</div> : null}
             </div>
           ) : null}
 
@@ -365,7 +556,12 @@ export function AdminCommunicationsLab({
                     )}
                     onClick={() => setTemplateId(template.id)}
                   >
-                    <div className="text-sm font-semibold tracking-[-0.02em] text-foreground">{template.label}</div>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-sm font-semibold tracking-[-0.02em] text-foreground">{template.label}</div>
+                      <div className="rounded-full border border-black/8 bg-[rgb(248_249_246)] px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-foreground/55">
+                        {template.supportedModes.includes("real") ? "Real" : "Sample"}
+                      </div>
+                    </div>
                     <div className="mt-1 text-sm leading-6 text-foreground/62">{template.description}</div>
                   </button>
                 );
