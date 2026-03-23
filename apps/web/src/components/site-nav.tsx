@@ -23,7 +23,7 @@ const communityLinks = [
 const adminLink = { href: "/admin", label: "Admin" };
 const createMeetingLink = { href: "/admin/meetings#admin-meetings-create", label: "Create meeting" };
 
-const publicLinks = [{ href: "/office-hours/kiosk", label: "Office Hours Form" }];
+const publicLinks: Array<{ href: string; label: string }> = [];
 
 export async function SiteNav() {
   let user: { id: string; email: string | null } | null = null;
