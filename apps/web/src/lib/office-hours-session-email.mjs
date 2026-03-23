@@ -1,3 +1,5 @@
+import { buildTransactionalEmailLayout, escapeHtml } from "./transactional-email-layout.mjs";
+
 function safeString(value) {
   return typeof value === "string" ? value : "";
 }
@@ -11,15 +13,6 @@ function safeNumber(value) {
   return null;
 }
 
-function escapeHtml(value) {
-  return String(value)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
 function formatMinutes(totalMinutes) {
   const minutes = Math.max(0, Math.round(Number(totalMinutes) || 0));
   const hoursPart = Math.floor(minutes / 60);
@@ -29,27 +22,28 @@ function formatMinutes(totalMinutes) {
 
 function buildMetricHtml({ label, value }) {
   return (
-    `<div style="min-width:140px;flex:1 1 0;border-radius:20px;background:#f8fafc;padding:16px 18px;">` +
+    `<tr><td style="padding:0 0 14px;">` +
     `<div style="font-size:12px;letter-spacing:0.12em;text-transform:uppercase;color:#64748b;font-weight:700;">${escapeHtml(label)}</div>` +
-    `<div style="margin-top:8px;font-size:16px;line-height:1.5;color:#0f172a;font-weight:600;">${escapeHtml(value)}</div>` +
-    `</div>`
+    `<div style="margin-top:6px;font-size:16px;line-height:1.5;color:#0f172a;font-weight:600;">${escapeHtml(value)}</div>` +
+    `</td></tr>`
   );
 }
 
 function buildLayout({ eyebrow, title, detail, ctaHref, ctaLabel, metrics }) {
   const metricsHtml = metrics.map((metric) => buildMetricHtml(metric)).join("");
-  return (
-    "<!doctype html>" +
-    `<html><body style="margin:0;background:#f3f5f8;padding:24px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#0f172a;">` +
-    `<div style="margin:0 auto;max-width:620px;border-radius:28px;background:#ffffff;padding:32px;box-shadow:0 24px 60px rgba(15,23,42,0.12);">` +
-    `<div style="font-size:12px;letter-spacing:0.24em;text-transform:uppercase;color:#64748b;font-weight:700;">${escapeHtml(eyebrow)}</div>` +
-    `<h1 style="margin:16px 0 10px;font-size:30px;line-height:1.05;letter-spacing:-0.04em;color:#020617;">${escapeHtml(title)}</h1>` +
-    `<p style="margin:0 0 24px;font-size:16px;line-height:1.7;color:#475569;">${escapeHtml(detail)}</p>` +
-    `<div style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:24px;">${metricsHtml}</div>` +
-    `<a href="${escapeHtml(ctaHref)}" style="display:inline-flex;align-items:center;justify-content:center;min-height:48px;padding:0 22px;border-radius:999px;background:#00685e;color:#ffffff;text-decoration:none;font-size:15px;font-weight:700;">${escapeHtml(ctaLabel)}</a>` +
-    `<p style="margin:18px 0 0;font-size:13px;line-height:1.7;color:#64748b;">Keep your session accurate by checking out when you leave the office.</p>` +
-    `</div></body></html>`
-  );
+  return buildTransactionalEmailLayout({
+    eyebrow,
+    title,
+    detail,
+    bodyHtml:
+      `<table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" bgcolor="#f8fafc" style="margin:0;border-collapse:collapse;border:1px solid #d9e1ec;background-color:#f8fafc;">` +
+      `<tr><td style="padding:18px 18px 4px;">` +
+      `<table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="border-collapse:collapse;">${metricsHtml}</table>` +
+      `</td></tr></table>`,
+    ctaHref,
+    ctaLabel,
+    footerText: "Keep your session accurate by checking out when you leave the office.",
+  });
 }
 
 export function buildOfficeHoursSessionEmail({ type, metadata, origin }) {

@@ -1,5 +1,3 @@
-import crypto from "node:crypto";
-
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
@@ -8,7 +6,8 @@ import {
   readPendingPasswordLogin,
   verifyLoginEmailChallengeCode,
 } from "@/lib/auth/password-signin.mjs";
-import { TRUSTED_DEVICE_COOKIE, buildTrustedDeviceExpiry, hashTrustedDeviceToken } from "@/lib/auth/trusted-device.mjs";
+import { normalizeOtpCode } from "@/lib/auth/first-time-signin-flow.mjs";
+import { issueTrustedDevice } from "@/lib/auth/trusted-device-server.mjs";
 import { getServerEnv } from "@/lib/envServer";
 import { normalizeEmail } from "@/lib/invitesAllowlist";
 import { POST_AUTH_REDIRECT_COOKIE, safePostAuthRedirectPath, safeRedirectPathOrNull } from "@/lib/redirects";
@@ -16,8 +15,6 @@ import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 import { getSupabaseRouteHandlerClientWithResponse } from "@/lib/supabaseServer";
 
 export const runtime = "nodejs";
-
-const TRUSTED_DEVICE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 
 const BodySchema = z.object({
   email: z.string().email(),
@@ -35,11 +32,15 @@ export async function POST(request: NextRequest) {
   try {
     const body = BodySchema.parse(await request.json());
     email = normalizeEmail(body.email);
-    code = body.code.trim();
+    code = normalizeOtpCode(body.code);
     trustDevice = Boolean(body.trustDevice);
     const safeRedirect = safeRedirectPathOrNull(body.redirectTo);
     redirectTo = safePostAuthRedirectPath(safeRedirect ?? "/dashboard");
   } catch {
+    return NextResponse.json({ ok: false }, { status: 400 });
+  }
+
+  if (code.length !== 6) {
     return NextResponse.json({ ok: false }, { status: 400 });
   }
 
@@ -116,28 +117,13 @@ export async function POST(request: NextRequest) {
     .eq("id", challenge.id);
 
   if (trustDevice) {
-    const trustedDeviceToken = crypto.randomBytes(32).toString("base64url");
-    const expiresAt = buildTrustedDeviceExpiry();
-    const { error: trustedDeviceError } = await admin.from("trusted_login_devices").insert({
-      user_id: pending.userId,
-      token_hash: hashTrustedDeviceToken({
-        token: trustedDeviceToken,
-        secret: serverEnv.SUPABASE_SERVICE_ROLE_KEY,
-      }),
-      device_label: request.headers.get("user-agent") ?? "Trusted browser",
-      user_agent: request.headers.get("user-agent"),
-      expires_at: expiresAt,
+    await issueTrustedDevice({
+      admin,
+      response,
+      userId: pending.userId,
+      userAgent: request.headers.get("user-agent"),
+      secret: serverEnv.SUPABASE_SERVICE_ROLE_KEY,
     });
-
-    if (!trustedDeviceError) {
-      response.cookies.set(TRUSTED_DEVICE_COOKIE, trustedDeviceToken, {
-        path: "/",
-        httpOnly: true,
-        sameSite: "lax",
-        secure: process.env.NODE_ENV === "production",
-        maxAge: TRUSTED_DEVICE_MAX_AGE_SECONDS,
-      });
-    }
   }
 
   response.cookies.set(PENDING_PASSWORD_LOGIN_COOKIE, "", { path: "/", maxAge: 0 });

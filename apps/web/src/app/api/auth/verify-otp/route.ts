@@ -3,6 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
 import { FIRST_TIME_SIGNIN_CHALLENGE_KIND } from "@/lib/auth/auth-code-email.mjs";
+import { buildFirstTimeVerifyResponse, normalizeOtpCode } from "@/lib/auth/first-time-signin-flow.mjs";
 import { getServerEnv } from "@/lib/envServer";
 import { getPublicEnv } from "@/lib/env";
 import { verifyLoginEmailChallengeCode } from "@/lib/auth/password-signin.mjs";
@@ -26,9 +27,13 @@ export async function POST(request: NextRequest) {
   try {
     const body = BodySchema.parse(await request.json());
     email = normalizeEmail(body.email);
-    token = body.token.trim();
+    token = normalizeOtpCode(body.token);
     redirectTo = safePostAuthRedirectPath(body.redirectTo);
   } catch {
+    return NextResponse.json({ ok: false }, { status: 400 });
+  }
+
+  if (token.length !== 6) {
     return NextResponse.json({ ok: false }, { status: 400 });
   }
 
@@ -82,7 +87,7 @@ export async function POST(request: NextRequest) {
   }
 
   const resolvedRedirectTo = safePostAuthRedirectPath(challenge.redirect_to ?? redirectTo);
-  const response = NextResponse.json({ ok: true, redirectTo: resolvedRedirectTo });
+  const response = NextResponse.json(buildFirstTimeVerifyResponse(resolvedRedirectTo));
 
   const supabase = createServerClient(env.NEXT_PUBLIC_SUPABASE_URL, env.NEXT_PUBLIC_SUPABASE_ANON_KEY, {
     cookies: {

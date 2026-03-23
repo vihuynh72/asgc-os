@@ -62,8 +62,8 @@ test("preview returns the real email output and html for auth sign-in code", () 
   assert.equal(preview.mode, "sample");
   assert.equal(preview.scenario.id, "default");
   assert.equal(preview.email.subject, "ASGC OS sign-in code");
-  assert.match(preview.email.text, /Code: 246813/);
-  assert.match(preview.email.html ?? "", /246813|2<\/td>/);
+  assert.match(preview.email.text, /Your ASGC OS sign-in code is 246813/);
+  assert.match(preview.email.html ?? "", />246813</);
 });
 
 test("preview returns office-hours html reminders with actionable copy", () => {
