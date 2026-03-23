@@ -17,6 +17,7 @@ export function getDefaultAdminCommunicationSelection({ access, preferredGroupId
     ? {
         groupId: preferredTemplate.groupId,
         templateId: preferredTemplate.id,
+        mode: "sample",
         scenarioId: preferredTemplate.scenarios[0]?.id ?? "default",
       }
     : null;
@@ -28,13 +29,22 @@ export function getDefaultAdminCommunicationSelection({ access, preferredGroupId
  *   actorUserId: string;
  *   recipientEmail: string;
  *   templateId: string;
+ *   mode: "sample" | "real";
  *   scenarioId: string;
+ *   source?: {
+ *     id: string;
+ *     templateId: string;
+ *     sourceType: string;
+ *     label: string;
+ *     description: string;
+ *     data: Record<string, unknown>;
+ *   } | null;
  *   origin: string;
  * }} input
  */
-export function buildAdminCommunicationSendInput({ access, actorUserId, recipientEmail, templateId, scenarioId, origin }) {
+export function buildAdminCommunicationSendInput({ access, actorUserId, recipientEmail, templateId, mode, scenarioId, source = null, origin }) {
   if (!access.canSend) throw new Error("forbidden");
-  const preview = buildAdminCommunicationPreview({ access, templateId, scenarioId, origin });
+  const preview = buildAdminCommunicationPreview({ access, templateId, mode, scenarioId, source, origin });
 
   return {
     toEmail: recipientEmail,
@@ -51,7 +61,9 @@ export function buildAdminCommunicationSendInput({ access, actorUserId, recipien
       metadata: {
         group_id: preview.group.id,
         template_id: preview.template.id,
-        scenario_id: preview.scenario.id,
+        mode: preview.mode,
+        scenario_id: preview.scenario?.id ?? null,
+        source_id: preview.source?.id ?? null,
       },
     },
     preview,

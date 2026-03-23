@@ -3,16 +3,27 @@ import { z } from "zod";
 
 import { buildAdminCommunicationSendInput } from "@/lib/admin/communications-service.mjs";
 import { getAdminCommunicationsAccess } from "@/lib/admin/communications.mjs";
+import { loadAdminCommunicationRealSource } from "@/lib/admin/communications-real-data.mjs";
 import { getAdminTierForRequest } from "@/lib/adminAuth";
 import { sendEmail } from "@/lib/emailSender";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
+import { getSupabaseRouteHandlerClient } from "@/lib/supabaseServer";
 
 export const runtime = "nodejs";
 
 const BodySchema = z.object({
   templateId: z.string().min(1),
+  mode: z.enum(["sample", "real"]).optional(),
   scenarioId: z.string().optional(),
+  sourceId: z.string().optional(),
 });
+
+function mapErrorStatus(message: string) {
+  if (message === "forbidden") return 403;
+  if (message === "not_found" || message === "source_not_found") return 404;
+  if (message === "real_mode_not_supported" || message === "source_required") return 400;
+  return 500;
+}
 
 export async function POST(request: NextRequest) {
   const authz = await getAdminTierForRequest(request);
@@ -50,17 +61,33 @@ export async function POST(request: NextRequest) {
 
   let sendInput;
   try {
+    const mode = parsed.data.mode ?? "sample";
+    const viewer = mode === "real" ? await getSupabaseRouteHandlerClient() : null;
+    const source =
+      mode === "real"
+        ? await loadAdminCommunicationRealSource({
+            access,
+            templateId: parsed.data.templateId,
+            sourceId: parsed.data.sourceId ?? "",
+            admin,
+            viewer,
+            nowIso: new Date().toISOString(),
+          })
+        : null;
+
     sendInput = buildAdminCommunicationSendInput({
       access,
       actorUserId: authz.userId,
       recipientEmail: toEmail,
       templateId: parsed.data.templateId,
+      mode,
       scenarioId: parsed.data.scenarioId ?? "default",
+      source,
       origin: new URL(request.url).origin,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "send_failed";
-    const status = message === "forbidden" ? 403 : 404;
+    const status = mapErrorStatus(message);
     return NextResponse.json({ error: message }, { status });
   }
 
@@ -93,7 +120,9 @@ export async function POST(request: NextRequest) {
       metadata: {
         to: sendInput.toEmail,
         template_id: sendInput.preview.template.id,
-        scenario_id: sendInput.preview.scenario.id,
+        mode: sendInput.preview.mode,
+        scenario_id: sendInput.preview.scenario?.id ?? null,
+        source_id: sendInput.preview.source?.id ?? null,
         providerMessageId: result.providerMessageId,
       },
     });
@@ -105,7 +134,9 @@ export async function POST(request: NextRequest) {
       providerMessageId: result.providerMessageId,
       notificationId: queuedRow?.id ?? null,
       templateId: sendInput.preview.template.id,
-      scenarioId: sendInput.preview.scenario.id,
+      mode: sendInput.preview.mode,
+      scenarioId: sendInput.preview.scenario?.id ?? null,
+      sourceId: sendInput.preview.source?.id ?? null,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "send_failed";
@@ -122,7 +153,9 @@ export async function POST(request: NextRequest) {
       metadata: {
         to: sendInput.toEmail,
         template_id: sendInput.preview.template.id,
-        scenario_id: sendInput.preview.scenario.id,
+        mode: sendInput.preview.mode,
+        scenario_id: sendInput.preview.scenario?.id ?? null,
+        source_id: sendInput.preview.source?.id ?? null,
         error: message,
       },
     });
@@ -132,7 +165,9 @@ export async function POST(request: NextRequest) {
         error: message,
         notificationId: queuedRow?.id ?? null,
         templateId: sendInput.preview.template.id,
-        scenarioId: sendInput.preview.scenario.id,
+        mode: sendInput.preview.mode,
+        scenarioId: sendInput.preview.scenario?.id ?? null,
+        sourceId: sendInput.preview.source?.id ?? null,
       },
       { status: 500 },
     );

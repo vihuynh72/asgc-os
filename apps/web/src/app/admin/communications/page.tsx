@@ -32,14 +32,14 @@ export default async function AdminCommunicationsPage({ searchParams }: { search
       <AdminHero
         eyebrow="Communications"
         title="Email lab"
-        description="Preview the real app emails, inspect HTML and plain text, and send safe test copies to your own admin account."
+        description="Preview sample templates or build them from a specific live record, inspect HTML and plain text, and send safe test copies to your own admin account."
       />
 
       {!access.canSend ? <AdminInlineNotice tone="warning">Preview only mode</AdminInlineNotice> : null}
 
       <AdminSurface
         title="Template previews"
-        description="This lab uses the same production email builders as the live auth, people, and Office Hours flows."
+        description="This lab reuses the production email builders. Sample mode stays safe with fixtures, and real-data mode only appears where a live record can be selected explicitly."
       >
         <AdminCommunicationsLab
           groups={groups}
