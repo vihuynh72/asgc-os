@@ -15,8 +15,26 @@ type UserRow = {
   created_at: string;
 };
 
-export async function OfficeHoursSessionsPage({ redirectTo = "/admin/office-hours" }: { redirectTo?: string }) {
+function firstString(value: string | string[] | undefined): string | undefined {
+  return typeof value === "string" ? value : Array.isArray(value) ? value[0] : undefined;
+}
+
+function normalizeView(value: string | undefined): "day" | "week" | "month" | undefined {
+  return value === "day" || value === "week" || value === "month" ? value : undefined;
+}
+
+export async function OfficeHoursSessionsPage({
+  redirectTo = "/admin/office-hours",
+  searchParams,
+}: {
+  redirectTo?: string;
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const viewer = await requireAdminViewer({ redirectTo, capability: "office_hours" });
+  const params = (await searchParams) ?? {};
+  const initialSelectedUserId = firstString(params.userId) ?? "";
+  const initialAnchorDate = firstString(params.date) ?? undefined;
+  const initialView = normalizeView(firstString(params.view));
 
   const admin = getSupabaseAdminClient();
   const { data: usersRaw } = await admin.rpc("admin_list_allowlisted_users", { _limit: 500 });
@@ -44,13 +62,16 @@ export async function OfficeHoursSessionsPage({ redirectTo = "/admin/office-hour
       <AdminHero
         eyebrow="Office Hours"
         title="Sessions"
-        description="Live Office Hours operations, reminders, review, and overrides in one calmer workspace."
+        description="Live session operations, overrides, selfie review, and reminder tooling in one focused workspace."
       />
 
       <OfficeHoursSectionNav activeId="sessions" />
 
       <AdminOfficeHoursPanel
         initialUsers={users as UserRow[]}
+        initialSelectedUserId={initialSelectedUserId}
+        initialAnchorDate={initialAnchorDate}
+        initialView={initialView}
         communications={{
           canSend: communicationsAccess.canSend,
           groups: communicationsGroups,

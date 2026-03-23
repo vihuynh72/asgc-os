@@ -238,9 +238,15 @@ async function postJson<T>(url: string, body: unknown): Promise<T> {
 
 export function AdminOfficeHoursPanel({
   initialUsers,
+  initialSelectedUserId = "",
+  initialAnchorDate,
+  initialView = "week",
   communications,
 }: {
   initialUsers: UserRow[];
+  initialSelectedUserId?: string;
+  initialAnchorDate?: string;
+  initialView?: ViewMode;
   communications: {
     canSend: boolean;
     groups: CommunicationsGroup[];
@@ -248,11 +254,11 @@ export function AdminOfficeHoursPanel({
     initialSelection: CommunicationSelection;
   };
 }) {
-  const [view, setView] = useState<ViewMode>("week");
-  const [anchorDate, setAnchorDate] = useState<string>(() => todayDateString());
+  const [view, setView] = useState<ViewMode>(initialView);
+  const [anchorDate, setAnchorDate] = useState<string>(() => normalizeDateOnlyString(initialAnchorDate ?? "") ?? todayDateString());
   const [tz, setTz] = useState<string | null>(null);
 
-  const [selectedUserId, setSelectedUserId] = useState<string>("");
+  const [selectedUserId, setSelectedUserId] = useState<string>(initialSelectedUserId);
   const [search, setSearch] = useState<string>("");
   const [groupByUser, setGroupByUser] = useState<boolean>(true);
   const [statusFilter, setStatusFilter] = useState<Record<string, boolean>>({
