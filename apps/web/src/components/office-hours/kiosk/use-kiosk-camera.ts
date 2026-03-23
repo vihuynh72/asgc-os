@@ -3,9 +3,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
+  clampCameraZoomValue,
+  deriveDragZoomLevel,
   inferCameraFacing,
   pickNextCameraTarget,
   shapeCameraControlState,
+  shouldMirrorUserFacingCamera,
 } from "@/lib/office-hours-kiosk/camera-controls.mjs";
 
 type CaptureQuality = "balanced" | "high";
@@ -16,7 +19,7 @@ function supportsCameraCapture(): boolean {
 }
 
 function qualityToCompression(quality: CaptureQuality): number {
-  return quality === "high" ? 0.92 : 0.82;
+  return quality === "high" ? 0.96 : 0.88;
 }
 
 function fileFromBlob(blob: Blob): File {
@@ -24,10 +27,14 @@ function fileFromBlob(blob: Blob): File {
   return new File([blob], name, { type: "image/jpeg" });
 }
 
-async function imageBlobFromVideo(video: HTMLVideoElement, quality: CaptureQuality): Promise<Blob> {
-  const width = video.videoWidth || 1280;
-  const height = video.videoHeight || 720;
-  const maxDimension = 1440;
+async function imageBlobFromVideo(
+  video: HTMLVideoElement,
+  quality: CaptureQuality,
+  options?: { mirror?: boolean },
+): Promise<Blob> {
+  const width = video.videoWidth || 1920;
+  const height = video.videoHeight || 1440;
+  const maxDimension = 1920;
   const scale = Math.min(1, maxDimension / Math.max(width, height));
   const outputWidth = Math.max(1, Math.round(width * scale));
   const outputHeight = Math.max(1, Math.round(height * scale));
@@ -38,6 +45,10 @@ async function imageBlobFromVideo(video: HTMLVideoElement, quality: CaptureQuali
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("canvas_unavailable");
 
+  if (options?.mirror) {
+    ctx.translate(outputWidth, 0);
+    ctx.scale(-1, 1);
+  }
   ctx.drawImage(video, 0, 0, outputWidth, outputHeight);
   const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", qualityToCompression(quality)));
   if (!blob) throw new Error("capture_failed");
@@ -54,6 +65,13 @@ export function useKioskCamera({
   const canUseCamera = supportsCameraCapture();
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const zoomRef = useRef<number | null>(null);
+  const dragZoomRef = useRef<{
+    pointerId: number;
+    startY: number;
+    startZoom: number;
+    surfaceHeight: number;
+  } | null>(null);
 
   const [cameraState, setCameraState] = useState<"idle" | "starting" | "ready">("idle");
   const [cameraError, setCameraError] = useState<string | null>(null);
@@ -67,7 +85,8 @@ export function useKioskCamera({
   const [capabilities, setCapabilities] = useState<Record<string, unknown>>({});
   const [zoom, setZoom] = useState<number | null>(null);
   const [torchOn, setTorchOn] = useState(false);
-  const [quality, setQuality] = useState<CaptureQuality>("balanced");
+  const [quality, setQuality] = useState<CaptureQuality>("high");
+  const [dragZooming, setDragZooming] = useState(false);
 
   const refreshDevices = useCallback(async () => {
     if (!navigator.mediaDevices?.enumerateDevices) {
@@ -93,6 +112,9 @@ export function useKioskCamera({
     }
     setCapabilities({});
     setZoom(null);
+    zoomRef.current = null;
+    dragZoomRef.current = null;
+    setDragZooming(false);
     setTorchOn(false);
     setVideoReady(false);
     setWarmTooLong(false);
@@ -128,11 +150,15 @@ export function useKioskCamera({
         const nextDeviceId = overrides?.deviceId ?? selectedDeviceId;
         const nextFacingMode = overrides?.facingMode ?? facingMode;
         const constraints: MediaTrackConstraints = nextDeviceId
-          ? { deviceId: { exact: nextDeviceId }, width: { ideal: 1280 }, height: { ideal: 720 } }
+          ? {
+              deviceId: { exact: nextDeviceId },
+              width: { ideal: 1920, min: 1280 },
+              height: { ideal: 1440, min: 960 },
+            }
           : {
               facingMode: { ideal: nextFacingMode },
-              width: { ideal: 1280 },
-              height: { ideal: 720 },
+              width: { ideal: 1920, min: 1280 },
+              height: { ideal: 1440, min: 960 },
             };
 
         const stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: constraints });
@@ -161,6 +187,7 @@ export function useKioskCamera({
             ? Math.max(controlState.zoomRange.min, Math.min(trackZoom, controlState.zoomRange.max))
             : controlState.zoomRange.min;
           setZoom(initialZoom);
+          zoomRef.current = initialZoom;
         }
 
         setCameraState("ready");
@@ -195,16 +222,89 @@ export function useKioskCamera({
     async (nextZoom: number) => {
       const stream = streamRef.current;
       const track = stream?.getVideoTracks()[0];
-      if (!track || !Number.isFinite(nextZoom)) return;
-      setZoom(nextZoom);
+      const nextRange = shapeCameraControlState({
+        canEnumerateDevices: typeof navigator !== "undefined" && Boolean(navigator.mediaDevices?.enumerateDevices),
+        devices,
+        capabilities,
+        currentFacingMode: facingMode,
+      }).zoomRange;
+      const clampedZoom = clampCameraZoomValue(nextZoom, nextRange);
+      if (!track || clampedZoom === null) return;
+      setZoom(clampedZoom);
+      zoomRef.current = clampedZoom;
       try {
-        await track.applyConstraints({ advanced: [{ zoom: nextZoom } as MediaTrackConstraintSet] });
+        await track.applyConstraints({ advanced: [{ zoom: clampedZoom } as MediaTrackConstraintSet] });
       } catch {
         // Ignore unsupported zoom changes.
       }
     },
-    [],
+    [capabilities, devices, facingMode],
   );
+
+  const beginDragZoom = useCallback(
+    ({
+      pointerId,
+      clientY,
+      pointerType,
+      surfaceHeight,
+    }: {
+      pointerId: number;
+      clientY: number;
+      pointerType: string;
+      surfaceHeight: number;
+    }) => {
+      const controlState = shapeCameraControlState({
+        canEnumerateDevices: typeof navigator !== "undefined" && Boolean(navigator.mediaDevices?.enumerateDevices),
+        devices,
+        capabilities,
+        currentFacingMode: facingMode,
+      });
+      if (!controlState.zoomRange || pointerType === "mouse") {
+        return false;
+      }
+
+      dragZoomRef.current = {
+        pointerId,
+        startY: clientY,
+        startZoom: zoomRef.current ?? controlState.zoomRange.min,
+        surfaceHeight,
+      };
+      setDragZooming(true);
+      return true;
+    },
+    [capabilities, devices, facingMode],
+  );
+
+  const updateDragZoom = useCallback(
+    async ({ pointerId, clientY }: { pointerId: number; clientY: number }) => {
+      const gesture = dragZoomRef.current;
+      const controlState = shapeCameraControlState({
+        canEnumerateDevices: typeof navigator !== "undefined" && Boolean(navigator.mediaDevices?.enumerateDevices),
+        devices,
+        capabilities,
+        currentFacingMode: facingMode,
+      });
+
+      if (!gesture || gesture.pointerId !== pointerId || !controlState.zoomRange) return;
+
+      const nextZoom = deriveDragZoomLevel({
+        startZoom: gesture.startZoom,
+        zoomRange: controlState.zoomRange,
+        dragDeltaY: clientY - gesture.startY,
+        surfaceHeight: gesture.surfaceHeight,
+      });
+
+      if (nextZoom === null || nextZoom === zoomRef.current) return;
+      await setZoomLevel(nextZoom);
+    },
+    [capabilities, devices, facingMode, setZoomLevel],
+  );
+
+  const endDragZoom = useCallback(({ pointerId }: { pointerId: number }) => {
+    if (dragZoomRef.current?.pointerId !== pointerId) return;
+    dragZoomRef.current = null;
+    setDragZooming(false);
+  }, []);
 
   const toggleTorch = useCallback(async () => {
     const stream = streamRef.current;
@@ -225,7 +325,9 @@ export function useKioskCamera({
     setCapturing(true);
     setCameraError(null);
     try {
-      const blob = await imageBlobFromVideo(video, quality);
+      const blob = await imageBlobFromVideo(video, quality, {
+        mirror: shouldMirrorUserFacingCamera(facingMode),
+      });
       onCapture(fileFromBlob(blob));
       stop();
     } catch {
@@ -233,7 +335,7 @@ export function useKioskCamera({
     } finally {
       setCapturing(false);
     }
-  }, [onCapture, quality, stop, videoReady]);
+  }, [facingMode, onCapture, quality, stop, videoReady]);
 
   useEffect(() => {
     void refreshDevices();
@@ -293,11 +395,16 @@ export function useKioskCamera({
     controlState,
     zoom,
     torchOn,
+    dragZooming,
+    mirrorPreview: shouldMirrorUserFacingCamera(facingMode),
     start,
     stop,
     capture,
     rotateCamera,
     setZoomLevel,
     toggleTorch,
+    beginDragZoom,
+    updateDragZoom,
+    endDragZoom,
   };
 }

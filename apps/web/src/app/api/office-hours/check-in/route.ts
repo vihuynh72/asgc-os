@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 
+import { normalizeMemberCheckInSession } from "@/lib/office-hours-member-kiosk.mjs";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 import { getSupabaseRouteHandlerClient } from "@/lib/supabaseServer";
 
@@ -95,8 +96,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: msg }, { status: mapErrorStatus(msg) });
   }
 
-  const session = Array.isArray(data) ? data[0] : data;
-  if (!session?.id || !session?.checkin_at) {
+  const session = normalizeMemberCheckInSession(data);
+  if (!session) {
     return NextResponse.json({ error: "invalid_session" }, { status: 500 });
   }
 
