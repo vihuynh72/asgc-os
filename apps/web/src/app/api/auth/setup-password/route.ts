@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
+import { OFFICE_HOURS_MEMBER_KIOSK_PATH } from "@/lib/office-hours-member-routing.mjs";
 import { safePostAuthRedirectPath, safeRedirectPathOrNull } from "@/lib/redirects";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 import { getSupabaseRouteHandlerClient } from "@/lib/supabaseServer";
@@ -20,7 +21,7 @@ export async function POST(request: NextRequest) {
     const body = BodySchema.parse(await request.json());
     password = body.password;
     const safeRedirect = safeRedirectPathOrNull(body.redirectTo);
-    redirectTo = safePostAuthRedirectPath(safeRedirect ?? "/office-hours");
+    redirectTo = safePostAuthRedirectPath(safeRedirect ?? OFFICE_HOURS_MEMBER_KIOSK_PATH);
   } catch {
     return NextResponse.json({ ok: false }, { status: 400 });
   }

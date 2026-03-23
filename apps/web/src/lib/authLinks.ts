@@ -4,6 +4,7 @@ type SignInLinkType = "magiclink" | "invite";
 
 export type SignInLinkResult = {
   type: SignInLinkType;
+  userId: string;
   hashedToken: string;
   otp: string | null;
 };
@@ -29,7 +30,7 @@ async function attemptGenerateLink(
   }
 
   const props = data?.properties;
-  if (!props?.hashed_token || !props?.verification_type) {
+  if (!props?.hashed_token || !props?.verification_type || !data?.user?.id) {
     return { ok: false, message: "missing_link_data" };
   }
 
@@ -42,6 +43,7 @@ async function attemptGenerateLink(
     ok: true,
     result: {
       type: verificationType,
+      userId: data.user.id,
       hashedToken: props.hashed_token,
       otp: props.email_otp ?? null,
     },

@@ -180,9 +180,9 @@ export function PeopleInvitesPanel({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ email, redirectTo: "/admin/people" }),
       });
-      setFeedback({ tone: "positive", message: `Sent a sign-in link to ${email}.` });
+      setFeedback({ tone: "positive", message: `Sent a sign-in code to ${email}.` });
     } catch (error) {
-      setFeedback({ tone: "warning", message: error instanceof Error ? error.message : "Could not send sign-in link." });
+      setFeedback({ tone: "warning", message: error instanceof Error ? error.message : "Could not send sign-in code." });
     } finally {
       setActiveInviteAction("");
     }
@@ -440,7 +440,7 @@ export function PeopleInvitesPanel({
                     <div className="flex flex-wrap items-center gap-2">
                       {invite.is_active ? (
                         <Button variant="outline" className="h-11 rounded-full px-4" disabled={inviteBusy} onClick={() => sendInviteLink(invite.email)}>
-                          {activeInviteAction === invite.email ? "Sending..." : "Send sign-in link"}
+                          {activeInviteAction === invite.email ? "Sending..." : "Send sign-in code"}
                         </Button>
                       ) : null}
                       <Button
