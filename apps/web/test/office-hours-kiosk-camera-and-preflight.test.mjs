@@ -2,9 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  clampCameraZoomValue,
+  deriveDragZoomLevel,
   pickNextCameraTarget,
   resolveKioskCameraSurface,
   shapeCameraControlState,
+  shouldMirrorUserFacingCamera,
 } from "../src/lib/office-hours-kiosk/camera-controls.mjs";
 import { shapeLocationCheckResult } from "../src/lib/office-hours-kiosk/location-check.mjs";
 
@@ -100,6 +103,37 @@ test("resolveKioskCameraSurface is camera-only and never routes to file upload",
     resolveKioskCameraSurface({ hasValue: false, canUseCamera: false, cameraState: "idle" }),
     "unavailable",
   );
+});
+
+test("camera zoom helpers clamp values and translate mobile drag into zoom changes", () => {
+  assert.equal(clampCameraZoomValue(8, { min: 1, max: 5, step: 0.5 }), 5);
+  assert.equal(clampCameraZoomValue(0.5, { min: 1, max: 5, step: 0.5 }), 1);
+  assert.equal(clampCameraZoomValue(Number.NaN, { min: 1, max: 5, step: 0.5 }), 1);
+
+  assert.equal(
+    deriveDragZoomLevel({
+      startZoom: 2,
+      zoomRange: { min: 1, max: 5, step: 0.5 },
+      dragDeltaY: -200,
+      surfaceHeight: 400,
+    }),
+    4,
+  );
+
+  assert.equal(
+    deriveDragZoomLevel({
+      startZoom: 4,
+      zoomRange: { min: 1, max: 5, step: 0.5 },
+      dragDeltaY: 800,
+      surfaceHeight: 400,
+    }),
+    1,
+  );
+});
+
+test("user-facing cameras mirror both the preview and captured selfie", () => {
+  assert.equal(shouldMirrorUserFacingCamera("user"), true);
+  assert.equal(shouldMirrorUserFacingCamera("environment"), false);
 });
 
 test("shapeLocationCheckResult orders allowlist/day/geofence decisions correctly", () => {

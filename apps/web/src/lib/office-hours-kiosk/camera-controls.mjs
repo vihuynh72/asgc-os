@@ -9,6 +9,30 @@ function normalizeZoomRange(rawZoom) {
   return { min, max, step: safeStep };
 }
 
+export function clampCameraZoomValue(value, zoomRange) {
+  if (!zoomRange) return null;
+  const numeric = Number.isFinite(value) ? Number(value) : zoomRange.min;
+  return Math.max(zoomRange.min, Math.min(numeric, zoomRange.max));
+}
+
+export function deriveDragZoomLevel({
+  startZoom,
+  zoomRange,
+  dragDeltaY,
+  surfaceHeight,
+}) {
+  if (!zoomRange) return null;
+
+  const safeHeight = Number.isFinite(surfaceHeight) && surfaceHeight > 0 ? surfaceHeight : 1;
+  const ratio = Math.max(-1, Math.min(1, -dragDeltaY / safeHeight));
+  const span = zoomRange.max - zoomRange.min;
+  return clampCameraZoomValue(startZoom + ratio * span, zoomRange);
+}
+
+export function shouldMirrorUserFacingCamera(facingMode) {
+  return facingMode === "user";
+}
+
 function hasTorchCapability(capabilities) {
   return Boolean(capabilities && typeof capabilities === "object" && capabilities.torch === true);
 }

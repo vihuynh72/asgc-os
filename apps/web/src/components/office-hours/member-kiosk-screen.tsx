@@ -5,7 +5,12 @@ import { motion, useReducedMotion } from "motion/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { PageShell } from "@/components/page-shell";
-import { KioskCameraCapture } from "@/components/office-hours/kiosk/kiosk-camera-capture";
+import {
+  KioskCameraCapture,
+  KioskNotice,
+  KioskStatusChip,
+  KioskStickyAction,
+} from "@/components/office-hours/kiosk";
 import { Button } from "@/components/ui/button";
 import {
   canSubmitMemberCheckIn,
@@ -13,6 +18,10 @@ import {
   deriveMemberActionStep,
   friendlyMemberActionError,
 } from "@/lib/office-hours-member-action.mjs";
+import {
+  getMemberKioskStateSummary,
+  normalizeMemberCheckInSession,
+} from "@/lib/office-hours-member-kiosk.mjs";
 import { OFFICE_HOURS_MEMBER_KIOSK_PATH } from "@/lib/office-hours-member-routing.mjs";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 
@@ -34,6 +43,8 @@ type LocationSnapshot = {
   accuracyM: number | null;
   acquiredAt: string;
 };
+
+type KioskTone = "good" | "warning" | "critical" | "neutral";
 
 function haversineMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const toRad = (deg: number) => (deg * Math.PI) / 180;
@@ -73,6 +84,21 @@ function formatWhen(iso: string): string {
     return new Date(iso).toLocaleString();
   } catch {
     return iso;
+  }
+}
+
+function formatStepLabel(step: string): string {
+  switch (step) {
+    case "selfie":
+      return "Selfie";
+    case "location":
+      return "Location";
+    case "submit":
+      return "Check in";
+    case "confirm":
+      return "Check out";
+    default:
+      return step;
   }
 }
 
@@ -125,6 +151,14 @@ export function MemberKioskScreen() {
           preflightReady: Boolean(preflight) && !locating,
           preflightAllowed: Boolean(preflight?.ok),
         });
+  const summary = getMemberKioskStateSummary({ mode, currentStep });
+  const summaryTone = summary.tone as KioskTone;
+  const locationTone: KioskTone = locationError
+    ? "critical"
+    : ((preflight?.tone as KioskTone | undefined) ?? (location ? "neutral" : locating ? "warning" : "neutral"));
+  const locationLabel = locationError
+    ? "Location unavailable"
+    : preflight?.statusLabel ?? (location ? "Location captured" : locating ? "Refreshing location" : "Waiting for location");
 
   const refreshOpenSession = useCallback(async () => {
     const { data: sessionRow } = await supabase
@@ -263,7 +297,8 @@ export function MemberKioskScreen() {
         }
 
         setNotice("Checked out.");
-        await refreshOpenSession();
+        setOpenSession(null);
+        void refreshOpenSession();
         return;
       }
 
@@ -282,15 +317,25 @@ export function MemberKioskScreen() {
         body: formData,
       });
 
-      const json = (await response.json().catch(() => null)) as { error?: string } | null;
+      const json = (await response.json().catch(() => null)) as { error?: string; session?: unknown } | null;
       if (!response.ok) {
         setError(friendlyMemberActionError(json?.error ?? ""));
         return;
       }
 
-      setNotice("Checked in.");
+      const nextSession = normalizeMemberCheckInSession(json?.session ?? null);
+      if (!nextSession) {
+        setError(friendlyMemberActionError("invalid_session"));
+        return;
+      }
+
+      setOpenSession({
+        id: nextSession.id,
+        checkin_at: nextSession.checkin_at,
+      });
+      setNotice(`Checked in at ${formatWhen(nextSession.checkin_at)}.`);
       setPhoto(null);
-      await refreshOpenSession();
+      void refreshOpenSession();
     } catch {
       setError("Office Hours action failed.");
     } finally {
@@ -305,7 +350,7 @@ export function MemberKioskScreen() {
       containerClassName="max-w-6xl"
       backHref="/dashboard"
     >
-      <div className="relative overflow-hidden rounded-[2rem] border border-black/5 bg-[linear-gradient(180deg,rgba(249,251,255,0.96),rgba(243,246,250,0.92))] p-4 shadow-[0_36px_110px_-54px_rgba(15,23,42,0.34)] sm:p-6">
+      <div className="relative overflow-hidden rounded-[2rem] border border-black/5 bg-[linear-gradient(180deg,rgba(249,251,255,0.96),rgba(243,246,250,0.92))] p-4 pb-28 shadow-[0_36px_110px_-54px_rgba(15,23,42,0.34)] sm:p-6 sm:pb-6">
         <div
           aria-hidden
           className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.14),transparent_24%),radial-gradient(circle_at_bottom_right,rgba(34,197,94,0.1),transparent_24%)]"
@@ -324,16 +369,16 @@ export function MemberKioskScreen() {
                   {mode === "check_out" ? "Active session" : "Signed-in selfie kiosk"}
                 </p>
                 <h2 className="mt-2 text-3xl font-semibold tracking-[-0.04em] text-slate-950">
-                  {mode === "check_out" ? "Ready to check out?" : "Capture your check-in selfie."}
+                  {summary.title}
                 </h2>
                 <p className="mt-2 max-w-xl text-sm leading-6 text-slate-600">
                   {mode === "check_out"
-                    ? "You already have an open Office Hours session, so this screen becomes a lightweight checkout confirmation."
-                    : "The camera opens immediately on supported devices. Your location still has to be inside the office range before check-in completes."}
+                    ? "You already have an open Office Hours session. Close it here when you are done."
+                    : "Capture a fresh selfie, then confirm your location is inside the office range."}
                 </p>
               </div>
               <div className="rounded-full bg-slate-100 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-slate-600">
-                Step: {currentStep}
+                Step: {formatStepLabel(currentStep)}
               </div>
             </div>
 
@@ -343,18 +388,30 @@ export function MemberKioskScreen() {
                   <KioskCameraCapture value={photo} disabled={loading} autoStart={!photo} onChange={setPhoto} />
                 </div>
 
+                <article className="rounded-[1.35rem] border border-slate-200/80 bg-white/82 p-4 md:hidden">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Status</div>
+                      <div className="mt-2 text-xl font-semibold tracking-[-0.03em] text-slate-950">{summary.title}</div>
+                      <p className="mt-2 text-sm leading-6 text-slate-600">{summary.detail}</p>
+                    </div>
+                    <KioskStatusChip tone={summaryTone} label={summary.chipLabel} />
+                  </div>
+                </article>
+
                 <div className="grid gap-3 md:grid-cols-2">
                   <article className="rounded-[1.35rem] border border-slate-200/80 bg-white/78 p-4">
-                    <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Location</div>
-                    <div className="mt-2 text-sm text-slate-700">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Location</div>
+                      <KioskStatusChip tone={locationTone} label={locationLabel} />
+                    </div>
+                    <div className="mt-3 text-sm text-slate-700">
                       {location
                         ? `Captured ${formatWhen(location.acquiredAt)}${location.accuracyM ? ` • ±${Math.round(location.accuracyM)}m` : ""}`
                         : "Waiting for current location."}
                     </div>
                     {preflight ? (
-                      <div className="mt-3 text-sm text-slate-600">
-                        {preflight.statusLabel} • {preflight.distanceM}m from office
-                      </div>
+                      <div className="mt-2 text-sm text-slate-600">{preflight.distanceM}m from office</div>
                     ) : null}
                     {locationError ? <div className="mt-3 text-sm text-rose-700">{locationError}</div> : null}
                     <Button variant="outline" className="mt-4 h-11 rounded-full px-4" onClick={() => void refreshLocation()} disabled={locating || loading}>
@@ -364,10 +421,10 @@ export function MemberKioskScreen() {
 
                   <article className="rounded-[1.35rem] border border-slate-200/80 bg-white/78 p-4">
                     <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Check-in rules</div>
-                    <div className="mt-3 space-y-2 text-sm text-slate-600">
-                      <div>Fresh selfie required every time.</div>
+                    <div className="mt-3 space-y-2 text-sm leading-6 text-slate-600">
+                      <div>Fresh selfie required each time.</div>
                       <div>Location must be inside the office radius or grace zone.</div>
-                      <div>Permission state: {geoPermission}</div>
+                      <div>Permission: {geoPermission}</div>
                       <div>
                         Geofence: {officeGeoStatus === "ready" ? `${officeGeo?.radiusM}m radius • ${officeGeo?.graceRadiusM}m grace` : "Not ready"}
                       </div>
@@ -376,41 +433,57 @@ export function MemberKioskScreen() {
                 </div>
               </div>
             ) : (
-              <div className="mt-6 rounded-[1.5rem] border border-slate-200/80 bg-slate-50/76 p-5">
-                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Open session</div>
-                <div className="mt-3 text-lg font-semibold text-slate-950">
-                  {openSession ? formatWhen(openSession.checkin_at) : "No open session"}
+              <div className="mt-6 space-y-4">
+                <div className="rounded-[1.5rem] border border-slate-200/80 bg-slate-50/76 p-5">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Open session</div>
+                      <div className="mt-3 text-lg font-semibold text-slate-950">
+                        {openSession ? formatWhen(openSession.checkin_at) : "No open session"}
+                      </div>
+                      <p className="mt-2 text-sm leading-6 text-slate-600">
+                        Closing here ends your active session immediately.
+                      </p>
+                    </div>
+                    <KioskStatusChip tone={summaryTone} label={summary.chipLabel} className="md:hidden" />
+                  </div>
                 </div>
-                <p className="mt-2 text-sm leading-6 text-slate-600">
-                  Confirming here closes the active session and sends you back to the Office Hours home screen.
-                </p>
+
+                <article className="rounded-[1.35rem] border border-slate-200/80 bg-white/82 p-4 md:hidden">
+                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Status</div>
+                  <div className="mt-2 text-xl font-semibold tracking-[-0.03em] text-slate-950">{summary.title}</div>
+                  <p className="mt-2 text-sm leading-6 text-slate-600">{summary.detail}</p>
+                </article>
               </div>
             )}
 
-            {notice ? <div className="mt-4 rounded-[1.2rem] bg-emerald-50 px-4 py-3 text-sm text-emerald-800">{notice}</div> : null}
-            {error ? <div className="mt-4 rounded-[1.2rem] bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
+            {notice ? (
+              <div className="mt-4">
+                <KioskNotice tone="good">{notice}</KioskNotice>
+              </div>
+            ) : null}
+            {error ? (
+              <div className="mt-4">
+                <KioskNotice tone="critical">{error}</KioskNotice>
+              </div>
+            ) : null}
           </motion.section>
 
           <motion.aside
-            className="space-y-4"
+            className="hidden space-y-4 md:block"
             initial={reduceMotion ? false : { opacity: 0, y: 10 }}
             animate={reduceMotion ? undefined : { opacity: 1, y: 0 }}
             transition={{ duration: 0.24, delay: 0.04, ease: "easeOut" }}
           >
             <section className="rounded-[1.7rem] border border-white/75 bg-[linear-gradient(180deg,rgba(255,255,255,0.88),rgba(248,250,252,0.72))] p-5 backdrop-blur-xl">
-              <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Status</div>
-              <div className="mt-3 text-3xl font-semibold tracking-[-0.04em] text-slate-950">
-                {mode === "check_out" ? "Checked in" : photo ? "Selfie ready" : "Waiting for selfie"}
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Status</div>
+                  <div className="mt-3 text-3xl font-semibold tracking-[-0.04em] text-slate-950">{summary.title}</div>
+                  <p className="mt-3 text-sm leading-6 text-slate-600">{summary.detail}</p>
+                </div>
+                <KioskStatusChip tone={summaryTone} label={summary.chipLabel} />
               </div>
-              <p className="mt-3 text-sm leading-6 text-slate-600">
-                {mode === "check_out"
-                  ? "You can finish this from here without going through another identity step."
-                  : currentStep === "selfie"
-                    ? "Take the selfie first. The action button unlocks after photo and location are both ready."
-                    : currentStep === "location"
-                      ? "The selfie is ready. Confirm you are in range to unlock check-in."
-                      : "Everything needed for check-in is ready."}
-              </p>
 
               <div className="mt-5 grid gap-3">
                 <Button className="h-12 rounded-full px-6" onClick={() => void onSubmit()} disabled={loading || !canSubmit}>
@@ -423,19 +496,38 @@ export function MemberKioskScreen() {
                   Back to dashboard
                 </Link>
               </div>
+                <p className="text-sm leading-6 text-slate-600">{summary.hint}</p>
             </section>
-
             <section className="rounded-[1.7rem] border border-white/75 bg-white/76 p-5 backdrop-blur-xl">
-              <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Why this changed</div>
-              <div className="mt-3 space-y-3 text-sm leading-6 text-slate-600">
-                <p>Office Hours now opens straight into this signed-in kiosk flow instead of a separate public member-picker screen.</p>
-                <p>Check-in still requires a fresh selfie and geofence validation, while checkout stays intentionally lightweight.</p>
-                <p>The kiosk path is now the default member destination for Office Hours across the app.</p>
+              <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Check-in rules</div>
+              <div className="mt-3 space-y-2 text-sm leading-6 text-slate-600">
+                <p>Fresh selfie required every time.</p>
+                <p>Location must be inside the office radius or grace zone.</p>
+                <p>Permission: {geoPermission}</p>
               </div>
             </section>
           </motion.aside>
         </div>
       </div>
+
+      <KioskStickyAction
+        className="md:hidden"
+        status={<KioskStatusChip tone={summaryTone} label={summary.chipLabel} />}
+        primary={
+          <Button className="h-12 rounded-full px-6" onClick={() => void onSubmit()} disabled={loading || !canSubmit}>
+            {loading ? "Working..." : mode === "check_out" ? "Check out" : "Check in"}
+          </Button>
+        }
+        secondary={
+          <Link
+            href="/dashboard"
+            className="inline-flex h-11 items-center justify-center rounded-full border border-slate-200 bg-white px-5 text-sm font-medium text-slate-700"
+          >
+            Back to dashboard
+          </Link>
+        }
+        hint={summary.hint}
+      />
     </PageShell>
   );
 }
