@@ -3641,13 +3641,13 @@ export function AdminWorkspacePanel({
       }
     >
       {tier === "read-only" ? (
-        <div className="rounded-2xl border border-yellow-500/30 bg-yellow-500/10 px-4 py-3 text-sm text-yellow-800 dark:text-yellow-300" role="alert">
+        <div className="rounded-2xl border border-yellow-500/30 bg-yellow-500/10 px-4 py-3 text-sm text-yellow-800" role="alert">
           <strong>Read-only mode</strong> You can review admin information, but save actions are disabled.
         </div>
       ) : null}
 
       {status ? (
-        <div className="rounded-2xl border border-black/6 bg-[color:var(--admin-surface-raised)] px-4 py-3 text-sm text-foreground/80 dark:border-white/8" role="status" aria-live="polite">
+        <div className="rounded-2xl border border-black/6 bg-[color:var(--admin-surface-raised)] px-4 py-3 text-sm text-foreground/80" role="status" aria-live="polite">
           {status}
         </div>
       ) : null}
@@ -4749,7 +4749,7 @@ export function AdminWorkspacePanel({
                 </div>
 
                 {exportPreviewActionStatus ? (
-                  <div className="rounded-2xl border border-black/6 bg-[color:var(--admin-surface-raised)] px-4 py-3 text-sm text-foreground/80 dark:border-white/8">
+                  <div className="rounded-2xl border border-black/6 bg-[color:var(--admin-surface-raised)] px-4 py-3 text-sm text-foreground/80">
                     {exportPreviewActionStatus}
                   </div>
                 ) : null}
@@ -4773,7 +4773,7 @@ export function AdminWorkspacePanel({
                               "rounded-2xl border px-4 py-3",
                               highlight
                                 ? "border-amber-400/35 bg-amber-500/8"
-                                : "border-black/6 bg-[color:var(--admin-surface-raised)] dark:border-white/8",
+                                : "border-black/6 bg-[color:var(--admin-surface-raised)]",
                             )}
                           >
                             <div className="text-sm font-medium">{row.name || "Unassigned member"}</div>
@@ -4878,7 +4878,7 @@ export function AdminWorkspacePanel({
           >
             <div className="space-y-3">
               {shiftStatus ? (
-                <div className="rounded-2xl border border-black/6 bg-[color:var(--admin-surface-raised)] px-4 py-3 text-sm text-foreground/80 dark:border-white/8">
+                <div className="rounded-2xl border border-black/6 bg-[color:var(--admin-surface-raised)] px-4 py-3 text-sm text-foreground/80">
                   {shiftStatus}
                 </div>
               ) : null}
@@ -4888,7 +4888,7 @@ export function AdminWorkspacePanel({
                   <span>Shift scheduler</span>
                   <span className="text-xs text-foreground/55">Collapsed by default</span>
                 </summary>
-                <div className="grid gap-3 border-t border-black/6 px-4 py-4 md:grid-cols-4 dark:border-white/8">
+                <div className="grid gap-3 border-t border-black/6 px-4 py-4 md:grid-cols-4">
                   <label className="space-y-1 text-sm md:col-span-2">
                     <div className="text-foreground/62">Search users</div>
                     <input
@@ -4956,7 +4956,7 @@ export function AdminWorkspacePanel({
                   <span>Requirement editor</span>
                   <span className="text-xs text-foreground/55">{selectedTermId ? termNameById.get(selectedTermId) ?? "Selected term" : "Select a term"}</span>
                 </summary>
-                <div className="space-y-4 border-t border-black/6 px-4 py-4 dark:border-white/8">
+                <div className="space-y-4 border-t border-black/6 px-4 py-4">
                   <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                     {OFFICE_HOUR_ROLE_KEYS.map((roleKey) => {
                       const row = reqRows.get(roleKey);
@@ -4995,7 +4995,7 @@ export function AdminWorkspacePanel({
                   <span>Office config editor</span>
                   <span className="text-xs text-foreground/55">{officeConfigDirty ? "Unsaved changes" : "No unsaved changes"}</span>
                 </summary>
-                <div className="space-y-4 border-t border-black/6 px-4 py-4 dark:border-white/8">
+                <div className="space-y-4 border-t border-black/6 px-4 py-4">
                   {officeLocation && officeConfig ? (
                     <>
                       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
@@ -5212,7 +5212,7 @@ export function AdminWorkspacePanel({
                         {officeConfig.office_hours_extra_allowed_dates?.length ? (
                           <div className="flex flex-wrap gap-2">
                             {officeConfig.office_hours_extra_allowed_dates.slice().sort().map((d) => (
-                              <div key={d} className="inline-flex items-center gap-2 rounded-full border border-black/6 bg-[color:var(--admin-surface-raised)] px-3 py-1 text-xs dark:border-white/8">
+                              <div key={d} className="inline-flex items-center gap-2 rounded-full border border-black/6 bg-[color:var(--admin-surface-raised)] px-3 py-1 text-xs">
                                 <span className="font-mono">{d}</span>
                                 <button
                                   type="button"

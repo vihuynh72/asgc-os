@@ -13,8 +13,8 @@ export function AdminStatStrip({ stats }: { stats: AdminStat[] }) {
           <div
             className={cn(
               "mt-3 text-2xl font-semibold tracking-[-0.03em]",
-              stat.tone === "warning" && "text-amber-700 dark:text-amber-300",
-              stat.tone === "positive" && "text-emerald-700 dark:text-emerald-300",
+              stat.tone === "warning" && "text-amber-700",
+              stat.tone === "positive" && "text-emerald-700",
             )}
           >
             {stat.value}
