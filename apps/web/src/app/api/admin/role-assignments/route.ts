@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { requireFullAdmin } from "@/lib/adminAuth";
 import { sendEmail } from "@/lib/emailSender";
+import { buildRoleUpdateEmail } from "@/lib/role-update-email.mjs";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
@@ -209,12 +210,11 @@ export async function DELETE(request: NextRequest) {
       }
 
       const roleLabel = ROLE_LABEL_BY_KEY[updated.role_key] ?? updated.role_key;
-      const noteBlock = note ? `\nNote from admin:\n${note}\n` : "";
-      const subject = "ASGC OS role update";
-      const text =
-        `Your ${roleLabel} role (${termLabel}) was revoked in ASGC OS.\n\n` +
-        `If you have questions, contact your ASGC admin.` +
-        noteBlock;
+      const notification = buildRoleUpdateEmail({
+        roleLabel,
+        termLabel,
+        note,
+      });
 
       const { data: queuedRow } = await admin
         .from("notification_log")
@@ -225,7 +225,7 @@ export async function DELETE(request: NextRequest) {
           channel: "email",
           provider: "resend",
           to_email: toEmail,
-          subject,
+          subject: notification.subject,
           status: "queued",
           metadata: { role_key: updated.role_key, term_id: updated.term_id, note: note || null },
         })
@@ -233,7 +233,12 @@ export async function DELETE(request: NextRequest) {
         .maybeSingle();
 
       try {
-        const result = await sendEmail({ to: toEmail, subject, text });
+        const result = await sendEmail({
+          to: toEmail,
+          subject: notification.subject,
+          text: notification.text,
+          html: notification.html,
+        });
 
         if (queuedRow?.id) {
           await admin

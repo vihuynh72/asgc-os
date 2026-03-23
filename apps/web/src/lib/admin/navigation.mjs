@@ -1,4 +1,4 @@
-const DOMAIN_ORDER = ["people", "office_hours", "meetings"];
+const DOMAIN_ORDER = ["people", "office_hours", "communications", "meetings"];
 
 const SECTION_NAV = {
   people: [
@@ -10,10 +10,11 @@ const SECTION_NAV = {
   office_hours: [
     { id: "sessions", label: "Sessions", href: "/admin/office-hours" },
     { id: "requirements", label: "Requirements", href: "/admin/office-hours/requirements" },
-    { id: "kiosk", label: "Kiosk", href: "/admin/office-hours/kiosk" },
+    { id: "kiosk", label: "Member Flow", href: "/admin/office-hours/kiosk" },
     { id: "config", label: "Config", href: "/admin/office-hours/config" },
     { id: "export", label: "Export", href: "/admin/office-hours/export" },
   ],
+  communications: [{ id: "templates", label: "Templates", href: "/admin/communications" }],
   meetings: [
     { id: "queue", label: "Queue", href: "/admin/meetings" },
     { id: "create", label: "Create", href: "/admin/meetings#admin-meetings-create" },
@@ -33,6 +34,11 @@ const DOMAIN_META = {
     label: "Office Hours",
     description: "Sessions, kiosk settings, requirements, and configuration.",
     href: "/admin/office-hours",
+  },
+  communications: {
+    label: "Communications",
+    description: "Preview and test app emails safely.",
+    href: "/admin/communications",
   },
   meetings: {
     label: "Meetings",
@@ -64,6 +70,7 @@ function normalizeValue(value) {
 function isDomainVisible(domainId, { tier, isEvp }) {
   if (domainId === "people") return tier === "full";
   if (domainId === "office_hours") return (tier === "full" || isEvp === true) && tier !== "read-only";
+  if (domainId === "communications") return tier === "full" || isEvp === true || tier === "read-only";
   return true;
 }
 
@@ -92,6 +99,10 @@ function buildOfficeHoursPath(section) {
   return "/admin/office-hours";
 }
 
+function buildCommunicationsPath() {
+  return "/admin/communications";
+}
+
 function buildMeetingsLocation(section, hash) {
   const nextHash =
     section === "queue" ? "" : MEETING_HASH_BY_SECTION[section] ?? (VALID_MEETING_HASHES.has(hash) ? hash : "");
@@ -114,6 +125,7 @@ function parseDomainFromPath(pathname) {
     return { domainId: "office_hours", section: segments[2] ?? "sessions" };
   }
   if (segments[1] === "meetings") return { domainId: "meetings", section: "queue" };
+  if (segments[1] === "communications") return { domainId: "communications", section: "templates" };
   if (segments[1] === "audit") return { domainId: "people", section: "access_audit" };
   return { domainId: null, section: null };
 }
@@ -124,15 +136,17 @@ export function getVisibleAdminDomains({ tier, isEvp }) {
 
 export function getDefaultAdminPath({ tier, isEvp }) {
   const visible = getVisibleAdminDomains({ tier, isEvp });
-  const domainId = visible[0] ?? "meetings";
+  const domainId = visible.find((entry) => entry === "people" || entry === "office_hours" || entry === "meetings") ?? visible[0] ?? "meetings";
   if (domainId === "people") return "/admin/people";
   if (domainId === "office_hours") return "/admin/office-hours";
+  if (domainId === "communications") return "/admin/communications";
   return "/admin/meetings";
 }
 
 export function buildAdminHref(domainId, section) {
   if (domainId === "people") return buildPeoplePath(section);
   if (domainId === "office_hours") return buildOfficeHoursPath(section);
+  if (domainId === "communications") return buildCommunicationsPath();
   const meetingLocation = buildMeetingsLocation(section, "");
   return `${meetingLocation.pathname}${meetingLocation.hash}`;
 }

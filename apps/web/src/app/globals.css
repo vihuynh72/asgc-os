@@ -222,6 +222,10 @@ body {
   opacity: 0.7;
 }
 
+.admin-page-plain::before {
+  display: none;
+}
+
 .admin-hero {
   position: relative;
   display: flex;

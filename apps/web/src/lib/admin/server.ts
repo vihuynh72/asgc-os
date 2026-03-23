@@ -1,6 +1,7 @@
 import { cache } from "react";
 import { redirect } from "next/navigation";
 
+import { getAdminCommunicationsAccess, getAdminCommunicationTemplates } from "@/lib/admin/communications.mjs";
 import { ensureOfficeHoursConfigWithKioskFallback } from "@/lib/office-hours-kiosk-setup.mjs";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 import { getSupabaseServerComponentClient } from "@/lib/supabaseServerComponent";
@@ -376,6 +377,17 @@ export async function loadAdminHubSnapshot({
   const upcomingMeetings = scheduledMeetings.filter((meeting) => meeting.starts_at >= nowIso);
   const missingNoticeCount = scheduledMeetings.filter((meeting) => !meeting.notice_posted_at).length;
   const missingAgendaCount = scheduledMeetings.filter((meeting) => !meeting.agenda_posted_at).length;
+  const communicationsAccess = getAdminCommunicationsAccess({ tier, isEvp });
+  const communicationsTemplates = communicationsAccess.canAccess ? getAdminCommunicationTemplates(communicationsAccess) : [];
+  const sinceIso = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+  const { count: recentEmailFailures } = communicationsAccess.canAccess
+    ? await admin
+        .from("notification_log")
+        .select("id", { count: "exact", head: true })
+        .eq("channel", "email")
+        .eq("status", "failed")
+        .gte("created_at", sinceIso)
+    : { count: 0 };
 
   return {
     currentTermName: data.initialTerms.find((term) => term.id === data.initialSelectedTermId)?.name ?? "No term selected",
@@ -391,6 +403,10 @@ export async function loadAdminHubSnapshot({
       configuredRoles: configuredOfficeRoles,
       officeReady: Boolean(data.initialOfficeConfig && data.initialOfficeLocation),
       reminderEnabled: Boolean(data.initialOfficeConfig?.weekly_hours_reminder_enabled),
+    },
+    communications: {
+      templateCount: communicationsTemplates.length,
+      recentFailures: recentEmailFailures ?? 0,
     },
     meetings: {
       upcomingMeetings: upcomingMeetings.length,

@@ -1,3 +1,5 @@
+import { buildTransactionalEmailLayout, escapeHtml } from "./transactional-email-layout.mjs";
+
 export function validateAdminCheckoutAt({ checkinAtIso, checkoutAtIso, nowIso }) {
   const checkinMs = Date.parse(checkinAtIso);
   const checkoutMs = Date.parse(checkoutAtIso);
@@ -26,5 +28,15 @@ export function buildAdminOverrideNotification({ memberName, checkoutAtIso, excl
   return {
     subject: "Office hours updated",
     text: `${labelName}\n\nAn admin updated your office hours session.\n\nCheckout time: ${checkoutLabel}\nExcluded from totals: ${excludeLabel}\nReason: ${reason}\n\nIf this looks incorrect, please contact an admin.\n`,
+    html: buildTransactionalEmailLayout({
+      eyebrow: "ASGC OS • Office Hours",
+      title: "Your session was updated",
+      detail: "An admin adjusted one of your Office Hours sessions.",
+      bodyHtml:
+        `<p style="margin:0 0 8px;"><strong>Checkout time:</strong> ${escapeHtml(checkoutLabel)}</p>` +
+        `<p style="margin:0 0 8px;"><strong>Excluded from totals:</strong> ${escapeHtml(excludeLabel)}</p>` +
+        `<p style="margin:0;"><strong>Reason:</strong> ${escapeHtml(reason)}</p>`,
+      footerText: "If this looks incorrect, please contact an ASGC admin.",
+    }),
   };
 }

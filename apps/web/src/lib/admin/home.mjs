@@ -7,7 +7,8 @@ function pluralize(count, singular, plural = `${singular}s`) {
 const DOMAIN_ORDER = {
   people: 0,
   office_hours: 1,
-  meetings: 2,
+  communications: 2,
+  meetings: 3,
 };
 
 const STATUS_PRIORITY = {
@@ -75,6 +76,23 @@ function buildOfficeHoursCard(snapshot) {
     statusIcon: officeReady ? "check" : "clock",
     count: officeReady ? configuredRoles : 0,
     primaryLabel: "Open sessions",
+  };
+}
+
+function buildCommunicationsCard(snapshot) {
+  const recentFailures = snapshot.communications?.recentFailures ?? 0;
+  const templateCount = snapshot.communications?.templateCount ?? 0;
+
+  return {
+    id: "communications",
+    href: "/admin/communications",
+    title: "Communications",
+    status: recentFailures > 0 ? `${pluralize(recentFailures, "email failure")} to review` : `${pluralize(templateCount, "template")} ready`,
+    statusShort: recentFailures > 0 ? "Attention needed" : "Ready",
+    statusTone: recentFailures > 0 ? "warning" : "good",
+    statusIcon: recentFailures > 0 ? "clock" : "check",
+    count: recentFailures > 0 ? recentFailures : templateCount,
+    primaryLabel: "Open email lab",
   };
 }
 
@@ -171,6 +189,19 @@ function buildIssues(snapshot, visibleDomains) {
     });
   }
 
+  if (visibleDomains.includes("communications") && (snapshot.communications?.recentFailures ?? 0) > 0) {
+    issues.push({
+      id: "communications-failures",
+      domainId: "communications",
+      href: "/admin/communications",
+      label: "Email failures",
+      count: snapshot.communications.recentFailures,
+      statusTone: "warning",
+      statusIcon: "clock",
+      priority: STATUS_PRIORITY.warning,
+    });
+  }
+
   if (visibleDomains.includes("meetings")) {
     if (snapshot.meetings.missingNoticeCount > 0) {
       issues.push({
@@ -218,6 +249,7 @@ export function buildAdminHomeViewModel({ tier, isEvp, snapshot }) {
   const cards = visibleDomains.map((domainId) => {
     if (domainId === "people") return buildPeopleCard(snapshot);
     if (domainId === "office_hours") return buildOfficeHoursCard(snapshot);
+    if (domainId === "communications") return buildCommunicationsCard(snapshot);
     return buildMeetingsCard(snapshot);
   });
 

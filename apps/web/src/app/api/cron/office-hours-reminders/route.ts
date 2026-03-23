@@ -4,7 +4,7 @@ import { sendEmail } from "@/lib/emailSender";
 import { isAuthorizedCronRequest } from "@/lib/cron-auth.mjs";
 import { getCronEnv, getSmsEnv } from "@/lib/envServer";
 import { buildKioskCheckoutReminderSmsText } from "@/lib/office-hours-kiosk-messages.mjs";
-import { buildOfficeHoursSessionEmail } from "@/lib/office-hours-session-email.mjs";
+import { buildOfficeHoursNotificationEmail } from "@/lib/office-hours-notification-email.mjs";
 import { isOfficeHoursKioskSchemaError } from "@/lib/office-hours-kiosk-setup.mjs";
 import { sendSms } from "@/lib/smsSender.mjs";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
@@ -99,99 +99,7 @@ async function cleanupKioskCheckinPhotos(supabase: ReturnType<typeof getSupabase
 }
 
 function renderEmail(type: string, metadata: unknown, origin: string): { subject: string; text: string; html?: string } {
-  const m = (typeof metadata === "object" && metadata !== null ? (metadata as Record<string, unknown>) : {}) as Record<
-    string,
-    unknown
-  >;
-
-  const startsLocal = safeString(m.starts_at_local);
-  const endsLocal = safeString(m.ends_at_local);
-  const checkinLocal = safeString(m.checkin_at_local);
-  const checkoutLocal = safeString(m.checkout_at_local);
-  const tz = safeString(m.office_tz);
-  const weekStart = safeString(m.week_start);
-  const weekEnd = safeString(m.week_end);
-  const totalMinutes = safeNumber(m.total_minutes);
-  const deficitMinutes = safeNumber(m.deficit_minutes);
-  const requiredTotalMinutes = safeNumber(m.required_total_minutes);
-  // Backwards compatibility: older queued notifications may include in-office fields, but we ignore them now.
-
-  const link = `${origin}/office-hours`;
-
-  if (type === "office_hours.shift_start_soon") {
-    return {
-      subject: "Office hours shift starts soon",
-      text: `Your office hours shift starts soon.\n\nStart: ${startsLocal}${tz ? ` (${tz})` : ""}\nEnd: ${endsLocal}${tz ? ` (${tz})` : ""}\n\nOpen Office Hours: ${link}\n`,
-    };
-  }
-
-  if (type === "office_hours.shift_late") {
-    return {
-      subject: "You are late to your office hours shift",
-      text: `You are late to your office hours shift.\n\nStart: ${startsLocal}${tz ? ` (${tz})` : ""}\nEnd: ${endsLocal}${tz ? ` (${tz})` : ""}\n\nOpen Office Hours: ${link}\n`,
-    };
-  }
-
-  if (type === "office_hours.shift_missed") {
-    return {
-      subject: "You missed your office hours shift",
-      text: `You missed your office hours shift.\n\nStart: ${startsLocal}${tz ? ` (${tz})` : ""}\nEnd: ${endsLocal}${tz ? ` (${tz})` : ""}\n\nOpen Office Hours: ${link}\n`,
-    };
-  }
-
-  if (type === "office_hours.weekly_hours_reminder") {
-    const weekRange =
-      weekStart && weekEnd ? `Week of ${weekStart} through ${weekEnd}` : weekStart ? `Week of ${weekStart}` : "This week";
-    return {
-      subject: "Office hours reminder: hours remaining this week",
-      text:
-        `Office hours reminder.\n\n${weekRange}\n` +
-        `Required total: ${formatMinutes(requiredTotalMinutes)}\n` +
-        `Completed total: ${formatMinutes(totalMinutes)}\n` +
-        `Remaining total: ${formatMinutes(deficitMinutes)}\n\n` +
-        `Open Office Hours: ${link}\n`,
-    };
-  }
-
-  // Session reminder emails use a shared HTML + text renderer.
-  if (
-    type === "office_hours.session_open_long" ||
-    type === "office_hours.session_checkout_reminder" ||
-    type === "office_hours.session_auto_close_soon" ||
-    type === "office_hours.session_auto_closed"
-  ) {
-    return buildOfficeHoursSessionEmail({
-      type,
-      origin,
-      metadata: {
-        ...m,
-        checkin_at_local: checkinLocal || safeString(m.checkin_at_local),
-        checkout_at_local: checkoutLocal || safeString(m.checkout_at_local),
-        auto_close_at_local: safeString(m.auto_close_at_local),
-        office_tz: tz || safeString(m.office_tz),
-      },
-    });
-  }
-
-  // Phase 20: coverage notifications
-  if (type === "office_hours.coverage_requested") {
-    return {
-      subject: "Office hours coverage needed",
-      text: `A colleague is requesting coverage for their shift.\n\nShift: ${startsLocal} – ${endsLocal}${tz ? ` (${tz})` : ""}\n\nIf you are available, you can claim this shift.\n\nOpen Office Hours: ${link}\n`,
-    };
-  }
-
-  if (type === "office_hours.coverage_claimed") {
-    return {
-      subject: "Your shift coverage was claimed",
-      text: `Good news! Someone has claimed your coverage request.\n\nShift: ${startsLocal} – ${endsLocal}${tz ? ` (${tz})` : ""}\n\nOpen Office Hours: ${link}\n`,
-    };
-  }
-
-  return {
-    subject: "Office hours notification",
-    text: `You have a new office hours notification.\n\nOpen Office Hours: ${link}\n`,
-  };
+  return buildOfficeHoursNotificationEmail({ type, metadata, origin });
 }
 
 function renderSmsText(type: string, metadata: unknown): string {

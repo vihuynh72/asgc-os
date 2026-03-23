@@ -106,7 +106,12 @@ export async function POST(request: NextRequest) {
     .maybeSingle();
 
   try {
-    const result = await sendEmail({ to: toEmail, subject: notification.subject, text: notification.text });
+    const result = await sendEmail({
+      to: toEmail,
+      subject: notification.subject,
+      text: notification.text,
+      html: notification.html,
+    });
 
     if (queuedRow?.id) {
       await admin

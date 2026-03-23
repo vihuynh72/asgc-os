@@ -10,7 +10,7 @@ export function OfficeHoursSectionNav({
       activeId={activeId}
       items={[
         { id: "sessions", label: "Sessions", href: "/admin/office-hours" },
-        { id: "kiosk", label: "Kiosk", href: "/admin/office-hours/kiosk" },
+        { id: "kiosk", label: "Member Flow", href: "/admin/office-hours/kiosk" },
         { id: "requirements", label: "Requirements", href: "/admin/office-hours/requirements" },
         { id: "config", label: "Config", href: "/admin/office-hours/config" },
         { id: "export", label: "Export", href: "/admin/office-hours/export" },

@@ -38,11 +38,11 @@ export async function OfficeHoursKioskPage() {
   );
 
   return (
-    <div className="admin-page space-y-8">
+    <div className="admin-page admin-page-plain space-y-8">
       <AdminHero
         eyebrow="Office Hours"
-        title="Check-In"
-        description="Monitor the new member sign-in + selfie check-in workflow, reviewer access, and onboarding readiness."
+        title="Member Flow"
+        description="Monitor signed-in member check-in, selfie review, and onboarding readiness without the old public picker flow."
       />
       <OfficeHoursSectionNav activeId="kiosk" />
       <OfficeHoursKioskPanel
