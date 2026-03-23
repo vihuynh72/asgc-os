@@ -15,6 +15,8 @@ test("buildPasswordResetEmail formats html and text with the real reset link", (
   assert.match(email.text, /https:\/\/asgc\.app\/auth\/callback/);
   assert.match(email.html ?? "", /Reset your password/i);
   assert.match(email.html ?? "", /href="https:\/\/asgc\.app\/auth\/callback\?token_hash=abc&amp;type=recovery"/);
+  assert.match(email.html ?? "", />https:\/\/asgc\.app\/auth\/callback\?token_hash=abc&amp;type=recovery</);
+  assert.match(email.html ?? "", /bgcolor="#ffffff"/i);
 });
 
 test("buildMfaRecoveryEmail keeps both the recovery link and one-time code visible", () => {
@@ -27,6 +29,7 @@ test("buildMfaRecoveryEmail keeps both the recovery link and one-time code visib
   assert.match(email.text, /902410/);
   assert.match(email.html ?? "", /902410/);
   assert.match(email.html ?? "", /Recover access/i);
+  assert.match(email.html ?? "", />https:\/\/asgc\.app\/auth\/callback\?token_hash=xyz&amp;type=recovery</);
 });
 
 test("buildRoleUpdateEmail renders the member-facing role update notice", () => {

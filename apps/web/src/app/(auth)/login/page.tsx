@@ -6,10 +6,15 @@ import { useSearchParams } from "next/navigation";
 import { AdminInlineNotice } from "@/components/admin/admin-inline-notice";
 import { Button } from "@/components/ui/button";
 import { PageShell } from "@/components/page-shell";
+import {
+  FIRST_TIME_SIGNIN_NEXT_STEP,
+  isCompleteOtpCode,
+  normalizeOtpCode,
+} from "@/lib/auth/first-time-signin-flow.mjs";
 import { safePostAuthRedirectPath } from "@/lib/redirects";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 
-type AuthPanelMode = "password" | "password_otp" | "first_time" | "first_time_verify";
+type AuthPanelMode = "password" | "password_otp" | "first_time" | "first_time_verify" | "first_time_password";
 
 function normalizeEmail(raw: string): string {
   return raw.trim().toLowerCase();
@@ -84,6 +89,12 @@ function loginPanelCopy(mode: AuthPanelMode) {
         title: "Finish your first sign-in",
         detail: "Enter the six-digit code from your email to finish signing in on this device.",
       };
+    case "first_time_password":
+      return {
+        eyebrow: "Create password",
+        title: "Create your password",
+        detail: "You are verified. Set your password now so future sign-ins stay fast on this device.",
+      };
     default:
       return {
         eyebrow: "Member sign-in",
@@ -100,8 +111,10 @@ export default function LoginPage() {
   const [panelMode, setPanelMode] = useState<AuthPanelMode>("password");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [code, setCode] = useState("");
   const [trustDevice, setTrustDevice] = useState(true);
+  const [firstTimeTrustDevice, setFirstTimeTrustDevice] = useState(true);
 
   const [busyAction, setBusyAction] = useState<"idle" | "password" | "verify" | "first_time" | "reset">("idle");
   const [notice, setNotice] = useState<{ tone: "good" | "critical"; message: string } | null>(null);
@@ -232,7 +245,7 @@ export default function LoginPage() {
         body: JSON.stringify(payload),
       });
 
-      const json = (await response.json().catch(() => null)) as { redirectTo?: string } | null;
+      const json = (await response.json().catch(() => null)) as { redirectTo?: string; nextStep?: string } | null;
       if (!response.ok) {
         setNotice({
           tone: "critical",
@@ -244,10 +257,58 @@ export default function LoginPage() {
         return;
       }
 
+      if (panelMode === "first_time_verify" && json?.nextStep === FIRST_TIME_SIGNIN_NEXT_STEP) {
+        setPassword("");
+        setConfirmPassword("");
+        setPanelMode("first_time_password");
+        setNotice({ tone: "good", message: "Email verified. Create your password to finish signing in." });
+        return;
+      }
+
       const next = typeof json?.redirectTo === "string" && json.redirectTo.startsWith("/") ? json.redirectTo : "/dashboard";
       window.location.assign(next);
     } catch {
       setNotice({ tone: "critical", message: "Verification failed. Try again." });
+    } finally {
+      setBusyAction("idle");
+    }
+  }
+
+  async function onFirstTimePasswordSubmit(event: React.FormEvent) {
+    event.preventDefault();
+    setBusyAction("password");
+    setNotice(null);
+
+    if (password.length < 8) {
+      setNotice({ tone: "critical", message: "Password must be at least 8 characters." });
+      setBusyAction("idle");
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      setNotice({ tone: "critical", message: "Passwords do not match." });
+      setBusyAction("idle");
+      return;
+    }
+
+    try {
+      const redirectTo = getRedirectToForRequests();
+      const response = await fetch("/api/auth/setup-password", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ password, trustDevice: firstTimeTrustDevice, redirectTo }),
+      });
+
+      const json = (await response.json().catch(() => null)) as { redirectTo?: string } | null;
+      if (!response.ok) {
+        setNotice({ tone: "critical", message: "Could not save your password. Try again." });
+        return;
+      }
+
+      const next = typeof json?.redirectTo === "string" && json.redirectTo.startsWith("/") ? json.redirectTo : "/dashboard";
+      window.location.assign(next);
+    } catch {
+      setNotice({ tone: "critical", message: "Could not save your password. Try again." });
     } finally {
       setBusyAction("idle");
     }
@@ -455,8 +516,9 @@ export default function LoginPage() {
                       inputMode="numeric"
                       autoComplete="one-time-code"
                       value={code}
-                      onChange={(event) => setCode(event.target.value)}
+                      onChange={(event) => setCode(normalizeOtpCode(event.target.value))}
                       placeholder="6-digit code"
+                      maxLength={6}
                       className="h-12 w-full rounded-[1.2rem] border border-slate-200 bg-white/90 px-4 text-[15px] text-slate-950 shadow-[inset_0_1px_0_rgba(255,255,255,0.85)] outline-none transition focus:border-slate-400"
                     />
                   </label>
@@ -476,7 +538,7 @@ export default function LoginPage() {
                     <Button
                       type="submit"
                       className="h-12 rounded-full px-6"
-                      disabled={busyAction !== "idle" || normalizedEmail.length === 0 || code.trim().length === 0}
+                      disabled={busyAction !== "idle" || normalizedEmail.length === 0 || !isCompleteOtpCode(code)}
                     >
                       {busyAction === "verify" ? "Verifying..." : "Verify code"}
                     </Button>
@@ -495,9 +557,60 @@ export default function LoginPage() {
                 </form>
               ) : null}
 
+              {panelMode === "first_time_password" ? (
+                <form className="space-y-4" onSubmit={onFirstTimePasswordSubmit}>
+                  <div className="rounded-[1.25rem] border border-emerald-200/80 bg-emerald-50/80 px-4 py-3 text-sm text-emerald-900">
+                    Your email is verified. Create a password now so future sign-ins on this device stay fast.
+                  </div>
+
+                  <label className="block space-y-2">
+                    <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">New password</span>
+                    <input
+                      type="password"
+                      autoComplete="new-password"
+                      value={password}
+                      onChange={(event) => setPassword(event.target.value)}
+                      placeholder="At least 8 characters"
+                      className="h-12 w-full rounded-[1.2rem] border border-slate-200 bg-white/90 px-4 text-[15px] text-slate-950 shadow-[inset_0_1px_0_rgba(255,255,255,0.85)] outline-none transition focus:border-slate-400"
+                    />
+                  </label>
+
+                  <label className="block space-y-2">
+                    <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Confirm password</span>
+                    <input
+                      type="password"
+                      autoComplete="new-password"
+                      value={confirmPassword}
+                      onChange={(event) => setConfirmPassword(event.target.value)}
+                      placeholder="Repeat your password"
+                      className="h-12 w-full rounded-[1.2rem] border border-slate-200 bg-white/90 px-4 text-[15px] text-slate-950 shadow-[inset_0_1px_0_rgba(255,255,255,0.85)] outline-none transition focus:border-slate-400"
+                    />
+                  </label>
+
+                  <label className="flex items-center gap-3 rounded-[1.2rem] border border-slate-200/80 bg-white/75 px-4 py-3 text-sm text-slate-600">
+                    <input
+                      type="checkbox"
+                      checked={firstTimeTrustDevice}
+                      onChange={(event) => setFirstTimeTrustDevice(event.target.checked)}
+                    />
+                    Remember this device for 30 days
+                  </label>
+
+                  <div className="flex flex-col gap-3 pt-1 sm:flex-row sm:items-center">
+                    <Button
+                      type="submit"
+                      className="h-12 rounded-full px-6"
+                      disabled={busyAction !== "idle" || password.length === 0 || confirmPassword.length === 0}
+                    >
+                      {busyAction === "password" ? "Saving..." : "Create password"}
+                    </Button>
+                  </div>
+                </form>
+              ) : null}
+
               <div className="rounded-[1.25rem] border border-dashed border-slate-300/85 bg-white/52 px-4 py-4 text-sm leading-6 text-slate-600">
                 <p>Use your GCCCD email. First-time sign-in emails now contain only the code, so Safe Links rewriting does not break the flow.</p>
-                <p className="mt-2">After the first successful sign-in, Office Hours can send you into the password-setup step automatically when needed.</p>
+                <p className="mt-2">First-time sign-in now goes straight from code verification into password setup, so you do not have to sign in again just to finish onboarding.</p>
               </div>
             </div>
           </section>
