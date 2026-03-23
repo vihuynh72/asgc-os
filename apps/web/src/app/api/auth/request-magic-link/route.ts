@@ -2,7 +2,8 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
 import { sendEmail } from "@/lib/emailSender";
-import { generateSignInLink } from "@/lib/authLinks";
+import { issueFirstTimeSignInCode } from "@/lib/auth/first-time-signin.server.mjs";
+import { getServerEnv } from "@/lib/envServer";
 import { normalizeEmail } from "@/lib/invitesAllowlist";
 import { POST_AUTH_REDIRECT_COOKIE, safePostAuthRedirectPath, safeRedirectPathOrNull } from "@/lib/redirects";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
@@ -15,8 +16,6 @@ const BodySchema = z.object({
 });
 
 export async function POST(request: NextRequest) {
-  const origin = new URL(request.url).origin;
-
   let email: string;
   let postAuthRedirectTo: string | undefined;
   try {
@@ -39,13 +38,10 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  const callbackUrl = new URL("/auth/callback", origin);
-  if (postAuthRedirectTo) callbackUrl.searchParams.set("redirectTo", postAuthRedirectTo);
-  const emailRedirectTo = callbackUrl.toString();
-
   // Security posture: invite-only. We do NOT reveal allowlist membership.
   // If not allowlisted, we respond with a generic ok.
   const admin = getSupabaseAdminClient();
+  const serverEnv = getServerEnv();
 
   const { data: allowlisted, error: allowlistError } = await admin.rpc("is_email_allowlisted", { _email: email });
 
@@ -58,26 +54,18 @@ export async function POST(request: NextRequest) {
     return response;
   }
 
-  let signInLink: Awaited<ReturnType<typeof generateSignInLink>>;
   try {
-    signInLink = await generateSignInLink(admin, email, emailRedirectTo);
+    await issueFirstTimeSignInCode({
+      admin,
+      email,
+      redirectTo: postAuthRedirectTo ?? "/dashboard",
+      requestIp: request.headers.get("x-forwarded-for") ?? null,
+      userAgent: request.headers.get("user-agent"),
+      secret: serverEnv.SUPABASE_SERVICE_ROLE_KEY,
+      sendEmailFn: sendEmail,
+    });
   } catch (err) {
-    console.error("[auth] generateLink failed", { message: err instanceof Error ? err.message : "unknown_error" });
-    return NextResponse.json({ ok: false }, { status: 500 });
-  }
-
-  const callbackLink = new URL(emailRedirectTo);
-  callbackLink.searchParams.set("token_hash", signInLink.hashedToken);
-  callbackLink.searchParams.set("type", signInLink.type);
-
-  const subject = "ASGC OS sign-in link";
-  const otpLine = signInLink.otp ? `\nOr use this one-time code:\n${signInLink.otp}\n` : "";
-  const text = `Sign in to ASGC OS.\n\nOpen this link to continue:\n${callbackLink.toString()}\n${otpLine}\nIf you did not request this email, you can ignore it.`;
-
-  try {
-    await sendEmail({ to: email, subject, text });
-  } catch (err) {
-    console.error("[auth] sendEmail failed", { message: err instanceof Error ? err.message : "unknown_error" });
+    console.error("[auth] first-time sign-in email failed", { message: err instanceof Error ? err.message : "unknown_error" });
     return NextResponse.json({ ok: false }, { status: 500 });
   }
 

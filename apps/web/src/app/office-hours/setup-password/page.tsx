@@ -5,6 +5,7 @@ import { useState } from "react";
 import { AdminInlineNotice } from "@/components/admin/admin-inline-notice";
 import { PageShell } from "@/components/page-shell";
 import { Button } from "@/components/ui/button";
+import { OFFICE_HOURS_MEMBER_KIOSK_PATH } from "@/lib/office-hours-member-routing.mjs";
 import { safePostAuthRedirectPath } from "@/lib/redirects";
 
 export default function OfficeHoursSetupPasswordPage() {
@@ -14,8 +15,10 @@ export default function OfficeHoursSetupPasswordPage() {
   const [notice, setNotice] = useState<{ tone: "good" | "critical"; message: string } | null>(null);
 
   function getRedirectTo() {
-    if (typeof window === "undefined") return "/office-hours";
-    return safePostAuthRedirectPath(new URLSearchParams(window.location.search).get("redirectTo"));
+    if (typeof window === "undefined") return OFFICE_HOURS_MEMBER_KIOSK_PATH;
+    return safePostAuthRedirectPath(
+      new URLSearchParams(window.location.search).get("redirectTo") ?? OFFICE_HOURS_MEMBER_KIOSK_PATH,
+    );
   }
 
   async function onSubmit(event: React.FormEvent) {
@@ -51,7 +54,9 @@ export default function OfficeHoursSetupPasswordPage() {
 
       setNotice({ tone: "good", message: "Password saved. Redirecting to Office Hours..." });
       window.location.assign(
-        typeof json?.redirectTo === "string" && json.redirectTo.startsWith("/") ? json.redirectTo : "/office-hours",
+        typeof json?.redirectTo === "string" && json.redirectTo.startsWith("/")
+          ? json.redirectTo
+          : OFFICE_HOURS_MEMBER_KIOSK_PATH,
       );
     } catch {
       setStatus("error");
@@ -66,7 +71,7 @@ export default function OfficeHoursSetupPasswordPage() {
       title="Set your password"
       description="Office Hours needs a reusable password so future sign-ins stay fast on trusted devices."
       containerClassName="max-w-3xl"
-      backHref="/office-hours"
+      backHref={OFFICE_HOURS_MEMBER_KIOSK_PATH}
     >
       <div className="relative overflow-hidden rounded-[2rem] border border-black/5 bg-[linear-gradient(180deg,rgba(250,252,255,0.96),rgba(243,246,250,0.92))] p-5 shadow-[0_36px_100px_-52px_rgba(15,23,42,0.35)] sm:p-7">
         <div
@@ -126,7 +131,12 @@ export default function OfficeHoursSetupPasswordPage() {
                 >
                   {status === "saving" ? "Saving..." : "Save password"}
                 </Button>
-                <Button type="button" variant="outline" className="h-12 rounded-full px-6" onClick={() => window.location.assign("/office-hours")}>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-12 rounded-full px-6"
+                  onClick={() => window.location.assign(OFFICE_HOURS_MEMBER_KIOSK_PATH)}
+                >
                   Cancel
                 </Button>
               </div>

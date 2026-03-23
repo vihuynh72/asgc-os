@@ -15,6 +15,7 @@ const STEP_UP_MFA_PREFIXES = ["/admin", "/office-hours/kiosk/review"];
 
 const OFFICE_HOURS_SELF_SERVICE_PREFIXES = [
   "/office-hours",
+  "/office-hours/kiosk",
   "/office-hours/check-in",
   "/office-hours/check-out",
   "/office-hours/setup-password",
@@ -37,7 +38,7 @@ export function isOfficeHoursSelfServicePath(pathname) {
   return OFFICE_HOURS_SELF_SERVICE_PREFIXES.some((prefix) => matchesPrefix(pathname, prefix));
 }
 
-export function isLegacyOfficeHoursKioskPath(pathname) {
+export function isSignedInOfficeHoursKioskPath(pathname) {
   return pathname === "/office-hours/kiosk";
 }
 
