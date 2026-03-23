@@ -4,6 +4,7 @@ import { useEffect, useMemo } from "react";
 
 import { resolveKioskCameraSurface } from "@/lib/office-hours-kiosk/camera-controls.mjs";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 import { useKioskCamera } from "./use-kiosk-camera";
 
@@ -38,17 +39,20 @@ export function KioskCameraCapture({
     setVideoReady,
     warmTooLong,
     capturing,
-    quality,
-    setQuality,
     controlState,
     zoom,
     torchOn,
+    dragZooming,
+    mirrorPreview,
     start,
     stop,
     capture,
     rotateCamera,
     setZoomLevel,
     toggleTorch,
+    beginDragZoom,
+    updateDragZoom,
+    endDragZoom,
   } = useKioskCamera({
     disabled,
     onCapture: (file) => onChange(file),
@@ -84,7 +88,43 @@ export function KioskCameraCapture({
 
       {surface === "live" ? (
         <div className="kiosk-control-grid">
-          <div className="kiosk-camera-frame">
+          <div
+            className={cn(
+              "kiosk-camera-frame kiosk-camera-frame-live",
+              controlState.canZoom ? "touch-none" : undefined,
+              dragZooming ? "kiosk-camera-frame-zooming" : undefined,
+            )}
+            onPointerDown={(event) => {
+              const started = beginDragZoom({
+                pointerId: event.pointerId,
+                clientY: event.clientY,
+                pointerType: event.pointerType,
+                surfaceHeight: event.currentTarget.getBoundingClientRect().height,
+              });
+              if (started) {
+                event.currentTarget.setPointerCapture(event.pointerId);
+              }
+            }}
+            onPointerMove={(event) => {
+              if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+              void updateDragZoom({
+                pointerId: event.pointerId,
+                clientY: event.clientY,
+              });
+            }}
+            onPointerUp={(event) => {
+              endDragZoom({ pointerId: event.pointerId });
+              if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                event.currentTarget.releasePointerCapture(event.pointerId);
+              }
+            }}
+            onPointerCancel={(event) => {
+              endDragZoom({ pointerId: event.pointerId });
+              if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                event.currentTarget.releasePointerCapture(event.pointerId);
+              }
+            }}
+          >
             <video
               ref={videoRef}
               autoPlay
@@ -93,23 +133,28 @@ export function KioskCameraCapture({
               onLoadedMetadata={() => setVideoReady(true)}
               onCanPlay={() => setVideoReady(true)}
               onPlaying={() => setVideoReady(true)}
-              className="aspect-[4/5] w-full object-cover"
+              className={cn("aspect-[4/5] w-full object-cover", mirrorPreview ? "scale-x-[-1]" : undefined)}
             />
             {!videoReady ? <div className="kiosk-camera-overlay">Starting camera…</div> : null}
+            {controlState.canZoom && zoom !== null ? (
+              <div className="kiosk-camera-zoom-readout">{zoom.toFixed(1)}x</div>
+            ) : null}
+            {controlState.canZoom ? (
+              <div className="kiosk-camera-gesture-hint md:hidden">Drag up or down to zoom.</div>
+            ) : null}
           </div>
 
           <div className="kiosk-control-grid">
             <div className="kiosk-control-row kiosk-control-row-compact">
-              <label className="kiosk-control-label">Quality</label>
-              <select
-                className="h-11 rounded-full border border-[var(--admin-border-soft)] bg-white/85 px-3 text-sm"
-                value={quality}
-                onChange={(event) => setQuality(event.target.value as "balanced" | "high")}
-                disabled={disabled}
-              >
-                <option value="balanced">Balanced</option>
-                <option value="high">High</option>
-              </select>
+              <div>
+                <div className="kiosk-control-label">Capture</div>
+                <div className="text-sm text-slate-600">Front camera, mirrored selfie, high quality.</div>
+              </div>
+              {controlState.canZoom && zoom !== null ? (
+                <span className="hidden rounded-full border border-slate-200 bg-white/90 px-3 py-1 text-xs font-semibold text-slate-600 md:inline-flex">
+                  {zoom.toFixed(1)}x
+                </span>
+              ) : null}
             </div>
 
             <div className="kiosk-control-row kiosk-control-row-split">
@@ -126,9 +171,10 @@ export function KioskCameraCapture({
             </div>
 
             {controlState.canZoom && controlState.zoomRange ? (
-              <label className="space-y-2">
+              <label className="hidden space-y-2 md:block">
                 <div className="kiosk-control-label">Zoom</div>
                 <input
+                  className="kiosk-camera-zoom-slider"
                   type="range"
                   min={controlState.zoomRange.min}
                   max={controlState.zoomRange.max}
