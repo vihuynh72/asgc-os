@@ -88,4 +88,5 @@ test("friendlyMemberActionError keeps Office Hours errors concise", () => {
   assert.equal(friendlyMemberActionError("outside_geofence"), "You appear to be outside the office check-in area.");
   assert.equal(friendlyMemberActionError("already_checked_in"), "You already have an open session.");
   assert.equal(friendlyMemberActionError("no_open_session"), "No open session was found.");
+  assert.equal(friendlyMemberActionError("invalid_session"), "Your session updated, but this screen needs a refresh.");
 });

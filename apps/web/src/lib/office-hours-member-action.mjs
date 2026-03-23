@@ -29,6 +29,16 @@ export function friendlyMemberActionError(code) {
       return "Office location is not configured yet.";
     case "photo_required":
       return "A selfie is required to check in.";
+    case "invalid_session":
+      return "Your session updated, but this screen needs a refresh.";
+    case "photo_upload_failed":
+      return "The selfie upload failed. Try the check-in again.";
+    case "photo_update_failed":
+      return "Your selfie saved, but the session could not finish updating.";
+    case "unauthorized":
+      return "Sign in again to continue.";
+    case "password_setup_required":
+      return "Finish your password setup before using Office Hours.";
     default:
       return code || "Something went wrong.";
   }
