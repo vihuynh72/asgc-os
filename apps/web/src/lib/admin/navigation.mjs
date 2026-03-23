@@ -8,7 +8,9 @@ const SECTION_NAV = {
     { id: "access_audit", label: "Access Audit", href: "/admin/people/access-audit" },
   ],
   office_hours: [
-    { id: "sessions", label: "Sessions", href: "/admin/office-hours" },
+    { id: "overview", label: "Overview", href: "/admin/office-hours" },
+    { id: "schedule", label: "Schedule", href: "/admin/office-hours/schedule" },
+    { id: "sessions", label: "Sessions", href: "/admin/office-hours/sessions" },
     { id: "requirements", label: "Requirements", href: "/admin/office-hours/requirements" },
     { id: "kiosk", label: "Member Flow", href: "/admin/office-hours/kiosk" },
     { id: "config", label: "Config", href: "/admin/office-hours/config" },
@@ -32,7 +34,7 @@ const DOMAIN_META = {
   },
   office_hours: {
     label: "Office Hours",
-    description: "Sessions, kiosk settings, requirements, and configuration.",
+    description: "Weekly performance, scheduling, sessions, and member flow.",
     href: "/admin/office-hours",
   },
   communications: {
@@ -90,7 +92,9 @@ function buildPeoplePath(section) {
 }
 
 function buildOfficeHoursPath(section) {
-  if (!section || section === "overview" || section === "summary" || section === "sessions") return "/admin/office-hours";
+  if (!section || section === "overview" || section === "summary") return "/admin/office-hours";
+  if (section === "sessions") return "/admin/office-hours/sessions";
+  if (section === "schedule") return "/admin/office-hours/schedule";
   if (section === "requirements" || section === "config" || section === "kiosk") {
     return `/admin/office-hours/${section}`;
   }
@@ -122,7 +126,7 @@ function parseDomainFromPath(pathname) {
   if (segments[1] === "office-hours") {
     if (segments[2] === "export" && segments[3] === "csv") return { domainId: "office_hours", section: "csv" };
     if (segments[2] === "export") return { domainId: "office_hours", section: "export" };
-    return { domainId: "office_hours", section: segments[2] ?? "sessions" };
+    return { domainId: "office_hours", section: segments[2] ?? "overview" };
   }
   if (segments[1] === "meetings") return { domainId: "meetings", section: "queue" };
   if (segments[1] === "communications") return { domainId: "communications", section: "templates" };
