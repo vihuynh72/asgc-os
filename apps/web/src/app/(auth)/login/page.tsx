@@ -6,6 +6,7 @@ import { useSearchParams } from "next/navigation";
 import { AdminInlineNotice } from "@/components/admin/admin-inline-notice";
 import { Button } from "@/components/ui/button";
 import { PageShell } from "@/components/page-shell";
+import { deriveLoginHydrationState } from "@/lib/auth/login-hydration-state.mjs";
 import {
   FIRST_TIME_SIGNIN_NEXT_STEP,
   isCompleteOtpCode,
@@ -138,8 +139,37 @@ export default function LoginPage() {
         const {
           data: { user },
         } = await supabase.auth.getUser();
-        if (!cancelled && user) {
-          setExistingUser({ email: user.email ?? null });
+        if (cancelled) return;
+
+        if (!user) {
+          setExistingUser(null);
+          setPanelMode("password");
+          return;
+        }
+
+        const { data: profile } = await supabase
+          .from("profile_private")
+          .select("password_ready_at")
+          .eq("id", user.id)
+          .maybeSingle();
+
+        if (cancelled) return;
+
+        const authState = deriveLoginHydrationState({
+          user: { email: user.email ?? null },
+          passwordReadyAt:
+            (profile as { password_ready_at?: string | null } | null)?.password_ready_at ?? null,
+        });
+
+        setExistingUser(authState.existingUser);
+        setPanelMode(authState.panelMode as AuthPanelMode);
+        if (user.email) {
+          setEmail((current) => current || normalizeEmail(user.email ?? ""));
+        }
+        if (authState.panelMode === "first_time_password") {
+          setPassword("");
+          setConfirmPassword("");
+          setNotice({ tone: "good", message: "Finish creating your password to continue." });
         }
       } catch {
         // Ignore.
@@ -386,7 +416,7 @@ export default function LoginPage() {
 
           <section className="rounded-[1.8rem] border border-slate-200/80 bg-white p-5 shadow-[0_22px_44px_-34px_rgba(15,23,42,0.18)] sm:p-6">
             <div className="space-y-4">
-              {existingUser ? (
+              {existingUser && panelMode !== "first_time_password" ? (
                 <div className="rounded-[1.35rem] border border-emerald-200/70 bg-emerald-50/75 p-4">
                   <div className="text-xs font-semibold uppercase tracking-[0.22em] text-emerald-700">Already signed in</div>
                   <div className="mt-2 text-sm text-emerald-950">{existingUser.email ?? "Current account"}</div>

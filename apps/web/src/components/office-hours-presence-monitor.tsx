@@ -3,6 +3,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 
+import {
+  OFFICE_HOURS_SESSION_CLOSED_EVENT,
+  OFFICE_HOURS_SESSION_OPENED_EVENT,
+  reducePresenceMonitorSessionState,
+} from "@/lib/office-hours-presence-lifecycle.mjs";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 import { isProbablyNetworkError, swallowNetworkError } from "@/lib/network-errors.mjs";
 
@@ -39,6 +44,43 @@ export function OfficeHoursPresenceMonitor() {
   const [openSessionId, setOpenSessionId] = useState<string | null>(null);
 
   const lockRef = useRef(false);
+
+  useEffect(() => {
+    function readSessionId(event: Event): string | null {
+      const detail = (event as CustomEvent<{ sessionId?: string | null }>).detail;
+      return typeof detail?.sessionId === "string" && detail.sessionId.length > 0 ? detail.sessionId : null;
+    }
+
+    function onSessionOpened(event: Event) {
+      const sessionId = readSessionId(event);
+      setOpenSessionId((current) =>
+        reducePresenceMonitorSessionState({
+          currentOpenSessionId: current,
+          type: OFFICE_HOURS_SESSION_OPENED_EVENT,
+          sessionId,
+        })
+      );
+    }
+
+    function onSessionClosed(event: Event) {
+      const sessionId = readSessionId(event);
+      setOpenSessionId((current) =>
+        reducePresenceMonitorSessionState({
+          currentOpenSessionId: current,
+          type: OFFICE_HOURS_SESSION_CLOSED_EVENT,
+          sessionId,
+        })
+      );
+    }
+
+    window.addEventListener(OFFICE_HOURS_SESSION_OPENED_EVENT, onSessionOpened as EventListener);
+    window.addEventListener(OFFICE_HOURS_SESSION_CLOSED_EVENT, onSessionClosed as EventListener);
+
+    return () => {
+      window.removeEventListener(OFFICE_HOURS_SESSION_OPENED_EVENT, onSessionOpened as EventListener);
+      window.removeEventListener(OFFICE_HOURS_SESSION_CLOSED_EVENT, onSessionClosed as EventListener);
+    };
+  }, []);
 
   // Bootstrap: check if there is an open session to monitor.
   useEffect(() => {
