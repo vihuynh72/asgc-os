@@ -5,6 +5,10 @@ import { isAuthorizedCronRequest } from "@/lib/cron-auth.mjs";
 import { getCronEnv, getSmsEnv } from "@/lib/envServer";
 import { buildKioskCheckoutReminderSmsText } from "@/lib/office-hours-kiosk-messages.mjs";
 import { buildOfficeHoursNotificationEmail } from "@/lib/office-hours-notification-email.mjs";
+import {
+  getOfficeHoursPresencePolicy,
+  OFFICE_HOURS_PRESENCE_ENFORCE_AFTER_HOUR_LOCAL,
+} from "@/lib/office-hours-presence-lifecycle.mjs";
 import { isOfficeHoursKioskSchemaError } from "@/lib/office-hours-kiosk-setup.mjs";
 import { sendSms } from "@/lib/smsSender.mjs";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
@@ -153,7 +157,8 @@ async function handle(request: NextRequest) {
 
   const kioskPhotoCleanup = await cleanupKioskCheckinPhotos(supabase);
 
-  const presenceTimeoutMinutes = 15;
+  const presencePolicy = getOfficeHoursPresencePolicy();
+  const presenceTimeoutMinutes = presencePolicy.inactivityTimeoutMinutes;
   const nowMs = Date.now();
   const staleBeforeMs = nowMs - presenceTimeoutMinutes * 60_000;
   const { data: officeConfigForDebug } = await supabase
@@ -189,7 +194,10 @@ async function handle(request: NextRequest) {
       const hour = Number(hourRaw);
       const minute = Number(minuteRaw);
       if (!Number.isFinite(hour) || !Number.isFinite(minute)) return false;
-      return hour > 17 || (hour === 17 && minute >= 0);
+      return (
+        hour > OFFICE_HOURS_PRESENCE_ENFORCE_AFTER_HOUR_LOCAL ||
+        (hour === OFFICE_HOURS_PRESENCE_ENFORCE_AFTER_HOUR_LOCAL && minute >= 0)
+      );
     } catch {
       return false;
     }
@@ -220,6 +228,8 @@ async function handle(request: NextRequest) {
       office_tz: officeTz,
       after_5pm_local: isAfter5pmLocal,
       timeout_minutes: presenceTimeoutMinutes,
+      enforce_after_hour_local: presencePolicy.enforceAfterHourLocal,
+      daytime_auto_close_enabled: presencePolicy.daytimeAutoCloseEnabled,
       open_sessions_sample: sessions,
       open_sessions_total_in_sample: sessions.length,
       open_sessions_stale_in_sample: sessions.filter((s) => s.stale).length,

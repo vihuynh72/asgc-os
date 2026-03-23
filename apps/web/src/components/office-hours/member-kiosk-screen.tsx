@@ -20,6 +20,10 @@ import {
   friendlyMemberActionError,
 } from "@/lib/office-hours-member-action.mjs";
 import {
+  dispatchOfficeHoursSessionClosed,
+  dispatchOfficeHoursSessionOpened,
+} from "@/lib/office-hours-presence-lifecycle.mjs";
+import {
   getMemberKioskFlowModel,
   getMemberKioskStateSummary,
   normalizeMemberCheckInSession,
@@ -333,6 +337,7 @@ export function MemberKioskScreen() {
 
     try {
       if (mode === "check_out") {
+        const closingSessionId = openSession?.id ?? null;
         const response = await fetch("/api/office-hours/check-out", {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -347,6 +352,7 @@ export function MemberKioskScreen() {
 
         setNotice("Checked out.");
         setOpenSession(null);
+        dispatchOfficeHoursSessionClosed(closingSessionId);
         void refreshOpenSession();
         return;
       }
@@ -383,6 +389,7 @@ export function MemberKioskScreen() {
         checkin_at: nextSession.checkin_at,
       });
       setNotice(`Checked in at ${formatWhen(nextSession.checkin_at)}.`);
+      dispatchOfficeHoursSessionOpened(nextSession.id);
       setPhoto(null);
       void refreshOpenSession();
     } catch {
