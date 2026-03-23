@@ -1,6 +1,6 @@
 export type AdminTier = "full" | "partial" | "read-only";
 
-export type AdminDomainId = "people" | "office_hours" | "meetings";
+export type AdminDomainId = "people" | "office_hours" | "communications" | "meetings";
 
 export type AdminStatusTone = "critical" | "warning" | "neutral" | "good";
 

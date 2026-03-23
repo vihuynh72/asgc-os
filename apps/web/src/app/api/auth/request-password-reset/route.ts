@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
 import { sendEmail } from "@/lib/emailSender";
+import { buildPasswordResetEmail } from "@/lib/auth/password-reset-email.mjs";
 import { normalizeEmail } from "@/lib/invitesAllowlist";
 import { safePostAuthRedirectPath, safeRedirectPathOrNull } from "@/lib/redirects";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
@@ -61,14 +62,10 @@ export async function POST(request: NextRequest) {
   resetLink.searchParams.set("token_hash", data.properties.hashed_token);
   resetLink.searchParams.set("type", data.properties.verification_type);
 
-  const subject = "ASGC OS password reset";
-  const text =
-    `Reset your ASGC OS password.\n\n` +
-    `Open this link to continue:\n${resetLink.toString()}\n\n` +
-    `If you did not request this email, you can ignore it.`;
+  const emailMessage = buildPasswordResetEmail({ resetLink: resetLink.toString() });
 
   try {
-    await sendEmail({ to: email, subject, text });
+    await sendEmail({ to: email, subject: emailMessage.subject, text: emailMessage.text, html: emailMessage.html });
   } catch (err) {
     console.error("[auth] sendEmail failed", { message: err instanceof Error ? err.message : "unknown_error" });
     return NextResponse.json({ ok: false }, { status: 500 });

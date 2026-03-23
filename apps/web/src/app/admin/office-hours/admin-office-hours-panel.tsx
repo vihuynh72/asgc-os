@@ -1,7 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { AdminCommunicationsLab } from "@/components/admin/admin-communications-lab";
 import { AdminDrawer } from "@/components/admin/admin-drawer";
 import { AdminEmptyState } from "@/components/admin/admin-empty-state";
 import { AdminStatStrip } from "@/components/admin/admin-stat-strip";
@@ -50,6 +52,31 @@ type OfficeHourAdminSession = {
 };
 
 type ViewMode = "day" | "week" | "month";
+
+type CommunicationsScenario = {
+  id: string;
+  label: string;
+};
+
+type CommunicationsGroup = {
+  id: string;
+  label: string;
+  description: string;
+};
+
+type CommunicationsTemplate = {
+  id: string;
+  groupId: string;
+  label: string;
+  description: string;
+  scenarios: CommunicationsScenario[];
+};
+
+type CommunicationSelection = {
+  groupId: string;
+  templateId: string;
+  scenarioId: string;
+} | null;
 
 function todayDateString(): string {
   const d = new Date();
@@ -206,7 +233,18 @@ async function postJson<T>(url: string, body: unknown): Promise<T> {
   return data;
 }
 
-export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[] }) {
+export function AdminOfficeHoursPanel({
+  initialUsers,
+  communications,
+}: {
+  initialUsers: UserRow[];
+  communications: {
+    canSend: boolean;
+    groups: CommunicationsGroup[];
+    templates: CommunicationsTemplate[];
+    initialSelection: CommunicationSelection;
+  };
+}) {
   const [view, setView] = useState<ViewMode>("week");
   const [anchorDate, setAnchorDate] = useState<string>(() => todayDateString());
   const [tz, setTz] = useState<string | null>(null);
@@ -595,7 +633,7 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
     <div className="space-y-5">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="text-sm text-foreground/68">
-          {tz ? `Times shown in ${tz}. The week view stays focused on Monday through Friday.` : "Loading office timezone…"}
+          {tz ? `Times shown in ${tz}.` : "Loading office timezone…"}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button variant={view === "day" ? "default" : "ghost"} onClick={() => setView("day")}>
@@ -612,7 +650,29 @@ export function AdminOfficeHoursPanel({ initialUsers }: { initialUsers: UserRow[
 
       <AdminStatStrip stats={stats} />
 
-      <AdminSurface title="Filters and navigation" description="Keep only the filters you need active. Everything updates in place.">
+      <AdminSurface
+        title="Communications"
+        description="Preview or self-send the Office Hours reminders admins touch most, then jump into the full email lab if you need the broader catalog."
+        action={
+          <Link
+            href="/admin/communications?group=office_hours"
+            className="inline-flex h-10 items-center justify-center rounded-full border border-black/8 bg-white px-4 text-sm font-medium text-foreground/78"
+          >
+            Open full lab
+          </Link>
+        }
+      >
+        <AdminCommunicationsLab
+          groups={communications.groups}
+          templates={communications.templates}
+          initialSelection={communications.initialSelection}
+          canSend={communications.canSend}
+          mode="compact"
+          fullLabHref="/admin/communications?group=office_hours"
+        />
+      </AdminSurface>
+
+      <AdminSurface title="Session workspace" description="Keep the live filters, review shortcuts, exports, and admin actions in one focused place.">
         <AdminToolbar
           primary={
             <>

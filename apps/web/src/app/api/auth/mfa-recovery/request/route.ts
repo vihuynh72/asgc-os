@@ -1,6 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
+import { buildMfaRecoveryEmail } from "@/lib/auth/mfa-recovery-email.mjs";
 import { sendEmail } from "@/lib/emailSender";
 import { getPublicEnv } from "@/lib/env";
 import { normalizeEmail } from "@/lib/invitesAllowlist";
@@ -66,15 +67,13 @@ export async function POST(request: NextRequest) {
   callbackLink.searchParams.set("token_hash", data.properties.hashed_token);
   callbackLink.searchParams.set("type", "recovery");
 
-  const subject = "ASGC OS: recover access (reset 2FA)";
-  const otpLine = data.properties.email_otp ? `\nOr use this one-time code:\n${data.properties.email_otp}\n` : "";
-  const text =
-    `You requested to recover access to ASGC OS.\n\n` +
-    `Open this link to continue:\n${callbackLink.toString()}\n${otpLine}\n` +
-    `If you did not request this email, you can ignore it.`;
+  const emailMessage = buildMfaRecoveryEmail({
+    recoveryLink: callbackLink.toString(),
+    emailOtp: data.properties.email_otp ?? null,
+  });
 
   try {
-    await sendEmail({ to: email, subject, text });
+    await sendEmail({ to: email, subject: emailMessage.subject, text: emailMessage.text, html: emailMessage.html });
   } catch (err) {
     console.error("[mfa-recovery] sendEmail failed", { message: err instanceof Error ? err.message : "unknown_error" });
     return NextResponse.json({ ok: false }, { status: 500 });
@@ -82,4 +81,3 @@ export async function POST(request: NextRequest) {
 
   return NextResponse.json({ ok: true });
 }
-

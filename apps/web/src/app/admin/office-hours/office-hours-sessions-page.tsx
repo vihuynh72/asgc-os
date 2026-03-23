@@ -1,4 +1,6 @@
 import { AdminHero } from "@/components/admin/admin-hero";
+import { getAdminCommunicationTemplateGroups, getAdminCommunicationTemplates, getAdminCommunicationsAccess } from "@/lib/admin/communications.mjs";
+import { getDefaultAdminCommunicationSelection } from "@/lib/admin/communications-service.mjs";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 import { requireAdminViewer } from "@/lib/admin/server";
 
@@ -14,7 +16,7 @@ type UserRow = {
 };
 
 export async function OfficeHoursSessionsPage({ redirectTo = "/admin/office-hours" }: { redirectTo?: string }) {
-  await requireAdminViewer({ redirectTo, capability: "office_hours" });
+  const viewer = await requireAdminViewer({ redirectTo, capability: "office_hours" });
 
   const admin = getSupabaseAdminClient();
   const { data: usersRaw } = await admin.rpc("admin_list_allowlisted_users", { _limit: 500 });
@@ -29,18 +31,33 @@ export async function OfficeHoursSessionsPage({ redirectTo = "/admin/office-hour
         created_at: r.created_at,
       };
     }) ?? [];
+  const communicationsAccess = getAdminCommunicationsAccess({ tier: viewer.tier, isEvp: viewer.isEvp });
+  const communicationsGroups = getAdminCommunicationTemplateGroups(communicationsAccess);
+  const communicationsTemplates = getAdminCommunicationTemplates(communicationsAccess);
+  const communicationsSelection = getDefaultAdminCommunicationSelection({
+    access: communicationsAccess,
+    preferredGroupId: "office_hours",
+  });
 
   return (
-    <div className="admin-page space-y-8">
+    <div className="admin-page admin-page-plain space-y-6">
       <AdminHero
         eyebrow="Office Hours"
         title="Sessions"
-        description="Use one operational workspace for live sessions, review, and overrides. Requirements, configuration, and export stay on their own routes."
+        description="Live Office Hours operations, reminders, review, and overrides in one calmer workspace."
       />
 
       <OfficeHoursSectionNav activeId="sessions" />
 
-      <AdminOfficeHoursPanel initialUsers={users as UserRow[]} />
+      <AdminOfficeHoursPanel
+        initialUsers={users as UserRow[]}
+        communications={{
+          canSend: communicationsAccess.canSend,
+          groups: communicationsGroups,
+          templates: communicationsTemplates,
+          initialSelection: communicationsSelection,
+        }}
+      />
     </div>
   );
 }

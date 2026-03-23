@@ -55,4 +55,6 @@ test("buildAdminOverrideNotification includes reason and exclusion flag", () => 
   assert.match(result.subject, /Office hours updated/i);
   assert.match(result.text, /Forgot to check out/);
   assert.match(result.text, /Excluded from totals: yes/i);
+  assert.match(result.html ?? "", /Your session was updated/i);
+  assert.match(result.html ?? "", /Forgot to check out/);
 });
