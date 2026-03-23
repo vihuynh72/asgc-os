@@ -76,13 +76,13 @@ function loginPanelCopy(mode: AuthPanelMode) {
       return {
         eyebrow: "First sign-in",
         title: "Start with your campus email",
-        detail: "We’ll email a link and code so you can create your account cleanly.",
+        detail: "We’ll email a six-digit code so you can create your account cleanly.",
       };
     case "first_time_verify":
       return {
         eyebrow: "Email code",
         title: "Finish your first sign-in",
-        detail: "Use the code if the email link does not open cleanly on this device.",
+        detail: "Enter the six-digit code from your email to finish signing in on this device.",
       };
     default:
       return {
@@ -205,7 +205,7 @@ export default function LoginPage() {
 
       setCode("");
       setPanelMode("first_time_verify");
-      setNotice({ tone: "good", message: "Check your email. The code below works if the link is rewritten by your email provider." });
+      setNotice({ tone: "good", message: "Check your email for the six-digit code, then enter it below." });
     } catch {
       setNotice({ tone: "critical", message: "Could not send the sign-in email. Try again." });
     } finally {
@@ -239,7 +239,7 @@ export default function LoginPage() {
           message:
             panelMode === "password_otp"
               ? "That browser verification code did not match. Request a fresh sign-in if needed."
-              : "That code could not be verified. Request a new sign-in email.",
+              : "That code could not be verified. Request a new sign-in code.",
         });
         return;
       }
@@ -404,7 +404,7 @@ export default function LoginPage() {
                           ? "Sending..."
                           : panelMode === "password"
                             ? "Sign in"
-                            : "Send sign-in email"}
+                            : "Send sign-in code"}
                     </Button>
 
                     {panelMode === "password" ? (
@@ -451,7 +451,7 @@ export default function LoginPage() {
                   <div className="rounded-[1.25rem] border border-slate-200/80 bg-slate-50/75 px-4 py-3 text-sm text-slate-600">
                     {panelMode === "password_otp"
                       ? "This browser is not trusted yet. Enter the email code to finish signing in."
-                      : "Open the email link if you can. If the link is rewritten or blocked, enter the code instead."}
+                      : "Enter the six-digit code from your email. There is no sign-in link in this flow."}
                   </div>
 
                   <label className="block space-y-2">
@@ -501,7 +501,7 @@ export default function LoginPage() {
               ) : null}
 
               <div className="rounded-[1.25rem] border border-dashed border-slate-300/85 bg-white/52 px-4 py-4 text-sm leading-6 text-slate-600">
-                <p>Use your GCCCD email. If your email provider rewrites links, the one-time code flow is the reliable fallback.</p>
+                <p>Use your GCCCD email. First-time sign-in emails now contain only the code, so Safe Links rewriting does not break the flow.</p>
                 <p className="mt-2">After the first successful sign-in, Office Hours can send you into the password-setup step automatically when needed.</p>
               </div>
             </div>

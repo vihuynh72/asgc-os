@@ -2,9 +2,10 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
-import { getPublicEnv } from "@/lib/env";
-import { generateSignInLink } from "@/lib/authLinks";
+import { issueFirstTimeSignInCode } from "@/lib/auth/first-time-signin.server.mjs";
 import { sendEmail } from "@/lib/emailSender";
+import { getPublicEnv } from "@/lib/env";
+import { getServerEnv } from "@/lib/envServer";
 import { normalizeEmail } from "@/lib/invitesAllowlist";
 import { safePostAuthRedirectPath, safeRedirectPathOrNull } from "@/lib/redirects";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
@@ -56,16 +57,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "invalid_request" }, { status: 400 });
   }
 
-  const origin = new URL(request.url).origin;
   const email = normalizeEmail(parsed.data.email);
   const safeRedirect = safeRedirectPathOrNull(parsed.data.redirectTo);
   const postAuthRedirectTo = safePostAuthRedirectPath(safeRedirect ?? "/dashboard");
 
-  const callbackUrl = new URL("/auth/callback", origin);
-  if (postAuthRedirectTo) callbackUrl.searchParams.set("redirectTo", postAuthRedirectTo);
-  const emailRedirectTo = callbackUrl.toString();
-
   const admin = getSupabaseAdminClient();
+  const serverEnv = getServerEnv();
   const { data: allowlisted, error: allowlistError } = await admin.rpc("is_email_allowlisted", { _email: email });
 
   if (allowlistError) {
@@ -77,28 +74,19 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "not_allowlisted" }, { status: 403 });
   }
 
-  let signInLink: Awaited<ReturnType<typeof generateSignInLink>>;
   try {
-    signInLink = await generateSignInLink(admin, email, emailRedirectTo);
+    await issueFirstTimeSignInCode({
+      admin,
+      email,
+      redirectTo: postAuthRedirectTo,
+      requestIp: request.headers.get("x-forwarded-for") ?? null,
+      userAgent: request.headers.get("user-agent"),
+      secret: serverEnv.SUPABASE_SERVICE_ROLE_KEY,
+      sendEmailFn: sendEmail,
+    });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "generate_link_failed";
-    console.error("[admin] generateLink failed", { message });
-    return NextResponse.json({ error: message }, { status: 500 });
-  }
-
-  const callbackLink = new URL(emailRedirectTo);
-  callbackLink.searchParams.set("token_hash", signInLink.hashedToken);
-  callbackLink.searchParams.set("type", signInLink.type);
-
-  const subject = "ASGC OS sign-in link";
-  const otpLine = signInLink.otp ? `\nOr use this one-time code:\n${signInLink.otp}\n` : "";
-  const text = `Sign in to ASGC OS.\n\nOpen this link to continue:\n${callbackLink.toString()}\n${otpLine}\nIf you did not request this email, you can ignore it.`;
-
-  try {
-    await sendEmail({ to: email, subject, text });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "send_email_failed";
-    console.error("[admin] sendEmail failed", { message });
+    const message = err instanceof Error ? err.message : "first_time_code_failed";
+    console.error("[admin] first-time sign-in email failed", { message });
     return NextResponse.json({ error: message }, { status: 500 });
   }
 

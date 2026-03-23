@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 
 import {
   getOfficeHoursPasswordSetupRedirect,
-  isLegacyOfficeHoursKioskPath,
   isOfficeHoursSelfServicePath,
+  isSignedInOfficeHoursKioskPath,
   requiresProtectedAuth,
   requiresStepUpMfa,
 } from "../src/lib/office-hours-gates.mjs";
@@ -27,13 +27,14 @@ test("office hours self-service paths exclude the selfie review workspace", () =
   assert.equal(isOfficeHoursSelfServicePath("/office-hours"), true);
   assert.equal(isOfficeHoursSelfServicePath("/office-hours/check-in"), true);
   assert.equal(isOfficeHoursSelfServicePath("/office-hours/check-out"), true);
+  assert.equal(isOfficeHoursSelfServicePath("/office-hours/kiosk"), true);
   assert.equal(isOfficeHoursSelfServicePath("/office-hours/setup-password"), true);
   assert.equal(isOfficeHoursSelfServicePath("/office-hours/kiosk/review"), false);
 });
 
-test("legacy kiosk entry is only the public shim path", () => {
-  assert.equal(isLegacyOfficeHoursKioskPath("/office-hours/kiosk"), true);
-  assert.equal(isLegacyOfficeHoursKioskPath("/office-hours/kiosk/review"), false);
+test("signed-in kiosk paths stay inside the normal member auth model", () => {
+  assert.equal(isSignedInOfficeHoursKioskPath("/office-hours/kiosk"), true);
+  assert.equal(isSignedInOfficeHoursKioskPath("/office-hours/kiosk/review"), false);
 });
 
 test("password setup redirects keep members inside office hours", () => {

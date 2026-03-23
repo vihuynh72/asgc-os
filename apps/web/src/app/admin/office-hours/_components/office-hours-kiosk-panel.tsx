@@ -56,7 +56,7 @@ export function OfficeHoursKioskPanel({
 
         <div className="mt-5 flex flex-wrap gap-3">
           <Link
-            href="/office-hours"
+            href="/office-hours/kiosk"
             className="inline-flex h-11 items-center justify-center rounded-full bg-foreground px-5 text-sm font-medium text-background"
           >
             Open member Office Hours
