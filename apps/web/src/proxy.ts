@@ -4,11 +4,12 @@ import { NextResponse, type NextRequest } from "next/server";
 import { DESIGN_COOKIE_NAME, DESIGN_PARAM_NAME, normalizeDesign } from "@/lib/design-toggle.mjs";
 import {
   getOfficeHoursPasswordSetupRedirect,
-  isLegacyOfficeHoursKioskPath,
+  isSignedInOfficeHoursKioskPath,
   isOfficeHoursSelfServicePath,
   requiresProtectedAuth,
   requiresStepUpMfa,
 } from "@/lib/office-hours-gates.mjs";
+import { OFFICE_HOURS_MEMBER_KIOSK_PATH } from "@/lib/office-hours-member-routing.mjs";
 import { getPublicEnv, hasPublicSupabaseEnv } from "@/lib/env";
 import { POST_AUTH_REDIRECT_COOKIE } from "@/lib/redirects";
 
@@ -51,16 +52,16 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(redirectUrl);
   }
 
-  const isLegacyKioskEntry = isLegacyOfficeHoursKioskPath(pathname);
+  const isSignedInKioskEntry = isSignedInOfficeHoursKioskPath(pathname);
   const isProtected = requiresProtectedAuth(pathname);
 
   const hasSupabaseAuthCookie = request.cookies.getAll().some((c) => c.name.startsWith("sb-"));
   if (!hasSupabaseAuthCookie) {
-    if (isLegacyKioskEntry) {
+    if (isSignedInKioskEntry) {
       const redirectUrl = request.nextUrl.clone();
       redirectUrl.pathname = "/login";
       redirectUrl.search = "";
-      redirectUrl.searchParams.set("redirectTo", "/office-hours");
+      redirectUrl.searchParams.set("redirectTo", OFFICE_HOURS_MEMBER_KIOSK_PATH);
       return NextResponse.redirect(redirectUrl);
     }
 
@@ -106,11 +107,11 @@ export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request });
 
   if (!user) {
-    if (isLegacyKioskEntry) {
+    if (isSignedInKioskEntry) {
       const redirectUrl = request.nextUrl.clone();
       redirectUrl.pathname = "/login";
       redirectUrl.search = "";
-      redirectUrl.searchParams.set("redirectTo", "/office-hours");
+      redirectUrl.searchParams.set("redirectTo", OFFICE_HOURS_MEMBER_KIOSK_PATH);
       response = NextResponse.redirect(redirectUrl);
     } else if (isProtected) {
       const redirectUrl = request.nextUrl.clone();
@@ -127,12 +128,7 @@ export async function proxy(request: NextRequest) {
       });
     }
   } else {
-    if (isLegacyKioskEntry) {
-      const redirectUrl = request.nextUrl.clone();
-      redirectUrl.pathname = "/office-hours";
-      redirectUrl.search = "";
-      response = NextResponse.redirect(redirectUrl);
-    } else if (isOfficeHoursSelfServicePath(pathname) && pathname !== "/office-hours/setup-password") {
+    if (isOfficeHoursSelfServicePath(pathname) && pathname !== "/office-hours/setup-password") {
       const { data: profile } = await supabase
         .from("profile_private")
         .select("password_ready_at")

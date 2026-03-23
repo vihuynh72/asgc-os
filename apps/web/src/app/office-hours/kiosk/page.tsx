@@ -1,5 +1,5 @@
-import { redirect } from "next/navigation";
+import { MemberKioskScreen } from "@/components/office-hours/member-kiosk-screen";
 
 export default function OfficeHoursKioskPage() {
-  redirect("/office-hours");
+  return <MemberKioskScreen />;
 }

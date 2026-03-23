@@ -13,9 +13,9 @@ export function getLoginModeContent(authMode) {
 
   return {
     label: "Email",
-    eyebrow: "Magic link",
+    eyebrow: "Email code",
     title: "Campus email first",
-    detail: "Link or one-time code.",
+    detail: "Code only. No sign-in link.",
   };
 }
 
@@ -27,7 +27,7 @@ export function getLoginPrimaryActionLabel({ authMode, isSubmitting, isSigningIn
     return isSigningIn ? "Signing in..." : "Sign in";
   }
 
-  return isSubmitting ? "Sending..." : "Send link";
+  return isSubmitting ? "Sending..." : "Send code";
 }
 
 /**
@@ -42,7 +42,7 @@ export function getLoginPrimaryActionLabel({ authMode, isSubmitting, isSigningIn
 export function getLoginStatusNotice({ authMode, status, passwordStatus, resetStatus }) {
   if (authMode === "email") {
     if (status === "sent") {
-      return { tone: "good", message: "Link sent. You can also enter the code below." };
+      return { tone: "good", message: "Code sent. Check your email and enter it below." };
     }
 
     if (status === "error") {

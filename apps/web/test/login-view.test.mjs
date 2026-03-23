@@ -11,9 +11,9 @@ import {
 test("getLoginModeContent keeps mode copy compact", () => {
   assert.deepEqual(getLoginModeContent("email"), {
     label: "Email",
-    eyebrow: "Magic link",
+    eyebrow: "Email code",
     title: "Campus email first",
-    detail: "Link or one-time code.",
+    detail: "Code only. No sign-in link.",
   });
 
   assert.deepEqual(getLoginModeContent("password"), {
@@ -27,7 +27,7 @@ test("getLoginModeContent keeps mode copy compact", () => {
 test("getLoginPrimaryActionLabel matches auth mode and loading state", () => {
   assert.equal(
     getLoginPrimaryActionLabel({ authMode: "email", isSubmitting: false, isSigningIn: false }),
-    "Send link",
+    "Send code",
   );
   assert.equal(
     getLoginPrimaryActionLabel({ authMode: "email", isSubmitting: true, isSigningIn: false }),
@@ -46,7 +46,7 @@ test("getLoginPrimaryActionLabel matches auth mode and loading state", () => {
 test("getLoginStatusNotice returns concise tone-aware copy", () => {
   assert.deepEqual(
     getLoginStatusNotice({ authMode: "email", status: "sent", passwordStatus: "idle", resetStatus: "idle" }),
-    { tone: "good", message: "Link sent. You can also enter the code below." },
+    { tone: "good", message: "Code sent. Check your email and enter it below." },
   );
 
   assert.deepEqual(

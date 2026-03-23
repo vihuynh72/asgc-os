@@ -5,6 +5,11 @@ import { createClient } from "@supabase/supabase-js";
 import { z } from "zod";
 
 import {
+  PASSWORD_SIGNIN_CHALLENGE_KIND,
+  AUTH_CODE_EMAIL_TTL_MINUTES,
+  buildAuthCodeEmail,
+} from "@/lib/auth/auth-code-email.mjs";
+import {
   PENDING_PASSWORD_LOGIN_COOKIE,
   buildLoginEmailChallengeExpiry,
   hashLoginEmailChallengeCode,
@@ -161,15 +166,19 @@ export async function POST(request: NextRequest) {
   }
 
   const response = NextResponse.json({ ok: true, nextStep: "email_otp", redirectTo });
-
-  const subject = "ASGC OS sign-in code";
-  const text =
-    `Your ASGC OS sign-in code is ${challengeCode}.\n\n` +
-    `It expires in 10 minutes.\n\n` +
-    `If you did not request this code, you can ignore this email.`;
+  const emailMessage = buildAuthCodeEmail({
+    kind: PASSWORD_SIGNIN_CHALLENGE_KIND,
+    code: challengeCode,
+    expiresInMinutes: AUTH_CODE_EMAIL_TTL_MINUTES,
+  });
 
   try {
-    await sendEmail({ to: email, subject, text });
+    await sendEmail({
+      to: email,
+      subject: emailMessage.subject,
+      text: emailMessage.text,
+      html: emailMessage.html,
+    });
   } catch (err) {
     console.error("[auth] sendEmail failed", { message: err instanceof Error ? err.message : "unknown_error" });
     return NextResponse.json({ ok: false }, { status: 500 });

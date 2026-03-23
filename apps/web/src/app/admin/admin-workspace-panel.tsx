@@ -2420,19 +2420,19 @@ export function AdminWorkspacePanel({
   async function onSendInviteLink(invite: InviteAllowlistRow) {
     if (!invite.email_normalized || invite.email_normalized.startsWith("@")) return;
     if (!invite.is_active) {
-      setStatus("Invite is inactive. Reactivate it before sending a sign-in link.");
+      setStatus("Invite is inactive. Reactivate it before sending a sign-in code.");
       toast.error("Invite is inactive. Reactivate it first.");
       return;
     }
     if (isInviteBlocked(invite)) {
-      setStatus("Invite is blocked. Remove the ban before sending a sign-in link.");
+      setStatus("Invite is blocked. Remove the ban before sending a sign-in code.");
       toast.error("Invite is blocked. Remove the ban first.");
       return;
     }
-    const ok = window.confirm(`Send a sign-in link to ${invite.email}?`);
+    const ok = window.confirm(`Send a sign-in code to ${invite.email}?`);
     if (!ok) return;
 
-    setStatus(`Sending sign-in link to ${invite.email}...`);
+    setStatus(`Sending sign-in code to ${invite.email}...`);
     try {
       await fetchJson<{ ok: true }>("/api/admin/invites-allowlist/send-link", {
         method: "POST",
@@ -2442,7 +2442,7 @@ export function AdminWorkspacePanel({
       setStatus("");
       toast.success(`Sign-in link sent to ${invite.email}`);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "Failed to send sign-in link";
+      const msg = e instanceof Error ? e.message : "Failed to send sign-in code";
       setStatus(msg);
       toast.error(msg);
     }
@@ -4295,10 +4295,10 @@ export function AdminWorkspacePanel({
                           isDomain
                             ? "Sign-in links require an exact email (not a domain entry)"
                             : !inv.is_active
-                              ? "Reactivate this invite before sending a sign-in link"
+                              ? "Reactivate this invite before sending a sign-in code"
                               : isInviteBlocked(inv)
-                                ? "Remove the ban before sending a sign-in link"
-                                : "Send a sign-in link"
+                                ? "Remove the ban before sending a sign-in code"
+                                : "Send a sign-in code"
                         }
                       >
                         Send link
