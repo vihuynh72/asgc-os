@@ -3,10 +3,7 @@
 import type { FormEvent } from "react";
 import { useMemo, useState } from "react";
 
-import { AdminField } from "@/components/admin/admin-field";
 import { AdminInlineNotice } from "@/components/admin/admin-inline-notice";
-import { AdminStatusChip } from "@/components/admin/admin-status-chip";
-import { AdminSurface } from "@/components/admin/admin-surface";
 import { Button } from "@/components/ui/button";
 import type { OfficeHourRequirementRow, TermRow } from "@/lib/admin/server";
 
@@ -93,73 +90,63 @@ export function OfficeHoursRequirementsPanel({
   }
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <OfficeHoursSectionNav activeId="requirements" />
 
       {feedback ? <AdminInlineNotice tone={feedback.tone}>{feedback.message}</AdminInlineNotice> : null}
 
-      <AdminSurface
-        title="Weekly requirements"
-        description="Set the expected hours for each role without carrying live session review onto the same page."
-        action={
-          <div className="flex flex-wrap items-center gap-3">
-            <AdminStatusChip
-              tone={loading ? "warning" : "neutral"}
-              icon={loading ? "clock" : "dot"}
-              label={loading ? "Loading term" : selectedTerm?.name ?? "No term"}
-            />
-            <select
-              value={termId}
-              onChange={async (event) => {
-                const nextTermId = event.target.value;
-                setTermId(nextTermId);
-                await loadRequirements(nextTermId);
-              }}
-            >
-              {terms.map((term) => (
-                <option key={term.id} value={term.id}>
-                  {term.name}
-                </option>
-              ))}
-            </select>
+      <form className="max-w-sm space-y-6" onSubmit={handleSave}>
+        {/* Term selector */}
+        <div className="flex items-center gap-3">
+          <select
+            className="h-9 rounded-xl border border-[var(--admin-border-soft)] bg-white px-3 text-sm text-foreground"
+            value={termId}
+            onChange={async (event) => {
+              const nextTermId = event.target.value;
+              setTermId(nextTermId);
+              await loadRequirements(nextTermId);
+            }}
+          >
+            {terms.map((term) => (
+              <option key={term.id} value={term.id}>{term.name}</option>
+            ))}
+          </select>
+          {loading && <span className="text-xs text-foreground/45">Loading…</span>}
+        </div>
+
+        {/* Role hours table */}
+        <div className="rounded-[1.2rem] border border-[var(--admin-border-soft)] bg-white overflow-hidden">
+          <div className="border-b px-4 py-2.5 text-[0.68rem] font-semibold uppercase tracking-wider text-foreground/40 grid grid-cols-[1fr_8rem]">
+            <span>Role</span>
+            <span>Hours / week</span>
           </div>
-        }
-      >
-        <form className="space-y-6" onSubmit={handleSave}>
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <div className="divide-y divide-[var(--admin-border-soft)]">
             {ROLE_ROWS.map((role) => (
-              <div key={role.key} className="rounded-[1.4rem] border border-[var(--admin-border-soft)] bg-white/80 p-4">
-                <AdminField label={role.label} hint="Hours per week">
-                  <input
-                    type="number"
-                    min={0}
-                    value={hoursByRole.get(role.key) ?? 0}
-                    onChange={(event) => {
-                      const next = Number(event.target.value || 0);
-                      setHoursByRole((current) => {
-                        const updated = new Map(current);
-                        updated.set(role.key, Number.isFinite(next) ? next : 0);
-                        return updated;
-                      });
-                    }}
-                  />
-                </AdminField>
+              <div key={role.key} className="grid grid-cols-[1fr_8rem] items-center px-4 py-3">
+                <span className="text-sm font-medium text-foreground">{role.label}</span>
+                <input
+                  type="number"
+                  min={0}
+                  className="h-9 w-full rounded-xl border border-[var(--admin-border-soft)] bg-foreground/[0.02] px-3 text-sm text-foreground"
+                  value={hoursByRole.get(role.key) ?? 0}
+                  onChange={(event) => {
+                    const next = Number(event.target.value || 0);
+                    setHoursByRole((current) => {
+                      const updated = new Map(current);
+                      updated.set(role.key, Number.isFinite(next) ? next : 0);
+                      return updated;
+                    });
+                  }}
+                />
               </div>
             ))}
           </div>
+        </div>
 
-          <div className="flex flex-wrap items-center gap-3">
-            <Button className="h-12 rounded-full px-5" type="submit" disabled={saving}>
-              {saving ? "Saving..." : "Save requirements"}
-            </Button>
-            <AdminStatusChip
-              tone={loading ? "warning" : "neutral"}
-              icon={loading ? "clock" : "dot"}
-              label={loading ? "Loading term" : selectedTerm?.name ?? "No term"}
-            />
-          </div>
-        </form>
-      </AdminSurface>
+        <Button className="h-10 rounded-full px-5" type="submit" disabled={saving || loading}>
+          {saving ? "Saving…" : "Save requirements"}
+        </Button>
+      </form>
     </div>
   );
 }

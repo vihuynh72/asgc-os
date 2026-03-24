@@ -3,9 +3,7 @@
 import type { FormEvent } from "react";
 import { useState } from "react";
 
-import { AdminField } from "@/components/admin/admin-field";
 import { AdminInlineNotice } from "@/components/admin/admin-inline-notice";
-import { AdminSurface } from "@/components/admin/admin-surface";
 import { Button } from "@/components/ui/button";
 import type { OfficeConfigRow, OfficeLocationRow } from "@/lib/admin/server";
 
@@ -92,142 +90,181 @@ export function OfficeHoursConfigPanel({
   }
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <OfficeHoursSectionNav activeId="config" />
 
       {feedback ? <AdminInlineNotice tone={feedback.tone}>{feedback.message}</AdminInlineNotice> : null}
 
-      <form className="space-y-6" onSubmit={handleSubmit}>
-        <AdminSurface title="Primary office" description="Keep the physical location and geofence readable instead of burying them in a wide settings wall.">
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            <AdminField label="Office name">
-              <input value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} />
-            </AdminField>
-            <AdminField label="Timezone">
+      <form className="space-y-8 max-w-2xl" onSubmit={handleSubmit}>
+        {/* Location */}
+        <section className="space-y-4">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-foreground/40">Location</h3>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="block space-y-1.5 text-sm">
+              <span className="font-medium text-foreground/75">Office name</span>
               <input
+                className="h-10 w-full rounded-xl border border-[var(--admin-border-soft)] bg-white px-3 text-sm"
+                value={form.name}
+                onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
+              />
+            </label>
+            <label className="block space-y-1.5 text-sm">
+              <span className="font-medium text-foreground/75">Timezone</span>
+              <input
+                className="h-10 w-full rounded-xl border border-[var(--admin-border-soft)] bg-white px-3 text-sm"
                 value={form.timezone}
                 onChange={(event) => setForm((current) => ({ ...current, timezone: event.target.value }))}
                 placeholder="America/Los_Angeles"
               />
-            </AdminField>
-            <AdminField label="Radius (meters)">
+            </label>
+            <label className="block space-y-1.5 text-sm">
+              <span className="font-medium text-foreground/75">Latitude</span>
               <input
                 type="number"
-                min={0}
-                value={form.radius_m}
-                onChange={(event) => setForm((current) => ({ ...current, radius_m: Number(event.target.value || 0) }))}
-              />
-            </AdminField>
-            <AdminField label="Grace radius (meters)">
-              <input
-                type="number"
-                min={0}
-                value={form.grace_radius_m}
-                onChange={(event) => setForm((current) => ({ ...current, grace_radius_m: Number(event.target.value || 0) }))}
-              />
-            </AdminField>
-            <AdminField label="Latitude">
-              <input
-                type="number"
+                className="h-10 w-full rounded-xl border border-[var(--admin-border-soft)] bg-white px-3 text-sm"
                 value={form.lat}
                 onChange={(event) => setForm((current) => ({ ...current, lat: Number(event.target.value || 0) }))}
               />
-            </AdminField>
-            <AdminField label="Longitude">
+            </label>
+            <label className="block space-y-1.5 text-sm">
+              <span className="font-medium text-foreground/75">Longitude</span>
               <input
                 type="number"
+                className="h-10 w-full rounded-xl border border-[var(--admin-border-soft)] bg-white px-3 text-sm"
                 value={form.lon}
                 onChange={(event) => setForm((current) => ({ ...current, lon: Number(event.target.value || 0) }))}
               />
-            </AdminField>
+            </label>
           </div>
-        </AdminSurface>
+        </section>
 
-        <AdminSurface title="Availability and reminders" description="Reminder timing and allowed days stay grouped together so weekly policy is easy to reason about.">
-          <div className="grid gap-6 xl:grid-cols-2">
-            <div className="space-y-4">
-              <label className="flex items-center gap-3 text-sm text-foreground/72">
-                <input
-                  type="checkbox"
-                  checked={form.quiet_hours_enabled}
-                  onChange={(event) => setForm((current) => ({ ...current, quiet_hours_enabled: event.target.checked }))}
-                />
-                Enable quiet hours
-              </label>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <AdminField label="Quiet start">
+        {/* Geofencing */}
+        <section className="space-y-4">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-foreground/40">Geofencing</h3>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="block space-y-1.5 text-sm">
+              <span className="font-medium text-foreground/75">Radius (meters)</span>
+              <input
+                type="number"
+                min={0}
+                className="h-10 w-full rounded-xl border border-[var(--admin-border-soft)] bg-white px-3 text-sm"
+                value={form.radius_m}
+                onChange={(event) => setForm((current) => ({ ...current, radius_m: Number(event.target.value || 0) }))}
+              />
+            </label>
+            <label className="block space-y-1.5 text-sm">
+              <span className="font-medium text-foreground/75">Grace radius (meters)</span>
+              <input
+                type="number"
+                min={0}
+                className="h-10 w-full rounded-xl border border-[var(--admin-border-soft)] bg-white px-3 text-sm"
+                value={form.grace_radius_m}
+                onChange={(event) => setForm((current) => ({ ...current, grace_radius_m: Number(event.target.value || 0) }))}
+              />
+            </label>
+          </div>
+        </section>
+
+        {/* Policy */}
+        <section className="space-y-5">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-foreground/40">Policy</h3>
+
+          {/* Quiet hours */}
+          <div className="space-y-3">
+            <label className="flex items-center gap-3 text-sm text-foreground/70">
+              <input
+                type="checkbox"
+                checked={form.quiet_hours_enabled}
+                onChange={(event) => setForm((current) => ({ ...current, quiet_hours_enabled: event.target.checked }))}
+              />
+              <span className="font-medium">Enable quiet hours</span>
+            </label>
+            {form.quiet_hours_enabled && (
+              <div className="ml-6 grid gap-4 sm:grid-cols-2">
+                <label className="block space-y-1.5 text-sm">
+                  <span className="font-medium text-foreground/75">Start</span>
                   <input
                     type="time"
+                    className="h-10 w-full rounded-xl border border-[var(--admin-border-soft)] bg-white px-3 text-sm"
                     value={form.quiet_hours_start_local.slice(0, 5)}
                     onChange={(event) => setForm((current) => ({ ...current, quiet_hours_start_local: `${event.target.value}:00` }))}
                   />
-                </AdminField>
-                <AdminField label="Quiet end">
+                </label>
+                <label className="block space-y-1.5 text-sm">
+                  <span className="font-medium text-foreground/75">End</span>
                   <input
                     type="time"
+                    className="h-10 w-full rounded-xl border border-[var(--admin-border-soft)] bg-white px-3 text-sm"
                     value={form.quiet_hours_end_local.slice(0, 5)}
                     onChange={(event) => setForm((current) => ({ ...current, quiet_hours_end_local: `${event.target.value}:00` }))}
                   />
-                </AdminField>
+                </label>
               </div>
-            </div>
-
-            <div className="space-y-4">
-              <label className="flex items-center gap-3 text-sm text-foreground/72">
-                <input
-                  type="checkbox"
-                  checked={form.weekly_hours_reminder_enabled}
-                  onChange={(event) =>
-                    setForm((current) => ({ ...current, weekly_hours_reminder_enabled: event.target.checked }))
-                  }
-                />
-                Enable weekly reminder
-              </label>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <AdminField label="Reminder weekday">
-                  <select
-                    value={form.weekly_hours_reminder_weekday}
-                    onChange={(event) =>
-                      setForm((current) => ({ ...current, weekly_hours_reminder_weekday: Number(event.target.value) }))
-                    }
-                  >
-                    {WEEKDAY_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </AdminField>
-                <AdminField label="Reminder time">
-                  <input
-                    type="time"
-                    value={form.weekly_hours_reminder_time_local.slice(0, 5)}
-                    onChange={(event) =>
-                      setForm((current) => ({ ...current, weekly_hours_reminder_time_local: `${event.target.value}:00` }))
-                    }
-                  />
-                </AdminField>
-              </div>
-            </div>
+            )}
           </div>
 
-          <div className="mt-6 space-y-4">
-            <label className="flex items-center gap-3 text-sm text-foreground/72">
+          {/* Weekly reminder */}
+          <div className="space-y-3">
+            <label className="flex items-center gap-3 text-sm text-foreground/70">
+              <input
+                type="checkbox"
+                checked={form.weekly_hours_reminder_enabled}
+                onChange={(event) => setForm((current) => ({ ...current, weekly_hours_reminder_enabled: event.target.checked }))}
+              />
+              <span className="font-medium">Enable weekly reminder</span>
+            </label>
+            {form.weekly_hours_reminder_enabled && (
+              <div className="ml-6 grid gap-4 sm:grid-cols-2">
+                <label className="block space-y-1.5 text-sm">
+                  <span className="font-medium text-foreground/75">Day</span>
+                  <select
+                    className="h-10 w-full rounded-xl border border-[var(--admin-border-soft)] bg-white px-3 text-sm"
+                    value={form.weekly_hours_reminder_weekday}
+                    onChange={(event) => setForm((current) => ({ ...current, weekly_hours_reminder_weekday: Number(event.target.value) }))}
+                  >
+                    {WEEKDAY_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block space-y-1.5 text-sm">
+                  <span className="font-medium text-foreground/75">Time</span>
+                  <input
+                    type="time"
+                    className="h-10 w-full rounded-xl border border-[var(--admin-border-soft)] bg-white px-3 text-sm"
+                    value={form.weekly_hours_reminder_time_local.slice(0, 5)}
+                    onChange={(event) => setForm((current) => ({ ...current, weekly_hours_reminder_time_local: `${event.target.value}:00` }))}
+                  />
+                </label>
+              </div>
+            )}
+          </div>
+
+          {/* Allowed days */}
+          <div className="space-y-3">
+            <label className="flex items-center gap-3 text-sm text-foreground/70">
               <input
                 type="checkbox"
                 checked={form.office_hours_allow_weekends}
                 onChange={(event) => setForm((current) => ({ ...current, office_hours_allow_weekends: event.target.checked }))}
               />
-              Allow weekends
+              <span className="font-medium">Allow weekends</span>
             </label>
-
-            <div className="grid gap-3 md:grid-cols-5">
+            <div className="flex flex-wrap gap-2">
               {WEEKDAY_OPTIONS.map((option) => {
                 const checked = form.office_hours_allowed_weekdays.includes(option.value);
                 return (
-                  <label key={option.value} className="flex items-center gap-3 rounded-[1.1rem] border border-[var(--admin-border-soft)] bg-white/70 px-4 py-3 text-sm text-foreground/72">
+                  <label
+                    key={option.value}
+                    className={`flex cursor-pointer items-center gap-2 rounded-full border px-3.5 py-1.5 text-xs font-medium transition ${
+                      checked
+                        ? "border-foreground/20 bg-foreground text-background"
+                        : "border-[var(--admin-border-soft)] bg-white text-foreground/65 hover:border-[var(--admin-border-strong)]"
+                    }`}
+                  >
                     <input
                       type="checkbox"
+                      className="sr-only"
                       checked={checked}
                       onChange={(event) =>
                         setForm((current) => ({
@@ -243,19 +280,23 @@ export function OfficeHoursConfigPanel({
                 );
               })}
             </div>
-
-            <AdminField label="Extra allowed dates" hint="One YYYY-MM-DD per line">
-              <textarea
-                rows={5}
-                value={form.office_hours_extra_allowed_dates}
-                onChange={(event) => setForm((current) => ({ ...current, office_hours_extra_allowed_dates: event.target.value }))}
-              />
-            </AdminField>
           </div>
-        </AdminSurface>
 
-        <Button className="h-12 rounded-full px-5" type="submit" disabled={saving}>
-          {saving ? "Saving..." : "Save configuration"}
+          {/* Extra dates */}
+          <label className="block space-y-1.5 text-sm">
+            <span className="font-medium text-foreground/75">Extra allowed dates</span>
+            <span className="ml-2 text-xs text-foreground/45">One YYYY-MM-DD per line</span>
+            <textarea
+              rows={4}
+              className="w-full rounded-xl border border-[var(--admin-border-soft)] bg-white px-3 py-2.5 text-sm"
+              value={form.office_hours_extra_allowed_dates}
+              onChange={(event) => setForm((current) => ({ ...current, office_hours_extra_allowed_dates: event.target.value }))}
+            />
+          </label>
+        </section>
+
+        <Button className="h-10 rounded-full px-5" type="submit" disabled={saving}>
+          {saving ? "Saving…" : "Save configuration"}
         </Button>
       </form>
     </div>
