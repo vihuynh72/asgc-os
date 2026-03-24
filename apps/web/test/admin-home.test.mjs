@@ -43,6 +43,7 @@ test("buildAdminHomeViewModel shapes headline-only cards and separate issues", (
   assert.deepEqual(result.cards.map((card) => card.statusTone), ["warning", "warning", "warning", "critical"]);
   assert.deepEqual(result.cards.map((card) => card.statusIcon), ["clock", "clock", "clock", "triangle"]);
   assert.deepEqual(result.cards.map((card) => card.count), [4, 0, 2, 2]);
+  assert.equal(result.cards[1].primaryLabel, "Open schedule");
   assert.deepEqual(result.issues, [
     {
       id: "meetings-notices",
