@@ -106,6 +106,12 @@ test("buildOfficeHoursSessionsWorkspaceModel merges shifts and sessions into wee
     weekStart: "2026-03-23",
     todayDate: "2026-03-24",
     nowIso: "2026-03-24T19:15:00.000Z",
+    users: [
+      { id: "u1", display_name: "Alex", email: "alex@gcccd.edu" },
+      { id: "u2", display_name: "Jamie", email: "jamie@gcccd.edu" },
+      { id: "u3", display_name: "Taylor", email: "taylor@gcccd.edu" },
+      { id: "u4", display_name: "Morgan", email: "morgan@gcccd.edu" },
+    ],
     weekRows: [
       {
         user_id: "u1",
@@ -130,6 +136,19 @@ test("buildOfficeHoursSessionsWorkspaceModel merges shifts and sessions into wee
         required_hours: 8,
         total_hours: 8,
         missing_hours: 0,
+        needs_review_sessions: 0,
+        member_status: "assigned",
+      },
+      {
+        user_id: "u4",
+        week_start: "2026-03-23",
+        role_key: "board_member",
+        role: "Board Member",
+        name: "Morgan",
+        email: "morgan@gcccd.edu",
+        required_hours: 4,
+        total_hours: 0,
+        missing_hours: 4,
         needs_review_sessions: 0,
         member_status: "assigned",
       },
@@ -230,33 +249,65 @@ test("buildOfficeHoursSessionsWorkspaceModel merges shifts and sessions into wee
     ],
   });
 
+  assert.equal(model.weekDays.length, 5);
+  assert.equal(model.executive.weekCompletionLabel, "73%");
+  assert.equal(model.executive.openSessions, 1);
+  assert.equal(model.executive.scheduledToday, 2);
+  assert.equal(model.executive.attentionItems, 2);
   assert.equal(model.today.date, "2026-03-24");
   assert.equal(model.today.openSessions.length, 1);
-  assert.equal(model.today.upcomingShifts.length, 0);
+  assert.equal(model.today.upcomingCells.length, 0);
   assert.equal(model.today.blockers.length, 2);
   assert.deepEqual(
     model.today.blockers.map((blocker) => blocker.kind),
     ["coverage_request", "review_flag"],
   );
+  assert.equal(model.today.onShiftCells.length, 2);
 
-  const todayColumn = model.days.find((day) => day.date === "2026-03-24");
-  assert.equal(todayColumn?.isToday, true);
-  assert.equal(todayColumn?.lanes.length, 3);
+  const alexRow = model.rows.find((row) => row.userId === "u1");
+  const jamieRow = model.rows.find((row) => row.userId === "u2");
+  const taylorRow = model.rows.find((row) => row.userId === "u3");
+  const morganRow = model.rows.find((row) => row.userId === "u4");
 
-  const missingLane = todayColumn?.lanes.find((lane) => lane.userId === "u2");
-  const openLane = todayColumn?.lanes.find((lane) => lane.userId === "u1");
-  const unscheduledLane = todayColumn?.lanes.find((lane) => lane.userId === "u3");
+  assert.equal(model.rows.length, 4);
 
-  assert.equal(missingLane?.sessionState, "no_session_yet");
-  assert.equal(missingLane?.coverageState, "coverage_requested");
-  assert.equal(openLane?.sessionState, "checked_in_now");
-  assert.equal(openLane?.hasShift, true);
-  assert.equal(unscheduledLane?.sessionState, "completed_today");
-  assert.equal(unscheduledLane?.isUnscheduledSession, true);
-  assert.equal(unscheduledLane?.hasShift, false);
+  const alexToday = alexRow?.cells.find((cell) => cell.date === "2026-03-24");
+  const jamieToday = jamieRow?.cells.find((cell) => cell.date === "2026-03-24");
+  const taylorToday = taylorRow?.cells.find((cell) => cell.date === "2026-03-24");
+  const morganToday = morganRow?.cells.find((cell) => cell.date === "2026-03-24");
 
-  const futureColumn = model.days.find((day) => day.date === "2026-03-25");
-  assert.equal(futureColumn?.lanes[0]?.coverageState, "covered");
+  assert.equal(alexToday?.sessionState, "checked_in_now");
+  assert.equal(alexToday?.hasShift, true);
+  assert.equal(alexToday?.sessions.length, 1);
+  assert.equal(jamieToday?.sessionState, "no_session_yet");
+  assert.equal(jamieToday?.coverageState, "coverage_requested");
+  assert.equal(taylorToday?.sessionState, "completed_today");
+  assert.equal(taylorToday?.isUnscheduledSession, true);
+  assert.equal(taylorToday?.hasShift, false);
+  assert.equal(morganToday?.hasShift, false);
+  assert.equal(morganToday?.sessions.length, 0);
+
+  const jamieFuture = jamieRow?.cells.find((cell) => cell.date === "2026-03-25");
+  assert.equal(jamieFuture?.coverageState, "covered");
+  assert.equal(jamieFuture?.hasShift, true);
 
   assert.equal(model.performanceRows[0]?.user_id, "u1");
+});
+
+test("buildOfficeHoursSessionsWorkspaceModel keeps a filtered member visible even without week activity", () => {
+  const model = buildOfficeHoursSessionsWorkspaceModel({
+    weekStart: "2026-03-23",
+    todayDate: "2026-03-24",
+    nowIso: "2026-03-24T19:15:00.000Z",
+    selectedUserId: "u9",
+    users: [{ id: "u9", display_name: "Quiet Member", email: "quiet@gcccd.edu" }],
+    weekRows: [],
+    shifts: [],
+    sessions: [],
+  });
+
+  assert.equal(model.rows.length, 1);
+  assert.equal(model.rows[0]?.userId, "u9");
+  assert.equal(model.rows[0]?.cells.length, 5);
+  assert.equal(model.rows[0]?.cells.every((cell) => !cell.hasShift && cell.sessions.length === 0), true);
 });
