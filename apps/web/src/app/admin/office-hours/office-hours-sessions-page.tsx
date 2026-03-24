@@ -69,17 +69,10 @@ export async function OfficeHoursSessionsPage({
     })) ?? [];
 
   return (
-    <div className="admin-page admin-page-plain space-y-5">
-      <div className="space-y-2">
+    <div className="admin-page admin-page-plain space-y-4">
+      <div className="space-y-1">
         <div className="admin-eyebrow">Office Hours</div>
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div className="space-y-1">
-            <h1 className="text-[2rem] font-semibold tracking-[-0.05em] text-foreground sm:text-[2.35rem]">Sessions</h1>
-            <p className="text-sm leading-6 text-foreground/62">
-              Week view first, with today highlighted and shift changes embedded directly into the session board.
-            </p>
-          </div>
-        </div>
+        <h1 className="text-[2rem] font-semibold tracking-[-0.05em] text-foreground sm:text-[2.2rem]">Sessions</h1>
       </div>
 
       <OfficeHoursSectionNav activeId="sessions" />
