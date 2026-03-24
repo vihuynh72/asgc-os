@@ -294,7 +294,7 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
         description={`Week starts ${weekStartResolved ?? "—"} • Blank-name roles are marked as Vacant.`}
         action={
           <div className="flex flex-wrap items-center gap-2">
-            <Button variant="outline" onClick={() => window.location.assign("/admin/office-hours/sessions")}>
+            <Button variant="outline" onClick={() => window.location.assign("/admin/office-hours")}>
               Calendar view
             </Button>
             <Button variant="ghost" onClick={openCsvView}>

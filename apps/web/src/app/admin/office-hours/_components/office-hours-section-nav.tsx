@@ -3,14 +3,13 @@ import { AdminSectionNav } from "@/components/admin/admin-section-nav";
 export function OfficeHoursSectionNav({
   activeId,
 }: {
-  activeId: "schedule" | "sessions" | "kiosk" | "requirements" | "config" | "export";
+  activeId: "sessions" | "kiosk" | "requirements" | "config" | "export";
 }) {
   return (
     <AdminSectionNav
       activeId={activeId}
       items={[
-        { id: "schedule", label: "Schedule", href: "/admin/office-hours" },
-        { id: "sessions", label: "Sessions", href: "/admin/office-hours/sessions" },
+        { id: "sessions", label: "Sessions", href: "/admin/office-hours" },
         { id: "kiosk", label: "Member Flow", href: "/admin/office-hours/kiosk" },
         { id: "requirements", label: "Requirements", href: "/admin/office-hours/requirements" },
         { id: "config", label: "Config", href: "/admin/office-hours/config" },

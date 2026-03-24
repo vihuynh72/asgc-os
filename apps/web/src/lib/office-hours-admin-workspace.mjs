@@ -166,6 +166,61 @@ function resolveShiftSessionState({ shift, todayDate, nowIso, sessionsByUserDate
   return null;
 }
 
+function sessionStateSortRank(sessionState) {
+  if (sessionState === "checked_in_now") return 0;
+  if (sessionState === "no_session_yet") return 1;
+  if (sessionState === "completed_today") return 2;
+  return 3;
+}
+
+function buildLaneSessionState({ shift, sessions, todayDate, nowIso, isUnscheduledSession }) {
+  if (sessions.some((session) => session?.status === "open" && !session?.checkout_at)) {
+    return "checked_in_now";
+  }
+  if (sessions.some((session) => session?.status !== "open" && session?.checkout_at)) {
+    return "completed_today";
+  }
+  if (isUnscheduledSession || !shift || shift?.status === "cancelled") {
+    return null;
+  }
+
+  const shiftDate = formatDateKeyInTimezone(shift?.starts_at ?? "", shift?.office_location_timezone ?? null);
+  const startsAt = Date.parse(shift?.starts_at ?? "");
+  const now = Date.parse(nowIso);
+  if (
+    shiftDate === todayDate &&
+    shift?.status === "scheduled" &&
+    !Number.isNaN(startsAt) &&
+    !Number.isNaN(now) &&
+    startsAt <= now
+  ) {
+    return "no_session_yet";
+  }
+  return null;
+}
+
+function compareLane(a, b) {
+  const stateRankDiff = sessionStateSortRank(a.sessionState) - sessionStateSortRank(b.sessionState);
+  if (stateRankDiff !== 0) return stateRankDiff;
+
+  const aStartsAt = Date.parse(a.shift?.starts_at ?? a.sessions?.[0]?.checkin_at ?? "");
+  const bStartsAt = Date.parse(b.shift?.starts_at ?? b.sessions?.[0]?.checkin_at ?? "");
+  if (!Number.isNaN(aStartsAt) && !Number.isNaN(bStartsAt) && aStartsAt !== bStartsAt) {
+    return aStartsAt - bStartsAt;
+  }
+
+  return `${a.userDisplayName || a.userEmail || a.userId}`.localeCompare(
+    `${b.userDisplayName || b.userEmail || b.userId}`,
+  );
+}
+
+function blockerSortRank(kind) {
+  if (kind === "coverage_request") return 0;
+  if (kind === "review_flag") return 1;
+  if (kind === "missed_expected_activity") return 2;
+  return 3;
+}
+
 export function getOfficeHourShiftActionState(shift, nowIso = new Date().toISOString()) {
   const startsAt = Date.parse(shift?.starts_at ?? "");
   const now = Date.parse(nowIso);
@@ -175,6 +230,198 @@ export function getOfficeHourShiftActionState(shift, nowIso = new Date().toISOSt
   return {
     canEdit: isScheduled && isFuture,
     canCancel: isScheduled && isFuture,
+  };
+}
+
+/**
+ * @param {{
+ *   weekStart?: string | null;
+ *   todayDate?: string | null;
+ *   nowIso?: string | null;
+ *   weekRows?: OverviewWeekRow[];
+ *   sessions?: Array<OverviewSessionRow & {
+ *     id?: string;
+ *     user_id?: string;
+ *     user_display_name?: string;
+ *     user_email?: string;
+ *     checkin_at?: string;
+ *     checkout_at?: string | null;
+ *     office_location_timezone?: string | null;
+ *   }>;
+ *   shifts?: Array<OverviewShiftRow & {
+ *     id?: string;
+ *     user_id?: string;
+ *     user_display_name?: string;
+ *     user_email?: string;
+ *     starts_at?: string;
+ *     ends_at?: string;
+ *     office_location_timezone?: string | null;
+ *   }>;
+ * }} params
+ */
+export function buildOfficeHoursSessionsWorkspaceModel({
+  weekStart,
+  todayDate,
+  nowIso = new Date().toISOString(),
+  weekRows = [],
+  sessions = [],
+  shifts = [],
+}) {
+  const resolvedWeekStart = startOfWeekMondayDateOnly(weekStart ?? todayDate ?? todayDateString()) ?? todayDateString();
+  const resolvedToday = todayDate ?? todayDateString();
+  const performanceRows = buildPerformanceRows(weekRows);
+  const performanceByUserId = new Map(performanceRows.map((row) => [row.user_id, row]));
+  const sessionsByUserDate = buildSessionBucketsByUserDate(sessions);
+
+  const dayKeys = Array.from({ length: 5 }, (_, index) => addDaysDateOnly(resolvedWeekStart, index) ?? resolvedWeekStart);
+  const days = dayKeys.map((day) => {
+    const dayShifts = shifts
+      .filter((shift) => formatDateKeyInTimezone(shift?.starts_at ?? "", shift?.office_location_timezone ?? null) === day)
+      .sort((a, b) => compareIso(a.starts_at, b.starts_at));
+
+    const assignedSessionKeys = new Set();
+    const shiftCountByUserDate = new Map();
+    const lanes = [];
+
+    for (const shift of dayShifts) {
+      const sessionKey = `${shift.user_id}:${day}`;
+      const seenCount = shiftCountByUserDate.get(sessionKey) ?? 0;
+      const attachedSessions = seenCount === 0 ? sessionsByUserDate.get(sessionKey) ?? [] : [];
+
+      if (attachedSessions.length > 0) {
+        assignedSessionKeys.add(sessionKey);
+      }
+
+      shiftCountByUserDate.set(sessionKey, seenCount + 1);
+
+      lanes.push({
+        key: `shift:${shift.id ?? `${shift.user_id}:${day}:${seenCount}`}`,
+        date: day,
+        userId: shift.user_id ?? "",
+        userDisplayName: shift.user_display_name ?? "",
+        userEmail: shift.user_email ?? "",
+        hasShift: true,
+        shift,
+        sessions: attachedSessions,
+        coverageState: buildShiftCoverageState(shift),
+        sessionState: buildLaneSessionState({
+          shift,
+          sessions: attachedSessions,
+          todayDate: resolvedToday,
+          nowIso,
+          isUnscheduledSession: false,
+        }),
+        isUnscheduledSession: false,
+        actionState: getOfficeHourShiftActionState(shift, nowIso),
+      });
+    }
+
+    for (const [key, attachedSessions] of sessionsByUserDate.entries()) {
+      const [userId, date] = key.split(":");
+      if (date !== day || assignedSessionKeys.has(key) || attachedSessions.length === 0) continue;
+      const firstSession = attachedSessions[0];
+      lanes.push({
+        key: `unscheduled:${userId}:${day}`,
+        date: day,
+        userId,
+        userDisplayName: firstSession?.user_display_name ?? "",
+        userEmail: firstSession?.user_email ?? "",
+        hasShift: false,
+        shift: null,
+        sessions: attachedSessions,
+        coverageState: null,
+        sessionState: buildLaneSessionState({
+          shift: null,
+          sessions: attachedSessions,
+          todayDate: resolvedToday,
+          nowIso,
+          isUnscheduledSession: true,
+        }),
+        isUnscheduledSession: true,
+        actionState: { canEdit: false, canCancel: false },
+      });
+    }
+
+    lanes.sort(compareLane);
+
+    return {
+      date: day,
+      isToday: day === resolvedToday,
+      lanes,
+      openSessionCount: lanes.filter((lane) => lane.sessionState === "checked_in_now").length,
+    };
+  });
+
+  const todayColumn = days.find((day) => day.isToday) ?? { date: resolvedToday, isToday: true, lanes: [], openSessionCount: 0 };
+  const todayOpenSessions = (sessions ?? [])
+    .filter((session) => formatDateKeyInTimezone(session?.checkin_at ?? "", session?.office_location_timezone ?? null) === resolvedToday)
+    .filter((session) => session?.status === "open" && !session?.checkout_at)
+    .sort((a, b) => compareIso(a.checkin_at, b.checkin_at));
+  const now = Date.parse(nowIso);
+  const todayShiftLanes = todayColumn.lanes.filter((lane) => lane.hasShift);
+  const upcomingShifts = todayShiftLanes.filter((lane) => {
+    const startsAt = Date.parse(lane.shift?.starts_at ?? "");
+    return !Number.isNaN(startsAt) && !Number.isNaN(now) && startsAt > now && lane.shift?.status === "scheduled";
+  });
+
+  const blockerKeys = new Set();
+  const blockers = [];
+  for (const lane of todayShiftLanes) {
+    const shift = lane.shift;
+    const coverageRequests = toFiniteNumber(shift?.open_coverage_request_count);
+    if (coverageRequests > 0) {
+      const key = `coverage:${shift?.id ?? lane.key}`;
+      if (!blockerKeys.has(key)) {
+        blockerKeys.add(key);
+        blockers.push({
+          kind: "coverage_request",
+          shiftId: shift?.id ?? "",
+          userId: lane.userId,
+          label: `${lane.userDisplayName || lane.userEmail || "Member"} needs coverage`,
+        });
+      }
+    }
+
+    const reviewCount = toFiniteNumber(performanceByUserId.get(lane.userId)?.needs_review_sessions);
+    if (reviewCount > 0) {
+      const key = `review:${lane.userId}`;
+      if (!blockerKeys.has(key)) {
+        blockerKeys.add(key);
+        blockers.push({
+          kind: "review_flag",
+          shiftId: shift?.id ?? "",
+          userId: lane.userId,
+          label: `${lane.userDisplayName || lane.userEmail || "Member"} has ${reviewCount} review flag${reviewCount === 1 ? "" : "s"}`,
+        });
+      }
+    }
+
+    if (lane.sessionState === "no_session_yet" && coverageRequests === 0) {
+      const key = `missing:${shift?.id ?? lane.key}`;
+      if (!blockerKeys.has(key)) {
+        blockerKeys.add(key);
+        blockers.push({
+          kind: "missed_expected_activity",
+          shiftId: shift?.id ?? "",
+          userId: lane.userId,
+          label: `${lane.userDisplayName || lane.userEmail || "Member"} has not started today's shift`,
+        });
+      }
+    }
+  }
+  blockers.sort((a, b) => blockerSortRank(a.kind) - blockerSortRank(b.kind));
+
+  return {
+    weekStart: resolvedWeekStart,
+    days,
+    today: {
+      date: resolvedToday,
+      lanes: todayShiftLanes,
+      openSessions: todayOpenSessions,
+      upcomingShifts,
+      blockers,
+    },
+    performanceRows,
   };
 }
 
