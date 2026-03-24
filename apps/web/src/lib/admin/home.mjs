@@ -75,7 +75,7 @@ function buildOfficeHoursCard(snapshot) {
     statusTone: officeReady ? "good" : "warning",
     statusIcon: officeReady ? "check" : "clock",
     count: officeReady ? configuredRoles : 0,
-    primaryLabel: "Open schedule",
+    primaryLabel: "Open sessions",
   };
 }
 

@@ -3624,7 +3624,7 @@ export function AdminWorkspacePanel({
         <>
           {adminTab === "office_hours" ? (
             <>
-              <a href="/admin/office-hours/sessions">
+              <a href="/admin/office-hours">
                 <Button variant="outline">Calendar workspace</Button>
               </a>
               <a href="/admin/office-hours/export">
@@ -3723,7 +3723,7 @@ export function AdminWorkspacePanel({
           ))
         ) : (
           <>
-            <a href="/admin/office-hours/sessions">
+            <a href="/admin/office-hours">
               <Button variant="default" size="sm">
                 Open calendar workspace
               </Button>
@@ -4819,7 +4819,7 @@ export function AdminWorkspacePanel({
                 <div className="admin-stat-card">
                   <div className="text-sm font-medium">Quick links</div>
                   <div className="mt-3 flex flex-wrap gap-2">
-                    <a href="/admin/office-hours/sessions">
+                    <a href="/admin/office-hours">
                       <Button variant="default" size="sm">
                         Calendar + sessions
                       </Button>

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   buildOfficeHoursOverviewModel,
-  buildOfficeHoursScheduleWorkspaceModel,
+  buildOfficeHoursSessionsWorkspaceModel,
   getOfficeHourShiftActionState,
 } from "../src/lib/office-hours-admin-workspace.mjs";
 
@@ -101,8 +101,8 @@ test("getOfficeHourShiftActionState only allows editing and cancelling future sc
   );
 });
 
-test("buildOfficeHoursScheduleWorkspaceModel emphasizes today and derives live shift session states", () => {
-  const model = buildOfficeHoursScheduleWorkspaceModel({
+test("buildOfficeHoursSessionsWorkspaceModel merges shifts and sessions into week lanes", () => {
+  const model = buildOfficeHoursSessionsWorkspaceModel({
     weekStart: "2026-03-23",
     todayDate: "2026-03-24",
     nowIso: "2026-03-24T19:15:00.000Z",
@@ -214,6 +214,19 @@ test("buildOfficeHoursScheduleWorkspaceModel emphasizes today and derives live s
         status: "closed",
         duration_minutes: 60,
       },
+      {
+        id: "sess-unscheduled",
+        user_id: "u3",
+        office_location_id: "loc-1",
+        office_location_name: "ASGC Office",
+        office_location_timezone: "America/Los_Angeles",
+        user_display_name: "Taylor",
+        user_email: "taylor@gcccd.edu",
+        checkin_at: "2026-03-24T16:30:00.000Z",
+        checkout_at: "2026-03-24T17:20:00.000Z",
+        status: "closed",
+        duration_minutes: 50,
+      },
     ],
   });
 
@@ -228,11 +241,22 @@ test("buildOfficeHoursScheduleWorkspaceModel emphasizes today and derives live s
 
   const todayColumn = model.days.find((day) => day.date === "2026-03-24");
   assert.equal(todayColumn?.isToday, true);
-  assert.equal(todayColumn?.shifts[0]?.sessionState, "no_session_yet");
-  assert.equal(todayColumn?.shifts[1]?.sessionState, "checked_in_now");
+  assert.equal(todayColumn?.lanes.length, 3);
+
+  const missingLane = todayColumn?.lanes.find((lane) => lane.userId === "u2");
+  const openLane = todayColumn?.lanes.find((lane) => lane.userId === "u1");
+  const unscheduledLane = todayColumn?.lanes.find((lane) => lane.userId === "u3");
+
+  assert.equal(missingLane?.sessionState, "no_session_yet");
+  assert.equal(missingLane?.coverageState, "coverage_requested");
+  assert.equal(openLane?.sessionState, "checked_in_now");
+  assert.equal(openLane?.hasShift, true);
+  assert.equal(unscheduledLane?.sessionState, "completed_today");
+  assert.equal(unscheduledLane?.isUnscheduledSession, true);
+  assert.equal(unscheduledLane?.hasShift, false);
 
   const futureColumn = model.days.find((day) => day.date === "2026-03-25");
-  assert.equal(futureColumn?.shifts[0]?.coverageState, "covered");
+  assert.equal(futureColumn?.lanes[0]?.coverageState, "covered");
 
   assert.equal(model.performanceRows[0]?.user_id, "u1");
 });
