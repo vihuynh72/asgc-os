@@ -22,10 +22,12 @@ type OfficeLocationRow = {
 
 export async function OfficeHoursSchedulePage({
   searchParams,
+  redirectTo = "/admin/office-hours",
 }: {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
+  redirectTo?: string;
 }) {
-  await requireAdminViewer({ redirectTo: "/admin/office-hours/schedule", capability: "office_hours" });
+  await requireAdminViewer({ redirectTo, capability: "office_hours" });
 
   const params = (await searchParams) ?? {};
   const weekStartParam = typeof params.weekStart === "string" ? params.weekStart : null;
@@ -60,7 +62,7 @@ export async function OfficeHoursSchedulePage({
       <AdminHero
         eyebrow="Office Hours"
         title="Schedule"
-        description="Manage future Office Hours shifts in one focused weekly workspace. Edits and cancellations stay audited and preserve history."
+        description="This week at a glance, with today emphasized and schedule changes handled in one simpler workspace."
       />
 
       <OfficeHoursSectionNav activeId="schedule" />
