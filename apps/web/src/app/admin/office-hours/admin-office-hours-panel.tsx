@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { AdminDrawer } from "@/components/admin/admin-drawer";
 import { AdminEmptyState } from "@/components/admin/admin-empty-state";
@@ -343,27 +343,6 @@ function buildDayHref(userId: string | null | undefined, date: string) {
   return buildWorkspaceHref({ date, userId, view: "day" });
 }
 
-function cellSummary(cell: SessionCell, fallbackTimeZone: string | null) {
-  if (cell.shifts.length > 1) {
-    return `${cell.shifts.length} shifts`;
-  }
-  if (cell.primaryShift) {
-    return formatTimeRange(
-      cell.primaryShift.starts_at,
-      cell.primaryShift.ends_at,
-      cell.primaryShift.office_location_timezone || fallbackTimeZone,
-    );
-  }
-  if (cell.sessions.length === 1) {
-    const session = cell.sessions[0];
-    return `${formatTimeInTz(session.checkin_at, session.office_location_timezone || fallbackTimeZone)} session`;
-  }
-  if (cell.sessions.length > 1) {
-    return `${cell.sessions.length} sessions logged`;
-  }
-  return "No activity";
-}
-
 
 async function fetchJson<T>(url: string): Promise<T> {
   const response = await fetch(url);
@@ -498,6 +477,7 @@ export function AdminOfficeHoursPanel({
   const [overrideMessage, setOverrideMessage] = useState("");
   const [overrideMessageKind, setOverrideMessageKind] = useState<"success" | "warning" | "error" | "">("");
   const [perfOpen, setPerfOpen] = useState(false);
+  const [selectedDay, setSelectedDay] = useState<string>(() => todayDateString());
 
   const enabledStatuses = useMemo(
     () => Object.entries(statusFilter).filter(([, on]) => on).map(([status]) => status),
@@ -516,7 +496,7 @@ export function AdminOfficeHoursPanel({
 
     if (view === "week") {
       const start = startOfWeekMondayDateOnly(anchorDate) ?? todayDateString();
-      return { startDate: start, endDate: addDaysDateOnly(start, 5) ?? start };
+      return { startDate: start, endDate: addDaysDateOnly(start, 7) ?? start };
     }
 
     const monthStart = startOfMonth(anchorDate);
@@ -668,9 +648,18 @@ export function AdminOfficeHoursPanel({
     [model.rows],
   );
 
-  const visibleRows = useMemo(
-    () => model.rows.filter((row) => row.cells.some((cell) => cell.hasShift || cell.sessions.length > 0)),
-    [model.rows],
+
+  const weekDayTiles = useMemo(() => {
+    if (view !== "week") return [] as Array<{ date: string; isToday: boolean }>;
+    return Array.from({ length: 7 }, (_, i) => {
+      const date = addDaysDateOnly(weekStart, i) ?? weekStart;
+      return { date, isToday: date === today };
+    });
+  }, [view, weekStart, today]);
+
+  const selectedDaySessions = useMemo(
+    () => sessionsByDay.get(selectedDay) ?? [],
+    [sessionsByDay, selectedDay],
   );
 
   const formattedRange = useMemo(() => {
@@ -680,7 +669,7 @@ export function AdminOfficeHoursPanel({
     }
     if (view === "week") {
       const start = startOfWeekMondayDateOnly(anchorDate) ?? anchorDate;
-      const end = addDaysDateOnly(start, 4) ?? start;
+      const end = addDaysDateOnly(start, 6) ?? start;
       const s = new Date(`${start}T12:00:00Z`);
       const e = new Date(`${end}T12:00:00Z`);
       const sMonth = s.toLocaleDateString(undefined, { month: "short" });
@@ -934,14 +923,20 @@ export function AdminOfficeHoursPanel({
 
   function onPrev() {
     if (view === "day") setAnchorDate((current) => addDaysDateOnly(current, -1) ?? current);
-    else if (view === "week") setAnchorDate((current) => addDaysDateOnly(current, -7) ?? current);
-    else setAnchorDate((current) => addDaysDateOnly(startOfMonth(current), -1) ?? current);
+    else if (view === "week") {
+      const newAnchor = addDaysDateOnly(anchorDate, -7) ?? anchorDate;
+      setAnchorDate(newAnchor);
+      setSelectedDay(startOfWeekMondayDateOnly(newAnchor) ?? newAnchor);
+    } else setAnchorDate((current) => addDaysDateOnly(startOfMonth(current), -1) ?? current);
   }
 
   function onNext() {
     if (view === "day") setAnchorDate((current) => addDaysDateOnly(current, 1) ?? current);
-    else if (view === "week") setAnchorDate((current) => addDaysDateOnly(current, 7) ?? current);
-    else setAnchorDate((current) => startOfNextMonth(current));
+    else if (view === "week") {
+      const newAnchor = addDaysDateOnly(anchorDate, 7) ?? anchorDate;
+      setAnchorDate(newAnchor);
+      setSelectedDay(startOfWeekMondayDateOnly(newAnchor) ?? newAnchor);
+    } else setAnchorDate((current) => startOfNextMonth(current));
   }
 
   const overrideCheckoutIso = overrideCheckoutLocal ? parseLocalDateTimeInput(overrideCheckoutLocal) : null;
@@ -1080,297 +1075,160 @@ export function AdminOfficeHoursPanel({
 
       {view === "week" ? (
         <>
-          {/* Stat strip */}
-          {!loading && (
-            <div className="flex flex-wrap items-center gap-1 text-sm text-foreground/60">
-              <span><strong className="font-semibold text-foreground">{model.executive.weekCompletionLabel}</strong> complete</span>
-              <span className="mx-1.5 text-foreground/25">·</span>
-              <span><strong className="font-semibold text-foreground">{model.executive.membersBehind}</strong> behind</span>
-              <span className="mx-1.5 text-foreground/25">·</span>
-              <span><strong className="font-semibold text-foreground">{model.executive.openSessions}</strong> open now</span>
-              <span className="mx-1.5 text-foreground/25">·</span>
-              <span><strong className="font-semibold text-foreground">{model.executive.attentionItems}</strong> attention</span>
+          {/* 7-day strip */}
+          <div className="flex gap-1.5 overflow-x-auto pb-0.5">
+            {weekDayTiles.map((tile) => {
+              const count = (sessionsByDay.get(tile.date) ?? []).length;
+              const isSelected = selectedDay === tile.date;
+              return (
+                <button
+                  key={tile.date}
+                  type="button"
+                  onClick={() => setSelectedDay(tile.date)}
+                  className={cn(
+                    "flex min-w-[4.5rem] flex-1 flex-col items-center rounded-2xl border px-2.5 py-3 transition",
+                    isSelected
+                      ? "border-foreground/25 bg-foreground text-background"
+                      : tile.isToday
+                        ? "border-emerald-200 bg-emerald-50/60 text-foreground"
+                        : "border-[var(--admin-border-soft)] bg-white text-foreground/60 hover:border-[var(--admin-border-strong)] hover:text-foreground",
+                  )}
+                >
+                  <div className="text-[0.65rem] font-semibold uppercase tracking-wider">
+                    {new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(new Date(`${tile.date}T12:00:00Z`))}
+                  </div>
+                  <div className="mt-0.5 text-base font-bold leading-none">
+                    {parseInt(tile.date.slice(-2), 10)}
+                  </div>
+                  <div className={cn(
+                    "mt-2 text-[0.7rem] font-medium",
+                    isSelected ? "text-background/70" : count > 0 ? "text-foreground/70" : "text-foreground/25",
+                  )}>
+                    {loading ? "·" : count > 0 ? count : "—"}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Day session list */}
+          <div>
+            <div className="mb-3 flex items-center justify-between">
+              <div className="text-sm font-semibold text-foreground">
+                {loading ? (
+                  <span className="text-foreground/40">Loading…</span>
+                ) : (
+                  <>
+                    {formatDateHeading(selectedDay, tz)}
+                    <span className="ml-2 text-xs font-normal text-foreground/45">
+                      {selectedDaySessions.length} session{selectedDaySessions.length !== 1 ? "s" : ""}
+                    </span>
+                  </>
+                )}
+              </div>
+              <Button size="sm" onClick={() => openCreateDrawer(selectedDay)} className="h-8 rounded-full px-3 text-xs">
+                + Add shift
+              </Button>
+            </div>
+
+            {loading ? null : selectedDaySessions.length === 0 ? (
+              <AdminEmptyState
+                title="No sessions"
+                description="No sessions logged for this day. Try a different day or broaden the filters."
+              />
+            ) : (
+              <div className="overflow-hidden rounded-[1.35rem] border border-[var(--admin-border-soft)] bg-white">
+                {selectedDaySessions.map((session) => {
+                  const statusDot =
+                    session.status === "open"
+                      ? { dot: "bg-emerald-500", label: "Open" }
+                      : session.status === "voided"
+                        ? { dot: "bg-rose-400", label: "Voided" }
+                        : session.status === "auto_closed"
+                          ? { dot: "bg-slate-300", label: "Auto-closed" }
+                          : { dot: "bg-slate-400", label: "Done" };
+                  return (
+                    <button
+                      key={session.id}
+                      type="button"
+                      onClick={() => openSessionCell(session)}
+                      className="flex w-full items-center gap-3 border-b border-[var(--admin-border-soft)] px-4 py-3 text-left last:border-0 transition hover:bg-foreground/[0.02]"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm font-medium text-foreground">
+                          {session.user_display_name || session.user_email || "Member"}
+                        </div>
+                        <div className="mt-0.5 text-xs text-foreground/45">
+                          {formatTimeInTz(session.checkin_at, tz)}
+                          {" – "}
+                          {session.checkout_at ? formatTimeInTz(session.checkout_at, tz) : "open"}
+                          {typeof session.duration_minutes === "number" && ` · ${formatMinutes(session.duration_minutes)}`}
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-1.5">
+                        <span className={cn("h-1.5 w-1.5 rounded-full", statusDot.dot)} />
+                        <span className="text-xs text-foreground/45">{statusDot.label}</span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Weekly performance disclosure */}
+          {!loading && model.performanceRows.length > 0 && (
+            <div className="border-t pt-4">
+              <button
+                type="button"
+                onClick={() => setPerfOpen((v) => !v)}
+                className="flex items-center gap-2 text-sm font-medium text-foreground/55 transition hover:text-foreground"
+              >
+                <span className={cn("inline-block text-xs transition-transform duration-200", perfOpen && "rotate-180")}>▾</span>
+                Weekly Performance
+              </button>
+              {perfOpen && (
+                <div className="mt-4 overflow-x-auto">
+                  <table className="w-full min-w-[640px] text-sm">
+                    <thead className="border-b text-left text-[0.72rem] uppercase tracking-[0.18em] text-[var(--admin-label)]">
+                      <tr>
+                        <th className="px-3 py-2.5 font-semibold">Member</th>
+                        <th className="px-3 py-2.5 font-semibold">Role</th>
+                        <th className="px-3 py-2.5 font-semibold">Hours</th>
+                        <th className="px-3 py-2.5 font-semibold">Review</th>
+                        <th className="px-3 py-2.5 font-semibold">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[var(--admin-border-soft)]">
+                      {model.performanceRows.map((row) => (
+                        <tr key={row.user_id}>
+                          <td className="px-3 py-2.5">
+                            <div className="font-medium text-foreground">{row.name || row.email || "Member"}</div>
+                            <div className="text-xs text-foreground/50">{Math.round(Math.max(0, Math.min(1, row.completion)) * 100)}%</div>
+                          </td>
+                          <td className="px-3 py-2.5 text-foreground/65">{row.role}</td>
+                          <td className="px-3 py-2.5 text-foreground/65">
+                            {formatHours(row.total_hours)} / {formatHours(row.required_hours)}
+                          </td>
+                          <td className="px-3 py-2.5 text-foreground/65">{row.needs_review_sessions}</td>
+                          <td className="px-3 py-2.5">
+                            <div className="flex flex-wrap gap-2">
+                              <span className={cn("rounded-full px-2 py-0.5 text-[0.68rem] font-semibold uppercase tracking-[0.14em]", performanceClasses(row.statusKey))}>
+                                {hoursStatusLabel({ statusKey: row.statusKey, memberStatus: row.member_status })}
+                              </span>
+                              <span className={cn("rounded-full px-2 py-0.5 text-[0.68rem] font-semibold uppercase tracking-[0.14em]", rosterClasses(row.member_status))}>
+                                {rosterStatusLabel(row.member_status)}
+                              </span>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           )}
-
-          {/* Split layout: grid + Today sidebar */}
-          <div className="flex items-start gap-5">
-            {/* Week grid */}
-            <div className="min-w-0 flex-1">
-              {loading ? (
-                <div className="text-sm text-foreground/60">Loading…</div>
-              ) : visibleRows.length === 0 ? (
-                <AdminEmptyState title="No activity this week" description="No members have shifts or sessions in this period. Try another week or adjust the filters." />
-              ) : (
-                <div className="overflow-x-auto">
-                  <div className="min-w-[760px]">
-                    <div className="grid grid-cols-[11rem_repeat(5,minmax(7rem,1fr))] gap-1.5">
-                      {/* Header row */}
-                      <div className="rounded-[1rem] border border-[var(--admin-border-soft)] bg-white px-3 py-2.5">
-                        <div className="text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-[var(--admin-label)]">Member</div>
-                      </div>
-                      {model.weekDays.map((day) => (
-                        <div
-                          key={day.date}
-                          className={cn(
-                            "rounded-[1rem] border px-3 py-2.5",
-                            day.isToday ? "border-emerald-200 bg-emerald-50/60" : "border-[var(--admin-border-soft)] bg-white",
-                          )}
-                        >
-                          <div className="text-sm font-semibold text-foreground">{formatDateHeading(day.date, tz)}</div>
-                          {day.isToday && (
-                            <div className="mt-0.5 text-[0.68rem] uppercase tracking-[0.14em] text-emerald-600">
-                              {currentTimeMarkerLabel(nowIso, tz)}
-                            </div>
-                          )}
-                        </div>
-                      ))}
-
-                      {/* Member rows */}
-                      {visibleRows.map((row) => (
-                        <Fragment key={row.userId}>
-                          {/* Member card */}
-                          <div className="rounded-[1rem] border border-[var(--admin-border-soft)] bg-white px-3 py-3">
-                            <div className="truncate text-sm font-semibold leading-snug text-foreground">{row.userDisplayName || row.userEmail || "Member"}</div>
-                            {row.role && (
-                              <div className="mt-0.5 text-[0.68rem] uppercase tracking-[0.14em] text-foreground/40">{row.role}</div>
-                            )}
-                          </div>
-                          {/* Day cells */}
-                          {row.cells.map((cell) => {
-                            const day = model.weekDays.find((entry) => entry.date === cell.date);
-                            const isActive = selectedCellKey === cell.key && drawerOpen;
-                            const isEmpty = !cell.hasShift && cell.sessions.length === 0;
-                            const statusDot = (() => {
-                              if (cell.sessionState === "checked_in_now") return { dot: "bg-emerald-500", text: "Checked in" };
-                              if (cell.sessionState === "completed_today") return { dot: "bg-slate-400", text: "Completed" };
-                              if (cell.sessionState === "no_session_yet") return { dot: "bg-amber-400", text: "No session" };
-                              if (cell.isUnscheduledSession) return { dot: "bg-sky-500", text: "Unscheduled" };
-                              if (cell.coverageState === "covered") return { dot: "bg-sky-400", text: "Covered" };
-                              if (cell.coverageState === "coverage_requested") return { dot: "bg-amber-400", text: "Coverage req." };
-                              if (cell.coverageState === "cancelled") return { dot: "bg-rose-400", text: "Cancelled" };
-                              if (cell.primaryShift?.status === "missed") return { dot: "bg-rose-400", text: "Missed" };
-                              if (cell.primaryShift?.status === "completed") return { dot: "bg-slate-400", text: "Completed" };
-                              if (cell.primaryShift?.status === "cancelled") return { dot: "bg-rose-400", text: "Cancelled" };
-                              if (cell.primaryShift?.status === "scheduled") return { dot: "bg-slate-300", text: "Scheduled" };
-                              return null;
-                            })();
-                            const cellToneClass = cell.sessionState === "checked_in_now"
-                              ? "border-emerald-200 bg-emerald-50/55"
-                              : cell.sessionState === "no_session_yet"
-                                ? "border-amber-200 bg-amber-50/50"
-                                : cell.isUnscheduledSession
-                                  ? "border-sky-200 bg-sky-50/55"
-                                  : day?.isToday
-                                    ? "border-emerald-200/80 bg-emerald-50/35"
-                                    : "border-[var(--admin-border-soft)] bg-white";
-                            const handleOpen = () => {
-                              if (isEmpty) openCreateDrawer(cell.date, row.userId);
-                              else openCellDrawer(cell);
-                            };
-
-                            if (isEmpty) {
-                              return (
-                                <button
-                                  key={cell.key}
-                                  type="button"
-                                  onClick={handleOpen}
-                                  className="flex min-h-[4.5rem] items-center justify-center rounded-[1rem] border border-dashed border-[var(--admin-border-soft)] bg-white/40 text-foreground/20 transition hover:border-[var(--admin-border-strong)] hover:text-foreground/45"
-                                >
-                                  <span className="text-base leading-none">+</span>
-                                </button>
-                              );
-                            }
-
-                            return (
-                              <button
-                                key={cell.key}
-                                type="button"
-                                onClick={handleOpen}
-                                className={cn(
-                                  "min-h-[4.5rem] rounded-[1rem] border px-3 py-2.5 text-left transition hover:border-[var(--admin-border-strong)]",
-                                  cellToneClass,
-                                  isActive && "ring-1 ring-foreground/20",
-                                )}
-                              >
-                                <div className="text-xs font-medium text-foreground">{cellSummary(cell, tz)}</div>
-                                {statusDot && (
-                                  <div className="mt-1.5 flex items-center gap-1.5">
-                                    <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", statusDot.dot)} />
-                                    <span className="text-[0.68rem] text-foreground/55">{statusDot.text}</span>
-                                  </div>
-                                )}
-                              </button>
-                            );
-                          })}
-                        </Fragment>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Weekly performance disclosure */}
-              {!loading && model.performanceRows.length > 0 && (
-                <div className="mt-5 border-t pt-4">
-                  <button
-                    type="button"
-                    onClick={() => setPerfOpen((v) => !v)}
-                    className="flex items-center gap-2 text-sm font-medium text-foreground/55 transition hover:text-foreground"
-                  >
-                    <span className={cn("inline-block text-xs transition-transform duration-200", perfOpen && "rotate-180")}>▾</span>
-                    Weekly Performance
-                  </button>
-                  {perfOpen && (
-                    <div className="mt-4 overflow-x-auto">
-                      <table className="w-full min-w-[640px] text-sm">
-                        <thead className="border-b text-left text-[0.72rem] uppercase tracking-[0.18em] text-[var(--admin-label)]">
-                          <tr>
-                            <th className="px-3 py-2.5 font-semibold">Member</th>
-                            <th className="px-3 py-2.5 font-semibold">Role</th>
-                            <th className="px-3 py-2.5 font-semibold">Hours</th>
-                            <th className="px-3 py-2.5 font-semibold">Review</th>
-                            <th className="px-3 py-2.5 font-semibold">Status</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-[var(--admin-border-soft)]">
-                          {model.performanceRows.map((row) => (
-                            <tr key={row.user_id}>
-                              <td className="px-3 py-2.5">
-                                <div className="font-medium text-foreground">{row.name || row.email || "Member"}</div>
-                                <div className="text-xs text-foreground/50">{Math.round(Math.max(0, Math.min(1, row.completion)) * 100)}%</div>
-                              </td>
-                              <td className="px-3 py-2.5 text-foreground/65">{row.role}</td>
-                              <td className="px-3 py-2.5 text-foreground/65">
-                                {formatHours(row.total_hours)} / {formatHours(row.required_hours)}
-                              </td>
-                              <td className="px-3 py-2.5 text-foreground/65">{row.needs_review_sessions}</td>
-                              <td className="px-3 py-2.5">
-                                <div className="flex flex-wrap gap-2">
-                                  <span className={cn("rounded-full px-2 py-0.5 text-[0.68rem] font-semibold uppercase tracking-[0.14em]", performanceClasses(row.statusKey))}>
-                                    {hoursStatusLabel({ statusKey: row.statusKey, memberStatus: row.member_status })}
-                                  </span>
-                                  <span className={cn("rounded-full px-2 py-0.5 text-[0.68rem] font-semibold uppercase tracking-[0.14em]", rosterClasses(row.member_status))}>
-                                    {rosterStatusLabel(row.member_status)}
-                                  </span>
-                                </div>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* Sticky Today sidebar */}
-            <aside className="hidden w-60 shrink-0 xl:block">
-              <div className="sticky top-4 max-h-[calc(100vh-6rem)] space-y-5 overflow-y-auto rounded-[1.35rem] border border-[var(--admin-border-soft)] bg-white p-4">
-                <div className="text-sm font-semibold text-foreground">Today</div>
-
-                {/* On shift */}
-                <section className="space-y-1">
-                  <div className="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-foreground/40">On shift</div>
-                  {loading ? (
-                    <div className="py-1 text-xs text-foreground/40">Loading…</div>
-                  ) : model.today.onShiftCells.length === 0 ? (
-                    <div className="py-1 text-xs text-foreground/40">Nothing scheduled today.</div>
-                  ) : (
-                    <div className="divide-y divide-[var(--admin-border-soft)]">
-                      {model.today.onShiftCells.map((cell) => (
-                        <button
-                          key={cell.key}
-                          type="button"
-                          onClick={() => openCellDrawer(cell)}
-                          className="w-full py-2 text-left transition hover:opacity-70"
-                        >
-                          <div className="text-xs font-medium text-foreground">{cell.userDisplayName || cell.userEmail || "Member"}</div>
-                          <div className="mt-0.5 text-[0.7rem] text-foreground/45">{cellSummary(cell, tz)}</div>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </section>
-
-                {/* Open sessions now */}
-                <section className="space-y-1">
-                  <div className="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-foreground/40">Open now</div>
-                  {loading ? (
-                    <div className="py-1 text-xs text-foreground/40">Loading…</div>
-                  ) : model.today.openSessions.length === 0 ? (
-                    <div className="py-1 text-xs text-foreground/40">No one checked in.</div>
-                  ) : (
-                    <div className="divide-y divide-[var(--admin-border-soft)]">
-                      {model.today.openSessions.map((session) => (
-                        <button
-                          key={session.id}
-                          type="button"
-                          onClick={() => openSessionCell(session)}
-                          className="w-full py-2 text-left transition hover:opacity-70"
-                        >
-                          <div className="flex items-center gap-1.5">
-                            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
-                            <div className="text-xs font-medium text-foreground">{session.user_display_name || session.user_email || "Member"}</div>
-                          </div>
-                          <div className="mt-0.5 pl-3 text-[0.7rem] text-foreground/45">
-                            {formatTimeInTz(session.checkin_at, session.office_location_timezone || tz)}
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </section>
-
-                {/* Upcoming */}
-                {model.today.upcomingCells.length > 0 && (
-                  <section className="space-y-1">
-                    <div className="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-foreground/40">Upcoming</div>
-                    <div className="divide-y divide-[var(--admin-border-soft)]">
-                      {model.today.upcomingCells.map((cell) => (
-                        <button
-                          key={cell.key}
-                          type="button"
-                          onClick={() => openCellDrawer(cell)}
-                          className="w-full py-2 text-left transition hover:opacity-70"
-                        >
-                          <div className="text-xs font-medium text-foreground">{cell.userDisplayName || cell.userEmail || "Member"}</div>
-                          <div className="mt-0.5 text-[0.7rem] text-foreground/45">{cellSummary(cell, tz)}</div>
-                        </button>
-                      ))}
-                    </div>
-                  </section>
-                )}
-
-                {/* Attention */}
-                <section className="space-y-1">
-                  <div className="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-foreground/40">Attention</div>
-                  {model.today.blockers.length === 0 ? (
-                    <div className="py-1 text-xs text-foreground/40">All clear.</div>
-                  ) : (
-                    <div className="space-y-1">
-                      {model.today.blockers.map((blocker) => {
-                        const cell = cellByUserDate.get(`${blocker.userId}:${model.today.date}`);
-                        return (
-                          <button
-                            key={`${blocker.kind}:${blocker.shiftId || blocker.userId}`}
-                            type="button"
-                            onClick={() => {
-                              if (cell) openCellDrawer(cell);
-                            }}
-                            className="w-full rounded-lg border border-amber-200 bg-amber-50/60 px-2.5 py-1.5 text-left text-xs text-amber-800 transition hover:bg-amber-50"
-                          >
-                            {blocker.label}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-                </section>
-              </div>
-            </aside>
-          </div>
         </>
       ) : null}
 
