@@ -6,7 +6,6 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { AdminDrawer } from "@/components/admin/admin-drawer";
 import { AdminEmptyState } from "@/components/admin/admin-empty-state";
 import { AdminSurface } from "@/components/admin/admin-surface";
-import { AdminToolbar } from "@/components/admin/admin-toolbar";
 import { Button } from "@/components/ui/button";
 import { addDaysDateOnly, normalizeDateOnlyString, startOfWeekMondayDateOnly, todayDateString } from "@/lib/dateOnly";
 import { computeAdminOverrideMinutes, validateAdminCheckoutAt } from "@/lib/office-hours-admin-overrides.mjs";
@@ -365,58 +364,6 @@ function cellSummary(cell: SessionCell, fallbackTimeZone: string | null) {
   return "No activity";
 }
 
-function buildCellBadges(cell: SessionCell) {
-  const badges: Array<{ key: string; label: string; className: string }> = [];
-  const sessionLabel = sessionStateLabel(cell.sessionState);
-  const coverageText = coverageLabel(cell.coverageState);
-  const primaryShift = cell.primaryShift;
-
-  if (cell.isUnscheduledSession) {
-    badges.push({
-      key: "unscheduled",
-      label: "Unscheduled",
-      className: "bg-sky-500/10 text-sky-700",
-    });
-  }
-
-  if (sessionLabel) {
-    badges.push({
-      key: "session",
-      label: sessionLabel,
-      className: sessionStateClasses(cell.sessionState),
-    });
-  } else if (coverageText) {
-    badges.push({
-      key: "coverage",
-      label: coverageText,
-      className: coverageClasses(cell.coverageState),
-    });
-  } else if (primaryShift) {
-    badges.push({
-      key: "shift",
-      label: shiftStatusLabel(primaryShift.status),
-      className: shiftStatusClasses(primaryShift.status),
-    });
-  }
-
-  if (coverageText && !badges.some((badge) => badge.key === "coverage")) {
-    badges.push({
-      key: "coverage",
-      label: coverageText,
-      className: coverageClasses(cell.coverageState),
-    });
-  }
-
-  if (primaryShift && !badges.some((badge) => badge.key === "shift") && !cell.isUnscheduledSession) {
-    badges.push({
-      key: "shift",
-      label: shiftStatusLabel(primaryShift.status),
-      className: shiftStatusClasses(primaryShift.status),
-    });
-  }
-
-  return badges.slice(0, 2);
-}
 
 async function fetchJson<T>(url: string): Promise<T> {
   const response = await fetch(url);
@@ -550,6 +497,7 @@ export function AdminOfficeHoursPanel({
   const [overrideSubmitting, setOverrideSubmitting] = useState(false);
   const [overrideMessage, setOverrideMessage] = useState("");
   const [overrideMessageKind, setOverrideMessageKind] = useState<"success" | "warning" | "error" | "">("");
+  const [perfOpen, setPerfOpen] = useState(false);
 
   const enabledStatuses = useMemo(
     () => Object.entries(statusFilter).filter(([, on]) => on).map(([status]) => status),
@@ -719,6 +667,34 @@ export function AdminOfficeHoursPanel({
       ),
     [model.rows],
   );
+
+  const visibleRows = useMemo(
+    () => model.rows.filter((row) => row.cells.some((cell) => cell.hasShift || cell.sessions.length > 0)),
+    [model.rows],
+  );
+
+  const formattedRange = useMemo(() => {
+    if (view === "day") {
+      return new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric" })
+        .format(new Date(`${anchorDate}T12:00:00Z`));
+    }
+    if (view === "week") {
+      const start = startOfWeekMondayDateOnly(anchorDate) ?? anchorDate;
+      const end = addDaysDateOnly(start, 4) ?? start;
+      const s = new Date(`${start}T12:00:00Z`);
+      const e = new Date(`${end}T12:00:00Z`);
+      const sMonth = s.toLocaleDateString(undefined, { month: "short" });
+      const eMonth = e.toLocaleDateString(undefined, { month: "short" });
+      const sDay = s.getUTCDate();
+      const eDay = e.getUTCDate();
+      const year = e.getUTCFullYear();
+      return sMonth === eMonth
+        ? `${sMonth} ${sDay} – ${eDay}, ${year}`
+        : `${sMonth} ${sDay} – ${eMonth} ${eDay}, ${year}`;
+    }
+    return new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric" })
+      .format(new Date(`${startOfMonth(anchorDate)}T12:00:00Z`));
+  }, [anchorDate, view]);
 
   useEffect(() => {
     if (!initialComposeOpen) return;
@@ -985,40 +961,42 @@ export function AdminOfficeHoursPanel({
     !!overrideSession && !!overrideCheckoutIso && overrideValidation.ok && overrideReason.trim().length >= 2 && !overrideSubmitting;
 
   return (
-    <div className="space-y-5">
-      <AdminToolbar
-        primary={
-          <>
-            <Button variant="outline" onClick={onPrev}>
-              Prev
-            </Button>
-            <Button variant="outline" onClick={() => setAnchorDate(todayDateString())}>
+    <div className="space-y-4">
+      {/* Toolbar */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        {/* Left: date navigation */}
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={onPrev}
+            className="flex h-8 w-8 items-center justify-center rounded-full border border-[var(--admin-border-soft)] bg-white text-base text-foreground/55 transition hover:border-[var(--admin-border-strong)] hover:text-foreground"
+            aria-label="Previous"
+          >
+            ‹
+          </button>
+          <span className="px-1.5 text-sm font-medium text-foreground">{formattedRange}</span>
+          <button
+            type="button"
+            onClick={onNext}
+            className="flex h-8 w-8 items-center justify-center rounded-full border border-[var(--admin-border-soft)] bg-white text-base text-foreground/55 transition hover:border-[var(--admin-border-strong)] hover:text-foreground"
+            aria-label="Next"
+          >
+            ›
+          </button>
+          {anchorDate !== todayDateString() && (
+            <button
+              type="button"
+              onClick={() => setAnchorDate(todayDateString())}
+              className="ml-1 text-xs font-medium text-primary hover:underline"
+            >
               Today
-            </Button>
-            <Button variant="outline" onClick={onNext}>
-              Next
-            </Button>
-          </>
-        }
-        secondary={
-          <Button variant="outline" onClick={() => setFiltersOpen((current) => !current)}>
-            {filtersOpen ? "Hide filters" : "Filters"}
-          </Button>
-        }
-      >
-        <label className="space-y-1 text-sm">
-          <div className="text-foreground/62">{view === "week" ? "Week of" : "Date"}</div>
-          <input
-            type="date"
-            className="h-10 rounded-xl border bg-white px-3 text-sm"
-            value={anchorDate}
-            onChange={(event) => setAnchorDate(normalizeDateOnlyString(event.target.value) ?? todayDateString())}
-          />
-        </label>
-        <label className="space-y-1 text-sm">
-          <div className="text-foreground/62">Member</div>
+            </button>
+          )}
+        </div>
+        {/* Right: controls */}
+        <div className="flex flex-wrap items-center gap-2">
           <select
-            className="h-10 min-w-[14rem] rounded-xl border bg-white px-3 text-sm"
+            className="h-8 rounded-xl border border-[var(--admin-border-soft)] bg-white px-2.5 text-xs text-foreground"
             value={selectedUserId}
             onChange={(event) => setSelectedUserId(event.target.value)}
           >
@@ -1029,47 +1007,62 @@ export function AdminOfficeHoursPanel({
               </option>
             ))}
           </select>
-        </label>
-        <div className="flex items-center gap-1 rounded-full border border-[var(--admin-border-soft)] bg-white p-1">
-          {(["week", "day", "month"] as ViewMode[]).map((mode) => (
-            <button
-              key={mode}
-              type="button"
-              onClick={() => setView(mode)}
-              className={cn(
-                "rounded-full px-3 py-2 text-sm font-medium capitalize transition",
-                view === mode ? "bg-foreground text-background" : "text-foreground/66 hover:bg-slate-100",
-              )}
-            >
-              {mode}
-            </button>
-          ))}
+          <div className="flex items-center gap-0.5 rounded-full border border-[var(--admin-border-soft)] bg-white p-0.5">
+            {(["week", "day", "month"] as ViewMode[]).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => setView(mode)}
+                className={cn(
+                  "rounded-full px-3 py-1.5 text-xs font-medium capitalize transition",
+                  view === mode ? "bg-foreground text-background" : "text-foreground/60 hover:bg-foreground/5",
+                )}
+              >
+                {mode}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={() => setFiltersOpen((current) => !current)}
+            className={cn(
+              "flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition",
+              filtersOpen
+                ? "border-foreground/20 bg-foreground text-background"
+                : "border-[var(--admin-border-soft)] bg-white text-foreground/65 hover:border-[var(--admin-border-strong)] hover:text-foreground",
+            )}
+          >
+            Filters
+          </button>
+          <Button size="sm" onClick={() => openCreateDrawer(anchorDate)} className="h-8 rounded-full px-3 text-xs">
+            + Add shift
+          </Button>
         </div>
-      </AdminToolbar>
+      </div>
 
       {filtersOpen ? (
-        <div className="rounded-[1.35rem] border border-[var(--admin-border-soft)] bg-[var(--admin-surface-muted)] p-4">
-          <div className="grid gap-4 md:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
-            <label className="space-y-1 text-sm">
-              <div className="text-foreground/62">Search</div>
+        <div className="rounded-2xl border border-[var(--admin-border-soft)] bg-[var(--admin-surface-muted)] px-4 py-3">
+          <div className="flex flex-wrap gap-4">
+            <label className="min-w-[12rem] flex-1 text-sm">
+              <div className="mb-1 text-xs text-foreground/50">Search</div>
               <input
-                className="h-10 w-full rounded-xl border bg-white px-3 text-sm"
+                className="h-9 w-full rounded-xl border border-[var(--admin-border-soft)] bg-white px-3 text-sm"
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder="Name, email, location, status…"
+                placeholder="Name, email, location…"
               />
             </label>
-            <div className="space-y-1 text-sm">
-              <div className="text-foreground/62">Session statuses</div>
-              <div className="flex flex-wrap gap-3 rounded-xl border bg-white px-3 py-3">
+            <div className="text-sm">
+              <div className="mb-1 text-xs text-foreground/50">Session status</div>
+              <div className="flex flex-wrap gap-3 rounded-xl border border-[var(--admin-border-soft)] bg-white px-3 py-2">
                 {Object.keys(statusFilter).map((status) => (
-                  <label key={status} className="flex items-center gap-2 text-sm text-foreground/72">
+                  <label key={status} className="flex items-center gap-1.5 text-xs text-foreground/65">
                     <input
                       type="checkbox"
                       checked={statusFilter[status]}
                       onChange={(event) => setStatusFilter((current) => ({ ...current, [status]: event.target.checked }))}
                     />
-                    <span className="font-mono text-xs">{status}</span>
+                    <span className="font-mono">{status}</span>
                   </label>
                 ))}
               </div>
@@ -1087,257 +1080,277 @@ export function AdminOfficeHoursPanel({
 
       {view === "week" ? (
         <>
-          <AdminSurface title="Week" description="Members on the left, weekdays across the top, and one calm cell per member-day.">
-            {loading ? (
-              <div className="text-sm text-foreground/62">Loading week view…</div>
-            ) : model.rows.length === 0 ? (
-              <AdminEmptyState title="No Office Hours activity" description="Try another week or broaden the current filters." />
-            ) : (
-              <div className="overflow-x-auto">
-                <div className="min-w-[1100px]">
-                  <div className="grid grid-cols-[15rem_repeat(5,minmax(11rem,1fr))] gap-2">
-                    <div className="rounded-[1.2rem] border border-[var(--admin-border-soft)] bg-white px-4 py-3">
-                      <div className="text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-[var(--admin-label)]">Roster</div>
-                      <div className="mt-2 text-sm font-semibold text-foreground">{model.rows.length} visible members</div>
-                      <div className="mt-1 text-xs text-foreground/58">Click any cell to view or adjust the related Office Hours work.</div>
-                    </div>
-                    {model.weekDays.map((day) => (
-                      <div
-                        key={day.date}
-                        className={cn(
-                          "rounded-[1.2rem] border px-4 py-3",
-                          day.isToday ? "border-emerald-200 bg-emerald-50/70" : "border-[var(--admin-border-soft)] bg-white",
-                        )}
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <div className="text-sm font-semibold text-foreground">{formatDateHeading(day.date, tz)}</div>
-                            <div className="mt-1 text-[0.68rem] uppercase tracking-[0.18em] text-[var(--admin-label)]">
-                              {day.isToday ? "Today" : "Weekday"}
-                            </div>
-                          </div>
-                          {day.isToday ? (
-                            <span className="rounded-full bg-white px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-emerald-700">
-                              {currentTimeMarkerLabel(nowIso, tz)}
-                            </span>
-                          ) : null}
-                        </div>
+          {/* Stat strip */}
+          {!loading && (
+            <div className="flex flex-wrap items-center gap-1 text-sm text-foreground/60">
+              <span><strong className="font-semibold text-foreground">{model.executive.weekCompletionLabel}</strong> complete</span>
+              <span className="mx-1.5 text-foreground/25">·</span>
+              <span><strong className="font-semibold text-foreground">{model.executive.membersBehind}</strong> behind</span>
+              <span className="mx-1.5 text-foreground/25">·</span>
+              <span><strong className="font-semibold text-foreground">{model.executive.openSessions}</strong> open now</span>
+              <span className="mx-1.5 text-foreground/25">·</span>
+              <span><strong className="font-semibold text-foreground">{model.executive.attentionItems}</strong> attention</span>
+            </div>
+          )}
+
+          {/* Split layout: grid + Today sidebar */}
+          <div className="flex items-start gap-5">
+            {/* Week grid */}
+            <div className="min-w-0 flex-1">
+              {loading ? (
+                <div className="text-sm text-foreground/60">Loading…</div>
+              ) : visibleRows.length === 0 ? (
+                <AdminEmptyState title="No activity this week" description="No members have shifts or sessions in this period. Try another week or adjust the filters." />
+              ) : (
+                <div className="overflow-x-auto">
+                  <div className="min-w-[760px]">
+                    <div className="grid grid-cols-[11rem_repeat(5,minmax(7rem,1fr))] gap-1.5">
+                      {/* Header row */}
+                      <div className="rounded-[1rem] border border-[var(--admin-border-soft)] bg-white px-3 py-2.5">
+                        <div className="text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-[var(--admin-label)]">Member</div>
                       </div>
-                    ))}
-
-                    {model.rows.map((row) => (
-                      <Fragment key={row.userId}>
-                        <div className="rounded-[1.2rem] border border-[var(--admin-border-soft)] bg-white px-4 py-4">
-                          <div className="space-y-2">
-                            <div className="text-sm font-semibold text-foreground">{row.userDisplayName || row.userEmail || "Member"}</div>
-                            <div className="flex flex-wrap gap-2">
-                              {row.role ? (
-                                <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-slate-600">
-                                  {row.role}
-                                </span>
-                              ) : null}
-                              <span className={cn("rounded-full px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em]", rosterClasses(row.memberStatus))}>
-                                {rosterStatusLabel(row.memberStatus)}
-                              </span>
-                              {row.performanceStatusKey ? (
-                                <span className={cn("rounded-full px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em]", performanceClasses(row.performanceStatusKey))}>
-                                  {hoursStatusLabel({ statusKey: row.performanceStatusKey, memberStatus: row.memberStatus })}
-                                </span>
-                              ) : null}
+                      {model.weekDays.map((day) => (
+                        <div
+                          key={day.date}
+                          className={cn(
+                            "rounded-[1rem] border px-3 py-2.5",
+                            day.isToday ? "border-emerald-200 bg-emerald-50/60" : "border-[var(--admin-border-soft)] bg-white",
+                          )}
+                        >
+                          <div className="text-sm font-semibold text-foreground">{formatDateHeading(day.date, tz)}</div>
+                          {day.isToday && (
+                            <div className="mt-0.5 text-[0.68rem] uppercase tracking-[0.14em] text-emerald-600">
+                              {currentTimeMarkerLabel(nowIso, tz)}
                             </div>
-                            <div className="text-xs text-foreground/58">
-                              {formatHours(row.totalHours)} of {formatHours(row.requiredHours)} required
-                              {row.reviewCount > 0 ? ` • ${row.reviewCount} review flag${row.reviewCount === 1 ? "" : "s"}` : ""}
-                            </div>
-                          </div>
+                          )}
                         </div>
+                      ))}
 
-                        {row.cells.map((cell) => {
-                          const day = model.weekDays.find((entry) => entry.date === cell.date);
-                          const badges = buildCellBadges(cell);
-                          const isActive = selectedCellKey === cell.key && drawerOpen;
-                          const cellToneClass = cell.sessionState === "checked_in_now"
-                            ? "border-emerald-200 bg-emerald-50/55"
-                            : cell.sessionState === "no_session_yet"
-                              ? "border-amber-200 bg-amber-50/50"
-                              : cell.isUnscheduledSession
-                                ? "border-sky-200 bg-sky-50/55"
-                                : day?.isToday
-                                  ? "border-emerald-200/80 bg-emerald-50/35"
-                                  : "border-[var(--admin-border-soft)] bg-white";
-                          const handleOpen = () => {
-                            if (!cell.hasShift && cell.sessions.length === 0) openCreateDrawer(cell.date, row.userId);
-                            else openCellDrawer(cell);
-                          };
+                      {/* Member rows */}
+                      {visibleRows.map((row) => (
+                        <Fragment key={row.userId}>
+                          {/* Member card */}
+                          <div className="rounded-[1rem] border border-[var(--admin-border-soft)] bg-white px-3 py-3">
+                            <div className="truncate text-sm font-semibold leading-snug text-foreground">{row.userDisplayName || row.userEmail || "Member"}</div>
+                            {row.role && (
+                              <div className="mt-0.5 text-[0.68rem] uppercase tracking-[0.14em] text-foreground/40">{row.role}</div>
+                            )}
+                          </div>
+                          {/* Day cells */}
+                          {row.cells.map((cell) => {
+                            const day = model.weekDays.find((entry) => entry.date === cell.date);
+                            const isActive = selectedCellKey === cell.key && drawerOpen;
+                            const isEmpty = !cell.hasShift && cell.sessions.length === 0;
+                            const statusDot = (() => {
+                              if (cell.sessionState === "checked_in_now") return { dot: "bg-emerald-500", text: "Checked in" };
+                              if (cell.sessionState === "completed_today") return { dot: "bg-slate-400", text: "Completed" };
+                              if (cell.sessionState === "no_session_yet") return { dot: "bg-amber-400", text: "No session" };
+                              if (cell.isUnscheduledSession) return { dot: "bg-sky-500", text: "Unscheduled" };
+                              if (cell.coverageState === "covered") return { dot: "bg-sky-400", text: "Covered" };
+                              if (cell.coverageState === "coverage_requested") return { dot: "bg-amber-400", text: "Coverage req." };
+                              if (cell.coverageState === "cancelled") return { dot: "bg-rose-400", text: "Cancelled" };
+                              if (cell.primaryShift?.status === "missed") return { dot: "bg-rose-400", text: "Missed" };
+                              if (cell.primaryShift?.status === "completed") return { dot: "bg-slate-400", text: "Completed" };
+                              if (cell.primaryShift?.status === "cancelled") return { dot: "bg-rose-400", text: "Cancelled" };
+                              if (cell.primaryShift?.status === "scheduled") return { dot: "bg-slate-300", text: "Scheduled" };
+                              return null;
+                            })();
+                            const cellToneClass = cell.sessionState === "checked_in_now"
+                              ? "border-emerald-200 bg-emerald-50/55"
+                              : cell.sessionState === "no_session_yet"
+                                ? "border-amber-200 bg-amber-50/50"
+                                : cell.isUnscheduledSession
+                                  ? "border-sky-200 bg-sky-50/55"
+                                  : day?.isToday
+                                    ? "border-emerald-200/80 bg-emerald-50/35"
+                                    : "border-[var(--admin-border-soft)] bg-white";
+                            const handleOpen = () => {
+                              if (isEmpty) openCreateDrawer(cell.date, row.userId);
+                              else openCellDrawer(cell);
+                            };
 
-                          return (
-                            <button
-                              key={cell.key}
-                              type="button"
-                              onClick={handleOpen}
-                              className={cn(
-                                "min-h-[8.2rem] rounded-[1.2rem] border px-3 py-3 text-left transition hover:border-[var(--admin-border-strong)] hover:shadow-[0_16px_28px_-28px_rgba(15,23,42,0.24)]",
-                                cellToneClass,
-                                isActive && "border-foreground/18 shadow-[0_16px_28px_-28px_rgba(15,23,42,0.24)]",
-                              )}
-                            >
-                              <div className="flex h-full flex-col">
-                                <div className="flex items-start justify-between gap-3">
-                                  <div className="text-sm font-medium text-foreground">
-                                    {cellSummary(cell, tz)}
+                            if (isEmpty) {
+                              return (
+                                <button
+                                  key={cell.key}
+                                  type="button"
+                                  onClick={handleOpen}
+                                  className="flex min-h-[4.5rem] items-center justify-center rounded-[1rem] border border-dashed border-[var(--admin-border-soft)] bg-white/40 text-foreground/20 transition hover:border-[var(--admin-border-strong)] hover:text-foreground/45"
+                                >
+                                  <span className="text-base leading-none">+</span>
+                                </button>
+                              );
+                            }
+
+                            return (
+                              <button
+                                key={cell.key}
+                                type="button"
+                                onClick={handleOpen}
+                                className={cn(
+                                  "min-h-[4.5rem] rounded-[1rem] border px-3 py-2.5 text-left transition hover:border-[var(--admin-border-strong)]",
+                                  cellToneClass,
+                                  isActive && "ring-1 ring-foreground/20",
+                                )}
+                              >
+                                <div className="text-xs font-medium text-foreground">{cellSummary(cell, tz)}</div>
+                                {statusDot && (
+                                  <div className="mt-1.5 flex items-center gap-1.5">
+                                    <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", statusDot.dot)} />
+                                    <span className="text-[0.68rem] text-foreground/55">{statusDot.text}</span>
                                   </div>
-                                  {cell.sessions.length > 0 ? (
-                                    <div className="text-[0.68rem] uppercase tracking-[0.16em] text-foreground/48">
-                                      {cell.sessions.length} session{cell.sessions.length === 1 ? "" : "s"}
-                                    </div>
-                                  ) : null}
-                                </div>
-                                <div className="mt-2 text-xs text-foreground/58">
-                                  {cell.primaryShift?.office_location_name || cell.sessions[0]?.office_location_name || (cell.hasShift ? "Office Hours shift" : "Quiet day")}
-                                </div>
-                                <div className="mt-3 flex flex-wrap gap-2">
-                                  {badges.length > 0 ? (
-                                    badges.map((badge) => (
-                                      <span
-                                        key={badge.key}
-                                        className={cn(
-                                          "rounded-full px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em]",
-                                          badge.className,
-                                        )}
-                                      >
-                                        {badge.label}
-                                      </span>
-                                    ))
-                                  ) : (
-                                    <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-slate-600">
-                                      Quiet day
-                                    </span>
-                                  )}
-                                </div>
-                                <div className="mt-auto pt-3 text-[0.68rem] uppercase tracking-[0.16em] text-foreground/46">
-                                  {cell.hasShift || cell.sessions.length > 0 ? "View details" : "Add shift"}
-                                </div>
-                              </div>
-                            </button>
-                          );
-                        })}
-                      </Fragment>
-                    ))}
+                                )}
+                              </button>
+                            );
+                          })}
+                        </Fragment>
+                      ))}
+                    </div>
                   </div>
                 </div>
-              </div>
-            )}
-          </AdminSurface>
+              )}
 
-          <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(19rem,0.88fr)]">
-            <AdminSurface title="At a glance" description="The minimum weekly numbers that matter for the visible roster.">
-              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                {[
-                  { label: "Week completion", value: model.executive.weekCompletionLabel },
-                  { label: "Members behind", value: String(model.executive.membersBehind) },
-                  { label: "Open now", value: String(model.executive.openSessions) },
-                  { label: "Attention", value: String(model.executive.attentionItems) },
-                ].map((item) => (
-                  <div key={item.label} className="rounded-[1.05rem] border border-[var(--admin-border-soft)] bg-white px-4 py-4">
-                    <div className="text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-[var(--admin-label)]">{item.label}</div>
-                    <div className="mt-2 text-2xl font-semibold tracking-[-0.04em] text-foreground">{item.value}</div>
-                  </div>
-                ))}
-              </div>
-            </AdminSurface>
+              {/* Weekly performance disclosure */}
+              {!loading && model.performanceRows.length > 0 && (
+                <div className="mt-5 border-t pt-4">
+                  <button
+                    type="button"
+                    onClick={() => setPerfOpen((v) => !v)}
+                    className="flex items-center gap-2 text-sm font-medium text-foreground/55 transition hover:text-foreground"
+                  >
+                    <span className={cn("inline-block text-xs transition-transform duration-200", perfOpen && "rotate-180")}>▾</span>
+                    Weekly Performance
+                  </button>
+                  {perfOpen && (
+                    <div className="mt-4 overflow-x-auto">
+                      <table className="w-full min-w-[640px] text-sm">
+                        <thead className="border-b text-left text-[0.72rem] uppercase tracking-[0.18em] text-[var(--admin-label)]">
+                          <tr>
+                            <th className="px-3 py-2.5 font-semibold">Member</th>
+                            <th className="px-3 py-2.5 font-semibold">Role</th>
+                            <th className="px-3 py-2.5 font-semibold">Hours</th>
+                            <th className="px-3 py-2.5 font-semibold">Review</th>
+                            <th className="px-3 py-2.5 font-semibold">Status</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-[var(--admin-border-soft)]">
+                          {model.performanceRows.map((row) => (
+                            <tr key={row.user_id}>
+                              <td className="px-3 py-2.5">
+                                <div className="font-medium text-foreground">{row.name || row.email || "Member"}</div>
+                                <div className="text-xs text-foreground/50">{Math.round(Math.max(0, Math.min(1, row.completion)) * 100)}%</div>
+                              </td>
+                              <td className="px-3 py-2.5 text-foreground/65">{row.role}</td>
+                              <td className="px-3 py-2.5 text-foreground/65">
+                                {formatHours(row.total_hours)} / {formatHours(row.required_hours)}
+                              </td>
+                              <td className="px-3 py-2.5 text-foreground/65">{row.needs_review_sessions}</td>
+                              <td className="px-3 py-2.5">
+                                <div className="flex flex-wrap gap-2">
+                                  <span className={cn("rounded-full px-2 py-0.5 text-[0.68rem] font-semibold uppercase tracking-[0.14em]", performanceClasses(row.statusKey))}>
+                                    {hoursStatusLabel({ statusKey: row.statusKey, memberStatus: row.member_status })}
+                                  </span>
+                                  <span className={cn("rounded-full px-2 py-0.5 text-[0.68rem] font-semibold uppercase tracking-[0.14em]", rosterClasses(row.member_status))}>
+                                    {rosterStatusLabel(row.member_status)}
+                                  </span>
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
 
-            <AdminSurface title="Today" description="What needs attention right now, without leaving the week matrix.">
-              {loading ? (
-                <div className="text-sm text-foreground/62">Loading today…</div>
-              ) : (
-                <div className="space-y-5">
-                  <section className="space-y-3">
-                    <div className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--admin-label)]">On shift today</div>
-                    {model.today.onShiftCells.length === 0 ? (
-                      <div className="rounded-[1.05rem] border border-dashed border-[var(--admin-border-strong)] bg-[var(--admin-surface-muted)] px-4 py-3 text-sm text-foreground/58">
-                        No shifts scheduled today.
-                      </div>
-                    ) : (
-                      model.today.onShiftCells.map((cell) => (
+            {/* Sticky Today sidebar */}
+            <aside className="hidden w-60 shrink-0 xl:block">
+              <div className="sticky top-4 max-h-[calc(100vh-6rem)] space-y-5 overflow-y-auto rounded-[1.35rem] border border-[var(--admin-border-soft)] bg-white p-4">
+                <div className="text-sm font-semibold text-foreground">Today</div>
+
+                {/* On shift */}
+                <section className="space-y-1">
+                  <div className="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-foreground/40">On shift</div>
+                  {loading ? (
+                    <div className="py-1 text-xs text-foreground/40">Loading…</div>
+                  ) : model.today.onShiftCells.length === 0 ? (
+                    <div className="py-1 text-xs text-foreground/40">Nothing scheduled today.</div>
+                  ) : (
+                    <div className="divide-y divide-[var(--admin-border-soft)]">
+                      {model.today.onShiftCells.map((cell) => (
                         <button
                           key={cell.key}
                           type="button"
                           onClick={() => openCellDrawer(cell)}
-                          className="w-full rounded-[1.05rem] border border-[var(--admin-border-soft)] bg-white px-4 py-3 text-left transition hover:border-[var(--admin-border-strong)]"
+                          className="w-full py-2 text-left transition hover:opacity-70"
                         >
-                          <div className="flex items-start justify-between gap-3">
-                            <div>
-                              <div className="text-sm font-semibold text-foreground">{cell.userDisplayName || cell.userEmail || "Member"}</div>
-                              <div className="text-sm text-foreground/62">{cellSummary(cell, tz)}</div>
-                            </div>
-                            {sessionStateLabel(cell.sessionState) ? (
-                              <span className={cn("rounded-full px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em]", sessionStateClasses(cell.sessionState))}>
-                                {sessionStateLabel(cell.sessionState)}
-                              </span>
-                            ) : null}
-                          </div>
+                          <div className="text-xs font-medium text-foreground">{cell.userDisplayName || cell.userEmail || "Member"}</div>
+                          <div className="mt-0.5 text-[0.7rem] text-foreground/45">{cellSummary(cell, tz)}</div>
                         </button>
-                      ))
-                    )}
-                  </section>
+                      ))}
+                    </div>
+                  )}
+                </section>
 
-                  <section className="space-y-3">
-                    <div className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--admin-label)]">Open sessions now</div>
-                    {model.today.openSessions.length === 0 ? (
-                      <div className="rounded-[1.05rem] border border-dashed border-[var(--admin-border-strong)] bg-[var(--admin-surface-muted)] px-4 py-3 text-sm text-foreground/58">
-                        No one is checked in right now.
-                      </div>
-                    ) : (
-                      model.today.openSessions.map((session) => (
+                {/* Open sessions now */}
+                <section className="space-y-1">
+                  <div className="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-foreground/40">Open now</div>
+                  {loading ? (
+                    <div className="py-1 text-xs text-foreground/40">Loading…</div>
+                  ) : model.today.openSessions.length === 0 ? (
+                    <div className="py-1 text-xs text-foreground/40">No one checked in.</div>
+                  ) : (
+                    <div className="divide-y divide-[var(--admin-border-soft)]">
+                      {model.today.openSessions.map((session) => (
                         <button
                           key={session.id}
                           type="button"
                           onClick={() => openSessionCell(session)}
-                          className="w-full rounded-[1.05rem] border border-[var(--admin-border-soft)] bg-white px-4 py-3 text-left transition hover:border-[var(--admin-border-strong)]"
+                          className="w-full py-2 text-left transition hover:opacity-70"
                         >
-                          <div className="flex items-start justify-between gap-3">
-                            <div>
-                              <div className="text-sm font-semibold text-foreground">{session.user_display_name || session.user_email || "Member"}</div>
-                              <div className="text-sm text-foreground/62">
-                                {session.office_location_name || "Office"} • checked in {formatDateTime(session.checkin_at, session.office_location_timezone || tz)}
-                              </div>
-                            </div>
-                            <StatusBadge status={session.status} />
+                          <div className="flex items-center gap-1.5">
+                            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
+                            <div className="text-xs font-medium text-foreground">{session.user_display_name || session.user_email || "Member"}</div>
+                          </div>
+                          <div className="mt-0.5 pl-3 text-[0.7rem] text-foreground/45">
+                            {formatTimeInTz(session.checkin_at, session.office_location_timezone || tz)}
                           </div>
                         </button>
-                      ))
-                    )}
-                  </section>
+                      ))}
+                    </div>
+                  )}
+                </section>
 
-                  <section className="space-y-3">
-                    <div className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--admin-label)]">Upcoming today</div>
-                    {model.today.upcomingCells.length === 0 ? (
-                      <div className="rounded-[1.05rem] border border-dashed border-[var(--admin-border-strong)] bg-[var(--admin-surface-muted)] px-4 py-3 text-sm text-foreground/58">
-                        No later shifts remaining today.
-                      </div>
-                    ) : (
-                      model.today.upcomingCells.map((cell) => (
+                {/* Upcoming */}
+                {model.today.upcomingCells.length > 0 && (
+                  <section className="space-y-1">
+                    <div className="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-foreground/40">Upcoming</div>
+                    <div className="divide-y divide-[var(--admin-border-soft)]">
+                      {model.today.upcomingCells.map((cell) => (
                         <button
                           key={cell.key}
                           type="button"
                           onClick={() => openCellDrawer(cell)}
-                          className="w-full rounded-[1.05rem] border border-[var(--admin-border-soft)] bg-white px-4 py-3 text-left transition hover:border-[var(--admin-border-strong)]"
+                          className="w-full py-2 text-left transition hover:opacity-70"
                         >
-                          <div className="text-sm font-semibold text-foreground">{cell.userDisplayName || cell.userEmail || "Member"}</div>
-                          <div className="text-sm text-foreground/62">{cellSummary(cell, tz)}</div>
+                          <div className="text-xs font-medium text-foreground">{cell.userDisplayName || cell.userEmail || "Member"}</div>
+                          <div className="mt-0.5 text-[0.7rem] text-foreground/45">{cellSummary(cell, tz)}</div>
                         </button>
-                      ))
-                    )}
+                      ))}
+                    </div>
                   </section>
+                )}
 
-                  <section className="space-y-3">
-                    <div className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--admin-label)]">Attention</div>
-                    {model.today.blockers.length === 0 ? (
-                      <div className="rounded-[1.05rem] border border-dashed border-[var(--admin-border-strong)] bg-[var(--admin-surface-muted)] px-4 py-3 text-sm text-foreground/58">
-                        Today is clear right now.
-                      </div>
-                    ) : (
-                      model.today.blockers.map((blocker) => {
+                {/* Attention */}
+                <section className="space-y-1">
+                  <div className="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-foreground/40">Attention</div>
+                  {model.today.blockers.length === 0 ? (
+                    <div className="py-1 text-xs text-foreground/40">All clear.</div>
+                  ) : (
+                    <div className="space-y-1">
+                      {model.today.blockers.map((blocker) => {
                         const cell = cellByUserDate.get(`${blocker.userId}:${model.today.date}`);
                         return (
                           <button
@@ -1346,65 +1359,18 @@ export function AdminOfficeHoursPanel({
                             onClick={() => {
                               if (cell) openCellDrawer(cell);
                             }}
-                            className="w-full rounded-[1.05rem] border border-amber-500/15 bg-amber-500/6 px-4 py-3 text-left transition hover:border-amber-500/30"
+                            className="w-full rounded-lg border border-amber-200 bg-amber-50/60 px-2.5 py-1.5 text-left text-xs text-amber-800 transition hover:bg-amber-50"
                           >
-                            <div className="text-sm font-medium text-amber-900">{blocker.label}</div>
+                            {blocker.label}
                           </button>
                         );
-                      })
-                    )}
-                  </section>
-                </div>
-              )}
-            </AdminSurface>
-          </div>
-
-          <AdminSurface title="Weekly performance" description="Compact weekly progress for the visible members.">
-            {loading ? (
-              <div className="text-sm text-foreground/62">Loading weekly performance…</div>
-            ) : model.performanceRows.length === 0 ? (
-              <AdminEmptyState title="No weekly data yet" description="The selected week does not have Office Hours weekly totals yet." />
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[860px] text-sm">
-                  <thead className="border-b text-left text-[0.72rem] uppercase tracking-[0.18em] text-[var(--admin-label)]">
-                    <tr>
-                      <th className="px-3 py-3 font-semibold">Member</th>
-                      <th className="px-3 py-3 font-semibold">Role</th>
-                      <th className="px-3 py-3 font-semibold">Hours</th>
-                      <th className="px-3 py-3 font-semibold">Review</th>
-                      <th className="px-3 py-3 font-semibold">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[var(--admin-border-soft)]">
-                    {model.performanceRows.map((row) => (
-                      <tr key={row.user_id}>
-                        <td className="px-3 py-3">
-                          <div className="font-medium text-foreground">{row.name || row.email || "Member"}</div>
-                          <div className="text-xs text-foreground/58">{Math.round(Math.max(0, Math.min(1, row.completion)) * 100)}% complete</div>
-                        </td>
-                        <td className="px-3 py-3 text-foreground/72">{row.role}</td>
-                        <td className="px-3 py-3 text-foreground/72">
-                          {formatHours(row.total_hours)} / {formatHours(row.required_hours)}
-                        </td>
-                        <td className="px-3 py-3 text-foreground/72">{row.needs_review_sessions}</td>
-                        <td className="px-3 py-3">
-                          <div className="flex flex-wrap gap-2">
-                            <span className={cn("rounded-full px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em]", performanceClasses(row.statusKey))}>
-                              {hoursStatusLabel({ statusKey: row.statusKey, memberStatus: row.member_status })}
-                            </span>
-                            <span className={cn("rounded-full px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em]", rosterClasses(row.member_status))}>
-                              {rosterStatusLabel(row.member_status)}
-                            </span>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                      })}
+                    </div>
+                  )}
+                </section>
               </div>
-            )}
-          </AdminSurface>
+            </aside>
+          </div>
         </>
       ) : null}
 
