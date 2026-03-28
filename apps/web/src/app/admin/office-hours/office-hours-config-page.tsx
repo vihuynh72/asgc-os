@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { AdminHero } from "@/components/admin/admin-hero";
 import { loadLegacyAdminWorkspaceData, requireAdminViewer } from "@/lib/admin/server";
 
@@ -13,6 +15,14 @@ export async function OfficeHoursConfigPage() {
         eyebrow="Office Hours"
         title="Configuration"
         description="Keep office location, reminder timing, and availability policy in one place without mixing them into live session work."
+        actions={
+          <Link
+            href="/admin/office-hours/lab"
+            className="inline-flex h-11 items-center justify-center rounded-full bg-foreground px-5 text-sm font-medium text-background"
+          >
+            Open testing lab
+          </Link>
+        }
       />
       <OfficeHoursConfigPanel
         initialOfficeConfig={data.initialOfficeConfig}
