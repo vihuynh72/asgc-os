@@ -12,6 +12,7 @@ const SECTION_NAV = {
     { id: "kiosk", label: "Member Flow", href: "/admin/office-hours/kiosk" },
     { id: "requirements", label: "Requirements", href: "/admin/office-hours/requirements" },
     { id: "config", label: "Config", href: "/admin/office-hours/config" },
+    { id: "lab", label: "Lab", href: "/admin/office-hours/lab" },
     { id: "export", label: "Export", href: "/admin/office-hours/export" },
   ],
   communications: [{ id: "templates", label: "Templates", href: "/admin/communications" }],
@@ -93,7 +94,7 @@ function buildOfficeHoursPath(section) {
   if (!section || section === "overview" || section === "summary") return "/admin/office-hours";
   if (section === "sessions") return "/admin/office-hours";
   if (section === "schedule") return "/admin/office-hours";
-  if (section === "requirements" || section === "config" || section === "kiosk") {
+  if (section === "requirements" || section === "config" || section === "kiosk" || section === "lab") {
     return `/admin/office-hours/${section}`;
   }
   if (section === "export") return "/admin/office-hours/export";

@@ -3,7 +3,7 @@ import { AdminSectionNav } from "@/components/admin/admin-section-nav";
 export function OfficeHoursSectionNav({
   activeId,
 }: {
-  activeId: "sessions" | "kiosk" | "requirements" | "config" | "export";
+  activeId: "sessions" | "kiosk" | "requirements" | "config" | "lab" | "export";
 }) {
   return (
     <AdminSectionNav
@@ -13,6 +13,7 @@ export function OfficeHoursSectionNav({
         { id: "kiosk", label: "Member Flow", href: "/admin/office-hours/kiosk" },
         { id: "requirements", label: "Requirements", href: "/admin/office-hours/requirements" },
         { id: "config", label: "Config", href: "/admin/office-hours/config" },
+        { id: "lab", label: "Lab", href: "/admin/office-hours/lab" },
         { id: "export", label: "Export", href: "/admin/office-hours/export" },
       ]}
     />

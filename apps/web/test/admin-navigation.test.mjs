@@ -88,6 +88,7 @@ test("getAdminSectionNav returns office-hours specialist links", () => {
     { id: "kiosk", label: "Member Flow", href: "/admin/office-hours/kiosk" },
     { id: "requirements", label: "Requirements", href: "/admin/office-hours/requirements" },
     { id: "config", label: "Config", href: "/admin/office-hours/config" },
+    { id: "lab", label: "Lab", href: "/admin/office-hours/lab" },
     { id: "export", label: "Export", href: "/admin/office-hours/export" },
   ]);
 });
