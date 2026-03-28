@@ -155,6 +155,13 @@ export function OfficeHoursPresenceMonitor() {
           return;
         }
 
+        // Auth token expired — stop monitoring so stale presence doesn't trigger auto-close.
+        // The bootstrap effect will re-check when the token is eventually refreshed.
+        if (res.status === 401) {
+          setOpenSessionId(null);
+          return;
+        }
+
         if (!res.ok) return;
 
         const json = (await res.json().catch(() => null)) as { result?: { action?: string } } | null;
@@ -175,6 +182,10 @@ export function OfficeHoursPresenceMonitor() {
         const res = await fetch("/api/office-hours/presence/ping", { method: "POST" });
         if (cancelled) return;
         if (res.status === 409) {
+          setOpenSessionId(null);
+          return;
+        }
+        if (res.status === 401) {
           setOpenSessionId(null);
           return;
         }

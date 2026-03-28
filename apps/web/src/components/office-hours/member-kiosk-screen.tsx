@@ -204,8 +204,26 @@ export function MemberKioskScreen() {
   }, [supabase]);
 
   useEffect(() => {
-    void refreshOpenSession();
-  }, [refreshOpenSession]);
+    let cancelled = false;
+    async function run() {
+      const { data: sessionRow } = await supabase
+        .from("office_hour_sessions")
+        .select("id,checkin_at")
+        .eq("status", "open")
+        .is("checkout_at", null)
+        .order("checkin_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (!cancelled) {
+        setOpenSession((sessionRow as OpenSession | null) ?? null);
+      }
+    }
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [supabase]);
 
   useEffect(() => {
     let cancelled = false;
