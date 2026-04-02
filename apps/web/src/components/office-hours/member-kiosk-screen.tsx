@@ -52,6 +52,7 @@ type LocationSnapshot = {
 };
 
 type KioskTone = "good" | "warning" | "critical" | "neutral";
+type KioskAuthStatus = "loading" | "authenticated" | "unauthenticated" | "needs_password";
 
 function haversineMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const toRad = (deg: number) => (deg * Math.PI) / 180;
@@ -119,6 +120,8 @@ export function MemberKioskScreen() {
   const reduceMotion = useReducedMotion();
   const supabase = useMemo(() => getSupabaseBrowserClient(), []);
 
+  const [authStatus, setAuthStatus] = useState<KioskAuthStatus>("loading");
+  const [sessionLoaded, setSessionLoaded] = useState(false);
   const [openSession, setOpenSession] = useState<OpenSession | null>(null);
   const [officeGeo, setOfficeGeo] = useState<OfficeGeo | null>(null);
   const [officeGeoStatus, setOfficeGeoStatus] = useState<"loading" | "ready" | "not_configured">("loading");
@@ -205,25 +208,75 @@ export function MemberKioskScreen() {
 
   useEffect(() => {
     let cancelled = false;
-    async function run() {
-      const { data: sessionRow } = await supabase
-        .from("office_hour_sessions")
-        .select("id,checkin_at")
-        .eq("status", "open")
-        .is("checkout_at", null)
-        .order("checkin_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
 
-      if (!cancelled) {
-        setOpenSession((sessionRow as OpenSession | null) ?? null);
+    async function checkAuth() {
+      try {
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+
+        if (cancelled) return;
+
+        if (!user) {
+          setAuthStatus("unauthenticated");
+          return;
+        }
+
+        const { data: profile } = await supabase
+          .from("profile_private")
+          .select("password_ready_at")
+          .eq("id", user.id)
+          .maybeSingle();
+
+        if (cancelled) return;
+
+        if (!profile?.password_ready_at) {
+          setAuthStatus("needs_password");
+          return;
+        }
+
+        setAuthStatus("authenticated");
+      } catch {
+        if (!cancelled) {
+          setAuthStatus("unauthenticated");
+        }
+      }
+    }
+
+    void checkAuth();
+    return () => {
+      cancelled = true;
+    };
+  }, [supabase]);
+
+  useEffect(() => {
+    if (authStatus !== "authenticated") return;
+    let cancelled = false;
+    async function run() {
+      try {
+        const { data: sessionRow } = await supabase
+          .from("office_hour_sessions")
+          .select("id,checkin_at")
+          .eq("status", "open")
+          .is("checkout_at", null)
+          .order("checkin_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (!cancelled) {
+          setOpenSession((sessionRow as OpenSession | null) ?? null);
+        }
+      } finally {
+        if (!cancelled) {
+          setSessionLoaded(true);
+        }
       }
     }
     void run();
     return () => {
       cancelled = true;
     };
-  }, [supabase]);
+  }, [authStatus, supabase]);
 
   useEffect(() => {
     let cancelled = false;
@@ -313,9 +366,9 @@ export function MemberKioskScreen() {
   }, []);
 
   useEffect(() => {
-    if (mode !== "check_in" || officeGeoStatus !== "ready" || location || locating) return;
+    if (!sessionLoaded || mode !== "check_in" || officeGeoStatus !== "ready" || location || locating) return;
     void refreshLocation();
-  }, [location, locating, mode, officeGeoStatus, refreshLocation]);
+  }, [sessionLoaded, location, locating, mode, officeGeoStatus, refreshLocation]);
 
   useEffect(() => {
     if (mode === "check_out") {
@@ -417,26 +470,133 @@ export function MemberKioskScreen() {
     }
   }
 
+  const topNavElement = (
+    <nav aria-label="Office Hours kiosk navigation" className="kiosk-top-nav">
+      <Link href="/dashboard" className="kiosk-top-nav-brand" aria-label="Go to dashboard">
+        <span className="kiosk-top-nav-mark" aria-hidden="true">
+          AS
+        </span>
+        <span className="kiosk-top-nav-copy">
+          <span className="kiosk-top-nav-title">ASGC OS</span>
+          <span className="kiosk-top-nav-subtitle">Office Hours</span>
+        </span>
+      </Link>
+
+      <Link href="/dashboard" className="kiosk-top-nav-action">
+        Dashboard
+      </Link>
+    </nav>
+  );
+
+  const kioskLoginHref = `/login?redirectTo=${encodeURIComponent(OFFICE_HOURS_MEMBER_KIOSK_PATH)}`;
+
+  if (authStatus === "loading") {
+    return (
+      <KioskShell className="max-w-6xl items-start py-4 sm:py-6" topNav={topNavElement}>
+        <div className="kiosk-panel">
+          <KioskStepHeader
+            eyebrow="Office Hours"
+            title="Loading..."
+            step={1}
+            totalSteps={1}
+          />
+        </div>
+      </KioskShell>
+    );
+  }
+
+  if (authStatus === "unauthenticated") {
+    return (
+      <KioskShell className="max-w-6xl items-start py-4 sm:py-6" topNav={topNavElement}>
+        <div className="kiosk-panel">
+          <KioskStepHeader
+            eyebrow="Sign-in required"
+            title="Sign in to check in"
+            subtitle="You need to sign in with your campus email before you can use Office Hours."
+            step={1}
+            totalSteps={1}
+            actions={<KioskStatusChip tone="warning" label="Not signed in" />}
+          />
+          <div className="mt-4">
+            <KioskNotice tone="warning">
+              Sign in first, then come back to check in. Your selfie and location will be captured after you sign in.
+            </KioskNotice>
+          </div>
+          <div className="mt-4 kiosk-section kiosk-step-card kiosk-step-card-active">
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">1. Sign in</div>
+              <h2 className="mt-2 text-xl font-semibold tracking-[-0.03em] text-slate-950">Use your campus email</h2>
+              <p className="mt-2 text-sm leading-6 text-slate-600">
+                Sign in with your GCCCD email and password. First-time members will set up their password during sign-in.
+              </p>
+            </div>
+            <div className="kiosk-step-body">
+              <KioskActionBar
+                primary={
+                  <Link
+                    href={kioskLoginHref}
+                    className="inline-flex h-12 items-center justify-center rounded-full bg-slate-900 px-6 text-sm font-medium text-white"
+                  >
+                    Sign in
+                  </Link>
+                }
+                hint="You will be redirected back here after signing in."
+              />
+            </div>
+          </div>
+        </div>
+      </KioskShell>
+    );
+  }
+
+  if (authStatus === "needs_password") {
+    return (
+      <KioskShell className="max-w-6xl items-start py-4 sm:py-6" topNav={topNavElement}>
+        <div className="kiosk-panel">
+          <KioskStepHeader
+            eyebrow="Password required"
+            title="Finish your account setup"
+            subtitle="You need to create a password before you can use Office Hours."
+            step={1}
+            totalSteps={1}
+            actions={<KioskStatusChip tone="warning" label="Setup required" />}
+          />
+          <div className="mt-4">
+            <KioskNotice tone="warning">
+              Finish your password setup before using Office Hours.
+            </KioskNotice>
+          </div>
+          <div className="mt-4 kiosk-section kiosk-step-card kiosk-step-card-active">
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">1. Create password</div>
+              <h2 className="mt-2 text-xl font-semibold tracking-[-0.03em] text-slate-950">Set up your password</h2>
+              <p className="mt-2 text-sm leading-6 text-slate-600">
+                Your email is verified but you have not created a password yet. Complete the sign-in flow to set one up.
+              </p>
+            </div>
+            <div className="kiosk-step-body">
+              <KioskActionBar
+                primary={
+                  <Link
+                    href={kioskLoginHref}
+                    className="inline-flex h-12 items-center justify-center rounded-full bg-slate-900 px-6 text-sm font-medium text-white"
+                  >
+                    Complete sign-in
+                  </Link>
+                }
+                hint="After creating your password, you will be sent back here to check in."
+              />
+            </div>
+          </div>
+        </div>
+      </KioskShell>
+    );
+  }
+
   return (
     <KioskShell
       className="max-w-6xl items-start py-4 sm:py-6"
-      topNav={
-        <nav aria-label="Office Hours kiosk navigation" className="kiosk-top-nav">
-          <Link href="/dashboard" className="kiosk-top-nav-brand" aria-label="Go to dashboard">
-            <span className="kiosk-top-nav-mark" aria-hidden="true">
-              AS
-            </span>
-            <span className="kiosk-top-nav-copy">
-              <span className="kiosk-top-nav-title">ASGC OS</span>
-              <span className="kiosk-top-nav-subtitle">Office Hours</span>
-            </span>
-          </Link>
-
-          <Link href="/dashboard" className="kiosk-top-nav-action">
-            Dashboard
-          </Link>
-        </nav>
-      }
+      topNav={topNavElement}
     >
       <div className="grid gap-4 lg:grid-cols-[1.08fr_0.92fr]">
         <motion.section
@@ -489,7 +649,7 @@ export function MemberKioskScreen() {
 
                   {selfieSection?.expanded ? (
                     <div className="kiosk-step-body">
-                      <KioskCameraCapture value={photo} disabled={loading} autoStart={!photo} onChange={setPhoto} />
+                      <KioskCameraCapture value={photo} disabled={loading} autoStart={sessionLoaded && !photo} onChange={setPhoto} />
                     </div>
                   ) : (
                     <div className="mt-4 flex flex-wrap gap-2">
