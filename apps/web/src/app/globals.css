@@ -1742,53 +1742,6 @@ html[data-kiosk="true"] body {
   background: #ffffff;
 }
 
-html[data-birthday="true"] {
-  scroll-padding-top: 0;
-  color-scheme: light;
-}
-
-html[data-birthday="true"] .skip-link {
-  display: none;
-}
-
-body:has([data-birthday-page="true"]) .skip-link {
-  display: none;
-}
-
-html[data-birthday="true"] header,
-html[data-birthday="true"] footer {
-  display: none;
-}
-
-body:has([data-birthday-page="true"]) header,
-body:has([data-birthday-page="true"]) footer {
-  display: none;
-}
-
-html[data-birthday="true"] body > .min-h-dvh {
-  min-height: 100dvh;
-}
-
-body:has([data-birthday-page="true"]) > .min-h-dvh {
-  min-height: 100dvh;
-}
-
-html[data-birthday="true"] #main-content {
-  min-height: 100dvh;
-}
-
-body:has([data-birthday-page="true"]) #main-content {
-  min-height: 100dvh;
-}
-
-html[data-birthday="true"] body {
-  background: #fffaf0;
-}
-
-body:has([data-birthday-page="true"]) {
-  background: #fffaf0;
-}
-
 :where(
     input[type="text"],
     input[type="email"],
