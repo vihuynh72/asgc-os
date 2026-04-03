@@ -12,4 +12,11 @@ test("globals.css locks the app to a white light-only canvas", () => {
   assert.doesNotMatch(css, /prefers-color-scheme:\s*dark/);
   assert.match(css, /:root\s*\{[\s\S]*--background:\s*#ffffff;/);
   assert.match(css, /html\[data-kiosk="true"\]\s*body\s*\{[\s\S]*background:\s*#ffffff;/);
+  assert.match(css, /html\[data-birthday="true"\]\s*\{[\s\S]*color-scheme:\s*light;/);
+  assert.match(css, /html\[data-birthday="true"\]\s*header,\s*html\[data-birthday="true"\]\s*footer\s*\{[\s\S]*display:\s*none;/);
+  assert.match(css, /html\[data-birthday="true"\]\s*body\s*\{[\s\S]*background:\s*#fffaf0;/);
+  assert.match(
+    css,
+    /body:has\(\[data-birthday-page="true"\]\)\s*header,\s*body:has\(\[data-birthday-page="true"\]\)\s*footer\s*\{[\s\S]*display:\s*none;/,
+  );
 });
