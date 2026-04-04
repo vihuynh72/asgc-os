@@ -1,7 +1,7 @@
 "use client";
 
 import { Suspense, useEffect, useMemo, useState, useSyncExternalStore } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 import { AdminInlineNotice } from "@/components/admin/admin-inline-notice";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,7 @@ import {
 } from "@/lib/auth/first-time-signin-flow.mjs";
 import { safePostAuthRedirectPath } from "@/lib/redirects";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
+import { cn } from "@/lib/utils";
 
 type AuthPanelMode = "password" | "password_otp" | "first_time" | "first_time_verify" | "first_time_password";
 
@@ -70,7 +71,22 @@ function SupabaseHashErrorBanner() {
   return <AdminInlineNotice tone="critical">{message}</AdminInlineNotice>;
 }
 
-function loginPanelCopy(mode: AuthPanelMode) {
+function loginPanelCopy(mode: AuthPanelMode, isKioskFlow: boolean) {
+  if (isKioskFlow) {
+    switch (mode) {
+      case "password_otp":
+        return { eyebrow: "Verify browser", title: "Enter your code", detail: "Check your email for the verification code." };
+      case "first_time":
+        return { eyebrow: "Get started", title: "First-time sign-in", detail: "Enter your campus email." };
+      case "first_time_verify":
+        return { eyebrow: "Email code", title: "Enter your code", detail: "Check your email for the 6-digit code." };
+      case "first_time_password":
+        return { eyebrow: "Almost done", title: "Create a password", detail: "Set a password for next time." };
+      default:
+        return { eyebrow: "Sign in", title: "Sign in", detail: "Use your campus email and password." };
+    }
+  }
+
   switch (mode) {
     case "password_otp":
       return {
@@ -106,6 +122,8 @@ function loginPanelCopy(mode: AuthPanelMode) {
 }
 
 export default function LoginPage() {
+  const router = useRouter();
+
   const [existingUser, setExistingUser] = useState<{ email: string | null } | null>(null);
   const [postAuthRedirectTo, setPostAuthRedirectTo] = useState<string>("/dashboard");
 
@@ -120,8 +138,13 @@ export default function LoginPage() {
   const [busyAction, setBusyAction] = useState<"idle" | "password" | "verify" | "first_time" | "reset">("idle");
   const [notice, setNotice] = useState<{ tone: "good" | "critical"; message: string } | null>(null);
 
+  const isKioskFlow = postAuthRedirectTo.startsWith("/office-hours");
   const normalizedEmail = useMemo(() => normalizeEmail(email), [email]);
-  const copy = useMemo(() => loginPanelCopy(panelMode), [panelMode]);
+  const copy = useMemo(() => loginPanelCopy(panelMode, isKioskFlow), [panelMode, isKioskFlow]);
+  const kioskLoginStep =
+    panelMode === "password" || panelMode === "first_time" ? 1
+    : panelMode === "password_otp" || panelMode === "first_time_verify" ? 2
+    : 3;
 
   useEffect(() => {
     let cancelled = false;
@@ -288,15 +311,30 @@ export default function LoginPage() {
       }
 
       if (panelMode === "first_time_verify" && json?.nextStep === FIRST_TIME_SIGNIN_NEXT_STEP) {
-        setPassword("");
-        setConfirmPassword("");
-        setPanelMode("first_time_password");
-        setNotice({ tone: "good", message: "Email verified. Create your password to finish signing in." });
+        const next = typeof json?.redirectTo === "string" && json.redirectTo.startsWith("/") ? json.redirectTo : "/dashboard";
+        if (isKioskFlow) {
+          // Navigate to the setup-password page so the proxy middleware can revalidate the session
+          // before the API call. Doing a fetch to setup-password immediately from this page
+          // can fail if the new session cookies haven't been committed by the browser yet.
+          const setupUrl = `/office-hours/setup-password?redirectTo=${encodeURIComponent(next)}`;
+          router.push(setupUrl);
+        } else {
+          setPassword("");
+          setConfirmPassword("");
+          setPanelMode("first_time_password");
+          setNotice({ tone: "good", message: "Email verified. Create your password to finish signing in." });
+        }
         return;
       }
 
       const next = typeof json?.redirectTo === "string" && json.redirectTo.startsWith("/") ? json.redirectTo : "/dashboard";
-      window.location.assign(next);
+      if (isKioskFlow && next.startsWith("/office-hours")) {
+        const supabase = getSupabaseBrowserClient();
+        await supabase.auth.getUser();
+        router.push(next);
+      } else {
+        window.location.assign(next);
+      }
     } catch {
       setNotice({ tone: "critical", message: "Verification failed. Try again." });
     } finally {
@@ -336,7 +374,13 @@ export default function LoginPage() {
       }
 
       const next = typeof json?.redirectTo === "string" && json.redirectTo.startsWith("/") ? json.redirectTo : "/dashboard";
-      window.location.assign(next);
+      if (isKioskFlow && next.startsWith("/office-hours")) {
+        const supabase = getSupabaseBrowserClient();
+        await supabase.auth.getUser();
+        router.push(next);
+      } else {
+        window.location.assign(next);
+      }
     } catch {
       setNotice({ tone: "critical", message: "Could not save your password. Try again." });
     } finally {
@@ -368,54 +412,29 @@ export default function LoginPage() {
     }
   }
 
-  return (
-    <PageShell title="Sign in" showHeader={false} containerClassName="max-w-6xl px-4 py-10 sm:py-14">
-      <section className="rounded-[2rem] border border-black/6 bg-white shadow-[0_32px_90px_-54px_rgba(15,23,42,0.24)]">
-        <div className="grid gap-6 p-4 sm:p-6 lg:grid-cols-[1.08fr_0.92fr] lg:p-8">
-          <section className="flex flex-col justify-between rounded-[1.8rem] border border-slate-200/80 bg-white p-6 shadow-[0_22px_44px_-36px_rgba(15,23,42,0.14)] sm:p-8">
-            <div className="space-y-6">
-              <div className="inline-flex w-fit items-center gap-2 rounded-full border border-slate-200/80 bg-white/80 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.22em] text-slate-500">
-                <span>ASGC OS</span>
-                <span className="h-1 w-1 rounded-full bg-slate-300" />
-                <span>Member Access</span>
-              </div>
-
-              <div className="space-y-3">
-                <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">{copy.eyebrow}</p>
-                <h1 className="max-w-xl text-4xl font-semibold tracking-[-0.04em] text-slate-950 sm:text-5xl">
-                  One sign-in surface for the whole ASGC app.
-                </h1>
-                <p className="max-w-xl text-sm leading-6 text-slate-600 sm:text-base">
-                  Password is the default. First-time members start with email verification, and returning members only
-                  see the extra code step on browsers the system does not trust yet.
-                </p>
-              </div>
-
-              <div className="grid gap-3 sm:grid-cols-3">
-                {[
-                  ["Password first", "Primary flow for returning members"],
-                  ["Quick email check", "Only on untrusted browsers"],
-                  ["Office Hours ready", "Same identity flows into selfie check-in"],
-                ].map(([title, detail]) => (
-                  <article
-                    key={title}
-                    className="rounded-[1.5rem] border border-white/70 bg-white/74 px-4 py-4 shadow-[0_16px_34px_-28px_rgba(15,23,42,0.42)] backdrop-blur"
-                  >
-                    <div className="text-sm font-semibold text-slate-900">{title}</div>
-                    <div className="mt-1 text-xs leading-5 text-slate-600">{detail}</div>
-                  </article>
-                ))}
-              </div>
-            </div>
-
-            <div className="mt-8 rounded-[1.5rem] border border-dashed border-slate-300/80 bg-white/55 px-4 py-4 text-sm text-slate-600">
-              Campus email only. After your first successful sign-in, Office Hours takes you straight into the signed-in
-              app flow instead of the old public kiosk flow.
-            </div>
-          </section>
-
-          <section className="rounded-[1.8rem] border border-slate-200/80 bg-white p-5 shadow-[0_22px_44px_-34px_rgba(15,23,42,0.18)] sm:p-6">
+  const formPanel = (
             <div className="space-y-4">
+              {isKioskFlow && (
+                <div className="flex items-center gap-3 pb-2">
+                  <span className="kiosk-top-nav-mark" aria-hidden="true">AS</span>
+                  <div>
+                    <div className="text-sm font-bold text-slate-900">ASGC OS</div>
+                    <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Office Hours</div>
+                  </div>
+                </div>
+              )}
+
+              {isKioskFlow && (
+                <div className="flex items-center gap-2 py-1">
+                  <div className="kiosk-step-dots">
+                    {[1, 2, 3].map((s) => (
+                      <span key={s} className={cn("kiosk-step-dot", s <= kioskLoginStep && "kiosk-step-dot-active")} />
+                    ))}
+                  </div>
+                  <span className="text-xs text-slate-400">Step {kioskLoginStep} of 3</span>
+                </div>
+              )}
+
               {existingUser && panelMode !== "first_time_password" ? (
                 <div className="rounded-[1.35rem] border border-emerald-200/70 bg-emerald-50/75 p-4">
                   <div className="text-xs font-semibold uppercase tracking-[0.22em] text-emerald-700">Already signed in</div>
@@ -638,11 +657,77 @@ export default function LoginPage() {
                 </form>
               ) : null}
 
-              <div className="rounded-[1.25rem] border border-dashed border-slate-300/85 bg-white/52 px-4 py-4 text-sm leading-6 text-slate-600">
-                <p>Use your GCCCD email. First-time sign-in emails now contain only the code, so Safe Links rewriting does not break the flow.</p>
-                <p className="mt-2">First-time sign-in now goes straight from code verification into password setup, so you do not have to sign in again just to finish onboarding.</p>
+              {!isKioskFlow && (
+                <div className="rounded-[1.25rem] border border-dashed border-slate-300/85 bg-white/52 px-4 py-4 text-sm leading-6 text-slate-600">
+                  <p>Use your GCCCD email. First-time sign-in emails now contain only the code, so Safe Links rewriting does not break the flow.</p>
+                  <p className="mt-2">First-time sign-in now goes straight from code verification into password setup, so you do not have to sign in again just to finish onboarding.</p>
+                </div>
+              )}
+            </div>
+  );
+
+  if (isKioskFlow) {
+    return (
+      <PageShell title="Sign in" showHeader={false} containerClassName="max-w-lg px-4 py-6 sm:py-8">
+        <section className="rounded-[2rem] border border-black/6 bg-white shadow-[0_32px_90px_-54px_rgba(15,23,42,0.24)]">
+          <div className="p-4 sm:p-6">
+            <section className="rounded-[1.8rem] border border-slate-200/80 bg-white p-5 shadow-[0_22px_44px_-34px_rgba(15,23,42,0.18)] sm:p-6">
+              {formPanel}
+            </section>
+          </div>
+        </section>
+      </PageShell>
+    );
+  }
+
+  return (
+    <PageShell title="Sign in" showHeader={false} containerClassName="max-w-6xl px-4 py-10 sm:py-14">
+      <section className="rounded-[2rem] border border-black/6 bg-white shadow-[0_32px_90px_-54px_rgba(15,23,42,0.24)]">
+        <div className="grid gap-6 p-4 sm:p-6 lg:grid-cols-[1.08fr_0.92fr] lg:p-8">
+          <section className="flex flex-col justify-between rounded-[1.8rem] border border-slate-200/80 bg-white p-6 shadow-[0_22px_44px_-36px_rgba(15,23,42,0.14)] sm:p-8">
+            <div className="space-y-6">
+              <div className="inline-flex w-fit items-center gap-2 rounded-full border border-slate-200/80 bg-white/80 px-3 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.22em] text-slate-500">
+                <span>ASGC OS</span>
+                <span className="h-1 w-1 rounded-full bg-slate-300" />
+                <span>Member Access</span>
+              </div>
+
+              <div className="space-y-3">
+                <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">{copy.eyebrow}</p>
+                <h1 className="max-w-xl text-4xl font-semibold tracking-[-0.04em] text-slate-950 sm:text-5xl">
+                  One sign-in surface for the whole ASGC app.
+                </h1>
+                <p className="max-w-xl text-sm leading-6 text-slate-600 sm:text-base">
+                  Password is the default. First-time members start with email verification, and returning members only
+                  see the extra code step on browsers the system does not trust yet.
+                </p>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-3">
+                {[
+                  ["Password first", "Primary flow for returning members"],
+                  ["Quick email check", "Only on untrusted browsers"],
+                  ["Office Hours ready", "Same identity flows into selfie check-in"],
+                ].map(([title, detail]) => (
+                  <article
+                    key={title}
+                    className="rounded-[1.5rem] border border-white/70 bg-white/74 px-4 py-4 shadow-[0_16px_34px_-28px_rgba(15,23,42,0.42)] backdrop-blur"
+                  >
+                    <div className="text-sm font-semibold text-slate-900">{title}</div>
+                    <div className="mt-1 text-xs leading-5 text-slate-600">{detail}</div>
+                  </article>
+                ))}
               </div>
             </div>
+
+            <div className="mt-8 rounded-[1.5rem] border border-dashed border-slate-300/80 bg-white/55 px-4 py-4 text-sm text-slate-600">
+              Campus email only. After your first successful sign-in, Office Hours takes you straight into the signed-in
+              app flow instead of the old public kiosk flow.
+            </div>
+          </section>
+
+          <section className="rounded-[1.8rem] border border-slate-200/80 bg-white p-5 shadow-[0_22px_44px_-34px_rgba(15,23,42,0.18)] sm:p-6">
+            {formPanel}
           </section>
         </div>
       </section>

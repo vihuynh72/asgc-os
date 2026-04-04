@@ -1576,6 +1576,139 @@ body {
   color: rgb(23 24 26 / 0.62);
 }
 
+.kiosk-done-check {
+  width: 4rem;
+  height: 4rem;
+  border-radius: 50%;
+  background: rgb(220 246 235);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.kiosk-done-check svg {
+  width: 2rem;
+  height: 2rem;
+  color: rgb(8 103 83);
+  stroke-width: 2.5;
+}
+
+/* Circular capture button for compact mobile camera */
+.kiosk-capture-circle {
+  width: 4.25rem;
+  height: 4.25rem;
+  border-radius: 50%;
+  border: 4px solid white;
+  background: white;
+  box-shadow: 0 4px 20px rgb(0 0 0 / 0.12);
+  transition: transform 0.1s ease;
+  cursor: pointer;
+}
+.kiosk-capture-circle:active {
+  transform: scale(0.9);
+}
+.kiosk-capture-circle:disabled {
+  opacity: 0.4;
+}
+
+/* Overflow menu trigger on compact camera */
+.kiosk-camera-overflow-trigger {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 50%;
+  background: rgb(0 0 0 / 0.35);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+  backdrop-filter: blur(8px);
+  border: none;
+  cursor: pointer;
+}
+
+/* Overflow menu popover */
+.kiosk-camera-overflow-menu {
+  position: absolute;
+  top: 3.25rem;
+  right: 0.75rem;
+  background: white;
+  border-radius: 0.85rem;
+  box-shadow: 0 8px 32px rgb(0 0 0 / 0.15);
+  padding: 0.35rem;
+  z-index: 10;
+  min-width: 9rem;
+}
+.kiosk-camera-overflow-menu button {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.55rem 0.75rem;
+  border: none;
+  background: none;
+  border-radius: 0.55rem;
+  font-size: 0.84rem;
+  color: var(--foreground);
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.kiosk-camera-overflow-menu button:hover {
+  background: var(--muted);
+}
+
+/* Single-surface mobile flow container */
+.kiosk-flow-surface {
+  position: relative;
+  overflow: hidden;
+  min-height: 60dvh;
+}
+
+/* Success overlay */
+.kiosk-success-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgb(255 255 255 / 0.96);
+  gap: 1rem;
+}
+.kiosk-success-overlay-text {
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: rgb(8 103 83);
+  letter-spacing: -0.02em;
+}
+
+/* Simplified location display for mobile */
+.kiosk-location-simple {
+  text-align: center;
+  padding: 2.5rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+}
+.kiosk-location-simple-icon {
+  width: 3.5rem;
+  height: 3.5rem;
+  color: var(--primary);
+}
+.kiosk-location-simple-label {
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--foreground);
+}
+.kiosk-location-simple-detail {
+  font-size: 0.84rem;
+  color: var(--muted-foreground);
+}
+
 @media (min-width: 768px) {
   .admin-shell-frame {
     padding: 1.4rem 1.4rem 4rem;

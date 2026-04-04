@@ -6,6 +6,7 @@ import { resolveKioskCameraSurface } from "@/lib/office-hours-kiosk/camera-contr
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
+import { KioskCameraOverflowMenu } from "./kiosk-camera-overflow";
 import { useKioskCamera } from "./use-kiosk-camera";
 
 function PreviewImage({ file }: { file: File }) {
@@ -23,11 +24,13 @@ export function KioskCameraCapture({
   value,
   disabled,
   autoStart = false,
+  compact = false,
   onChange,
 }: {
   value: File | null;
   disabled: boolean;
   autoStart?: boolean;
+  compact?: boolean;
   onChange: (file: File | null) => void;
 }) {
   const {
@@ -74,6 +77,117 @@ export function KioskCameraCapture({
     canUseCamera,
     cameraState,
   });
+
+  if (compact) {
+    return (
+      <div className="kiosk-control-grid">
+        {surface === "preview" ? (
+          <div className="kiosk-control-grid">
+            {value ? <PreviewImage file={value} /> : null}
+            <Button variant="outline" className="kiosk-camera-secondary h-12 rounded-xl" onClick={() => onChange(null)} disabled={disabled}>
+              Retake
+            </Button>
+          </div>
+        ) : null}
+
+        {surface === "live" ? (
+          <div className="kiosk-control-grid">
+            <div
+              className={cn(
+                "kiosk-camera-frame kiosk-camera-frame-live relative",
+                controlState.canZoom ? "touch-none" : undefined,
+                dragZooming ? "kiosk-camera-frame-zooming" : undefined,
+              )}
+              onPointerDown={(event) => {
+                const started = beginDragZoom({
+                  pointerId: event.pointerId,
+                  clientY: event.clientY,
+                  pointerType: event.pointerType,
+                  surfaceHeight: event.currentTarget.getBoundingClientRect().height,
+                });
+                if (started) {
+                  event.currentTarget.setPointerCapture(event.pointerId);
+                }
+              }}
+              onPointerMove={(event) => {
+                if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+                void updateDragZoom({
+                  pointerId: event.pointerId,
+                  clientY: event.clientY,
+                });
+              }}
+              onPointerUp={(event) => {
+                endDragZoom({ pointerId: event.pointerId });
+                if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                  event.currentTarget.releasePointerCapture(event.pointerId);
+                }
+              }}
+              onPointerCancel={(event) => {
+                endDragZoom({ pointerId: event.pointerId });
+                if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                  event.currentTarget.releasePointerCapture(event.pointerId);
+                }
+              }}
+            >
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                muted
+                onLoadedMetadata={() => setVideoReady(true)}
+                onCanPlay={() => setVideoReady(true)}
+                onPlaying={() => setVideoReady(true)}
+                className={cn("aspect-[4/5] w-full object-cover", mirrorPreview ? "scale-x-[-1]" : undefined)}
+              />
+              {!videoReady ? <div className="kiosk-camera-overlay">Starting camera...</div> : null}
+
+              <KioskCameraOverflowMenu
+                canFlip={controlState.canFlip}
+                canTorch={controlState.canTorch}
+                torchOn={torchOn}
+                onFlip={() => void rotateCamera()}
+                onTorch={() => void toggleTorch()}
+              />
+            </div>
+
+            <div className="flex justify-center py-2">
+              <button
+                type="button"
+                className="kiosk-capture-circle"
+                onClick={() => void capture()}
+                disabled={disabled || capturing || !videoReady}
+                aria-label="Capture selfie"
+              />
+            </div>
+            {cameraError ? <p className="text-xs text-rose-700">{cameraError}</p> : null}
+          </div>
+        ) : null}
+
+        {surface === "prompt" ? (
+          <div className="kiosk-control-grid">
+            <Button
+              className="kiosk-camera-primary h-14 rounded-xl text-base"
+              variant="outline"
+              onClick={() => void start()}
+              disabled={disabled || !canUseCamera || cameraState === "starting"}
+            >
+              {cameraState === "starting" ? "Requesting..." : "Open camera"}
+            </Button>
+            {cameraError ? <p className="text-xs text-rose-700">{cameraError}</p> : null}
+          </div>
+        ) : null}
+
+        {surface === "unavailable" ? (
+          <div className="kiosk-control-grid">
+            <Button className="kiosk-camera-secondary h-14 rounded-xl text-base" variant="outline" disabled>
+              Camera unavailable
+            </Button>
+            <p className="text-xs text-foreground/60">Use a device with camera access for kiosk check-in.</p>
+          </div>
+        ) : null}
+      </div>
+    );
+  }
 
   return (
     <div className="kiosk-control-grid">
