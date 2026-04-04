@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   KioskActionBar,
   KioskCameraCapture,
+  KioskMobileFlow,
   KioskShell,
   KioskNotice,
   KioskStatusChip,
@@ -95,6 +96,14 @@ function formatWhen(iso: string): string {
   }
 }
 
+function formatDuration(startIso: string, endIso: string): string {
+  const ms = new Date(endIso).getTime() - new Date(startIso).getTime();
+  const mins = Math.round(ms / 60_000);
+  if (mins < 60) return `${mins}m`;
+  const hrs = Math.floor(mins / 60);
+  return `${hrs}h ${mins % 60}m`;
+}
+
 function formatStepLabel(step: string): string {
   switch (step) {
     case "selfie":
@@ -116,8 +125,22 @@ function toneForStepState(state: string, activeTone: KioskTone): KioskTone {
   return "neutral";
 }
 
+function useIsMobile(breakpoint = 768): boolean {
+  const [mobile, setMobile] = useState(() =>
+    typeof window !== "undefined" ? window.matchMedia(`(max-width: ${breakpoint - 1}px)`).matches : false,
+  );
+  useEffect(() => {
+    const mq = window.matchMedia(`(max-width: ${breakpoint - 1}px)`);
+    const handler = (e: MediaQueryListEvent) => setMobile(e.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, [breakpoint]);
+  return mobile;
+}
+
 export function MemberKioskScreen() {
   const reduceMotion = useReducedMotion();
+  const isMobile = useIsMobile();
   const supabase = useMemo(() => getSupabaseBrowserClient(), []);
 
   const [authStatus, setAuthStatus] = useState<KioskAuthStatus>("loading");
@@ -135,6 +158,8 @@ export function MemberKioskScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [justCheckedOut, setJustCheckedOut] = useState(false);
+  const [lastSession, setLastSession] = useState<{ checkin_at: string; checkout_at: string } | null>(null);
 
   const mode = deriveMemberActionMode({ openSessionId: openSession?.id ?? null });
   const preflight = useMemo(() => {
@@ -352,6 +377,13 @@ export function MemberKioskScreen() {
     };
   }, []);
 
+  const onStartNewCheckin = useCallback(() => {
+    setJustCheckedOut(false);
+    setLastSession(null);
+    setNotice(null);
+    setError(null);
+  }, []);
+
   const refreshLocation = useCallback(async () => {
     setLocating(true);
     setLocationError(null);
@@ -366,17 +398,18 @@ export function MemberKioskScreen() {
   }, []);
 
   useEffect(() => {
-    if (!sessionLoaded || mode !== "check_in" || officeGeoStatus !== "ready" || location || locating) return;
+    if (!sessionLoaded || mode !== "check_in" || officeGeoStatus !== "ready" || location || locating || justCheckedOut) return;
     void refreshLocation();
-  }, [sessionLoaded, location, locating, mode, officeGeoStatus, refreshLocation]);
+  }, [sessionLoaded, location, locating, mode, officeGeoStatus, refreshLocation, justCheckedOut]);
 
   useEffect(() => {
+    if (justCheckedOut) return;
     if (mode === "check_out") {
       setPhoto(null);
       setLocation(null);
       setLocationError(null);
     }
-  }, [mode]);
+  }, [mode, justCheckedOut]);
 
   useEffect(() => {
     const previousStep = previousStepRef.current;
@@ -421,10 +454,14 @@ export function MemberKioskScreen() {
           return;
         }
 
-        setNotice("Checked out.");
+        setLastSession({
+          checkin_at: openSession?.checkin_at ?? new Date().toISOString(),
+          checkout_at: new Date().toISOString(),
+        });
+        setJustCheckedOut(true);
+        setNotice(null);
         setOpenSession(null);
         dispatchOfficeHoursSessionClosed(closingSessionId);
-        void refreshOpenSession();
         return;
       }
 
@@ -593,6 +630,49 @@ export function MemberKioskScreen() {
     );
   }
 
+  if (isMobile) {
+    return (
+      <KioskShell
+        className={cn("max-w-6xl items-start py-4", !justCheckedOut && (mode === "check_out" || currentStep === "submit") ? "kiosk-panel-with-sticky" : undefined)}
+        topNav={topNavElement}
+      >
+        <div className="kiosk-panel">
+          <KioskStepHeader
+            eyebrow={justCheckedOut ? "Session complete" : mode === "check_out" ? "Active session" : "Office Hours"}
+            title={justCheckedOut ? "All done" : summary.title}
+            step={justCheckedOut ? 1 : activeStepNumber}
+            totalSteps={justCheckedOut ? 1 : mode === "check_out" ? 2 : 3}
+            actions={<KioskStatusChip tone={justCheckedOut ? "good" : summaryTone} label={justCheckedOut ? "Checked out" : summary.chipLabel} />}
+          />
+          <div className="mt-4">
+            <KioskMobileFlow
+              mode={mode}
+              currentStep={currentStep}
+              photo={photo}
+              location={location}
+              locating={locating}
+              locationError={locationError}
+              preflight={preflight}
+              sessionLoaded={sessionLoaded}
+              loading={loading}
+              canSubmit={canSubmit}
+              error={error}
+              notice={notice}
+              justCheckedOut={justCheckedOut}
+              openSession={openSession}
+              lastSession={lastSession}
+              summary={summary}
+              onPhotoChange={setPhoto}
+              onRefreshLocation={refreshLocation}
+              onSubmit={onSubmit}
+              onStartNewCheckin={onStartNewCheckin}
+            />
+          </div>
+        </div>
+      </KioskShell>
+    );
+  }
+
   return (
     <KioskShell
       className="max-w-6xl items-start py-4 sm:py-6"
@@ -606,16 +686,18 @@ export function MemberKioskScreen() {
           transition={{ duration: 0.24, ease: "easeOut" }}
         >
           <KioskStepHeader
-            eyebrow={mode === "check_out" ? "Active session" : "Signed-in selfie kiosk"}
-            title={summary.title}
+            eyebrow={justCheckedOut ? "Session complete" : mode === "check_out" ? "Active session" : "Signed-in selfie kiosk"}
+            title={justCheckedOut ? "All done" : summary.title}
             subtitle={
-              mode === "check_out"
-                ? "You are already checked in. Close the session when you are done."
-                : "Take your selfie first, then confirm the office location before you check in."
+              justCheckedOut
+                ? "Your session has been recorded."
+                : mode === "check_out"
+                  ? "You are already checked in. Close the session when you are done."
+                  : "Take your selfie first, then confirm the office location before you check in."
             }
-            step={activeStepNumber}
-            totalSteps={mode === "check_out" ? 2 : 3}
-            actions={<KioskStatusChip tone={summaryTone} label={summary.chipLabel} />}
+            step={justCheckedOut ? 1 : activeStepNumber}
+            totalSteps={justCheckedOut ? 1 : mode === "check_out" ? 2 : 3}
+            actions={<KioskStatusChip tone={justCheckedOut ? "good" : summaryTone} label={justCheckedOut ? "Checked out" : summary.chipLabel} />}
           />
 
           {notice ? (
@@ -630,7 +712,62 @@ export function MemberKioskScreen() {
           ) : null}
 
           <div className="mt-4 kiosk-page-stack">
-            {mode === "check_in" ? (
+            {justCheckedOut && !openSession ? (
+              <section className="kiosk-section kiosk-step-card kiosk-step-card-active">
+                <div className="flex flex-col items-center gap-4 py-6 text-center">
+                  <motion.div
+                    className="kiosk-done-check"
+                    initial={reduceMotion ? false : { scale: 0 }}
+                    animate={reduceMotion ? undefined : { scale: [0, 1.1, 1] }}
+                    transition={{ duration: 0.45, ease: "easeOut" }}
+                  >
+                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M3.2 8.2 6.7 11.5 12.8 4.8" />
+                    </svg>
+                  </motion.div>
+                  <div>
+                    <h2 className="text-2xl font-semibold tracking-[-0.03em] text-slate-950">All done</h2>
+                    {lastSession ? (
+                      <p className="mt-2 text-sm leading-6 text-slate-600">
+                        Session lasted {formatDuration(lastSession.checkin_at, lastSession.checkout_at)}
+                      </p>
+                    ) : null}
+                  </div>
+                  <KioskStatusChip tone="good" label="Checked out" />
+                  {lastSession ? (
+                    <div className="mt-2 space-y-1 text-sm text-slate-500">
+                      <div>Checked in: {formatWhen(lastSession.checkin_at)}</div>
+                      <div>Checked out: {formatWhen(lastSession.checkout_at)}</div>
+                    </div>
+                  ) : null}
+                </div>
+                <div className="kiosk-step-body">
+                  <KioskActionBar
+                    primary={
+                      <Button
+                        className="h-12 rounded-full px-6"
+                        onClick={() => {
+                          setJustCheckedOut(false);
+                          setLastSession(null);
+                          setNotice(null);
+                          setError(null);
+                        }}
+                      >
+                        Start new check-in
+                      </Button>
+                    }
+                    secondary={
+                      <Link
+                        href="/dashboard"
+                        className="inline-flex h-11 items-center justify-center rounded-full border border-slate-200 bg-white px-5 text-sm font-medium text-slate-700"
+                      >
+                        Back to dashboard
+                      </Link>
+                    }
+                  />
+                </div>
+              </section>
+            ) : mode === "check_in" ? (
               <>
                 <section className={cn("kiosk-section kiosk-step-card", selfieSection?.expanded ? "kiosk-step-card-active" : undefined)}>
                   <div className="flex flex-wrap items-start justify-between gap-3">
@@ -649,7 +786,7 @@ export function MemberKioskScreen() {
 
                   {selfieSection?.expanded ? (
                     <div className="kiosk-step-body">
-                      <KioskCameraCapture value={photo} disabled={loading} autoStart={sessionLoaded && !photo} onChange={setPhoto} />
+                      <KioskCameraCapture value={photo} disabled={loading} autoStart={sessionLoaded && !photo && !justCheckedOut} onChange={setPhoto} />
                     </div>
                   ) : (
                     <div className="mt-4 flex flex-wrap gap-2">
