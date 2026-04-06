@@ -8,6 +8,7 @@ import {
   OFFICE_HOURS_SESSION_OPENED_EVENT,
   reducePresenceMonitorSessionState,
 } from "@/lib/office-hours-presence-lifecycle.mjs";
+import { fetchLatestOwnOpenSession } from "@/lib/office-hours-open-session-client.mjs";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 import { isProbablyNetworkError, swallowNetworkError } from "@/lib/network-errors.mjs";
 
@@ -91,17 +92,11 @@ export function OfficeHoursPresenceMonitor() {
       try {
         const userResult = await swallowNetworkError(() => supabase.auth.getUser());
         if (!userResult) return;
-        if (cancelled || !userResult.data?.user) return;
+        const userId = userResult.data?.user?.id ?? null;
+        if (cancelled || !userId) return;
 
         const sessionResult = await swallowNetworkError(() =>
-          supabase
-            .from("office_hour_sessions")
-            .select("id,checkin_at,requires_presence")
-            .eq("status", "open")
-            .is("checkout_at", null)
-            .order("checkin_at", { ascending: false })
-            .limit(1)
-            .maybeSingle()
+          fetchLatestOwnOpenSession(supabase, userId, "id,checkin_at,requires_presence")
         );
 
         if (!sessionResult) return;
