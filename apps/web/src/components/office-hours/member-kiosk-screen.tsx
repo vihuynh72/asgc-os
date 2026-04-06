@@ -19,11 +19,13 @@ import {
   deriveMemberActionMode,
   deriveMemberActionStep,
   friendlyMemberActionError,
+  resolveMemberActionSessionDrift,
 } from "@/lib/office-hours-member-action.mjs";
 import {
   dispatchOfficeHoursSessionClosed,
   dispatchOfficeHoursSessionOpened,
 } from "@/lib/office-hours-presence-lifecycle.mjs";
+import { fetchLatestOwnOpenSession } from "@/lib/office-hours-open-session-client.mjs";
 import {
   getMemberKioskFlowModel,
   getMemberKioskStateSummary,
@@ -104,21 +106,6 @@ function formatDuration(startIso: string, endIso: string): string {
   return `${hrs}h ${mins % 60}m`;
 }
 
-function formatStepLabel(step: string): string {
-  switch (step) {
-    case "selfie":
-      return "Selfie";
-    case "location":
-      return "Location";
-    case "submit":
-      return "Check in";
-    case "confirm":
-      return "Check out";
-    default:
-      return step;
-  }
-}
-
 function toneForStepState(state: string, activeTone: KioskTone): KioskTone {
   if (state === "complete") return "good";
   if (state === "current") return activeTone;
@@ -144,6 +131,7 @@ export function MemberKioskScreen() {
   const supabase = useMemo(() => getSupabaseBrowserClient(), []);
 
   const [authStatus, setAuthStatus] = useState<KioskAuthStatus>("loading");
+  const [userId, setUserId] = useState<string | null>(null);
   const [sessionLoaded, setSessionLoaded] = useState(false);
   const [openSession, setOpenSession] = useState<OpenSession | null>(null);
   const [officeGeo, setOfficeGeo] = useState<OfficeGeo | null>(null);
@@ -219,17 +207,16 @@ export function MemberKioskScreen() {
   const previousStepRef = useRef(currentStep);
 
   const refreshOpenSession = useCallback(async () => {
-    const { data: sessionRow } = await supabase
-      .from("office_hour_sessions")
-      .select("id,checkin_at")
-      .eq("status", "open")
-      .is("checkout_at", null)
-      .order("checkin_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+    if (!userId) {
+      setOpenSession(null);
+      return null;
+    }
 
-    setOpenSession((sessionRow as OpenSession | null) ?? null);
-  }, [supabase]);
+    const { data: sessionRow } = await fetchLatestOwnOpenSession(supabase, userId, "id,checkin_at");
+    const nextSession = (sessionRow as OpenSession | null) ?? null;
+    setOpenSession(nextSession);
+    return nextSession;
+  }, [supabase, userId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -243,9 +230,13 @@ export function MemberKioskScreen() {
         if (cancelled) return;
 
         if (!user) {
+          setUserId(null);
+          setOpenSession(null);
           setAuthStatus("unauthenticated");
           return;
         }
+
+        setUserId(user.id);
 
         const { data: profile } = await supabase
           .from("profile_private")
@@ -263,6 +254,8 @@ export function MemberKioskScreen() {
         setAuthStatus("authenticated");
       } catch {
         if (!cancelled) {
+          setUserId(null);
+          setOpenSession(null);
           setAuthStatus("unauthenticated");
         }
       }
@@ -275,18 +268,11 @@ export function MemberKioskScreen() {
   }, [supabase]);
 
   useEffect(() => {
-    if (authStatus !== "authenticated") return;
+    if (authStatus !== "authenticated" || !userId) return;
     let cancelled = false;
     async function run() {
       try {
-        const { data: sessionRow } = await supabase
-          .from("office_hour_sessions")
-          .select("id,checkin_at")
-          .eq("status", "open")
-          .is("checkout_at", null)
-          .order("checkin_at", { ascending: false })
-          .limit(1)
-          .maybeSingle();
+        const { data: sessionRow } = await fetchLatestOwnOpenSession(supabase, userId, "id,checkin_at");
 
         if (!cancelled) {
           setOpenSession((sessionRow as OpenSession | null) ?? null);
@@ -301,7 +287,7 @@ export function MemberKioskScreen() {
     return () => {
       cancelled = true;
     };
-  }, [authStatus, supabase]);
+  }, [authStatus, supabase, userId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -450,7 +436,28 @@ export function MemberKioskScreen() {
 
         const json = (await response.json().catch(() => null)) as { error?: string } | null;
         if (!response.ok) {
-          setError(friendlyMemberActionError(json?.error ?? ""));
+          const errorCode = json?.error ?? "";
+          if (errorCode === "no_open_session" && userId) {
+            const refreshedSession = await refreshOpenSession();
+            const drift = resolveMemberActionSessionDrift({
+              attemptedMode: "check_out",
+              errorCode,
+              refreshedSession,
+            });
+
+            if (drift) {
+              setOpenSession(drift.nextOpenSession);
+              if (drift.clearError) {
+                setError(null);
+              }
+              if (drift.lifecycleEvent === "closed") {
+                dispatchOfficeHoursSessionClosed(closingSessionId);
+              }
+              return;
+            }
+          }
+
+          setError(friendlyMemberActionError(errorCode));
           return;
         }
 
@@ -482,7 +489,28 @@ export function MemberKioskScreen() {
 
       const json = (await response.json().catch(() => null)) as { error?: string; session?: unknown } | null;
       if (!response.ok) {
-        setError(friendlyMemberActionError(json?.error ?? ""));
+        const errorCode = json?.error ?? "";
+        if (errorCode === "already_checked_in" && userId) {
+          const refreshedSession = await refreshOpenSession();
+          const drift = resolveMemberActionSessionDrift({
+            attemptedMode: "check_in",
+            errorCode,
+            refreshedSession,
+          });
+
+          if (drift) {
+            setOpenSession(drift.nextOpenSession);
+            if (drift.clearError) {
+              setError(null);
+            }
+            if (drift.lifecycleEvent === "opened" && drift.nextOpenSession?.id) {
+              dispatchOfficeHoursSessionOpened(drift.nextOpenSession.id);
+            }
+            return;
+          }
+        }
+
+        setError(friendlyMemberActionError(errorCode));
         return;
       }
 

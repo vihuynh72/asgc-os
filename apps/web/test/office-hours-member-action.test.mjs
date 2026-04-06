@@ -6,6 +6,7 @@ import {
   deriveMemberActionMode,
   deriveMemberActionStep,
   friendlyMemberActionError,
+  resolveMemberActionSessionDrift,
 } from "../src/lib/office-hours-member-action.mjs";
 
 test("deriveMemberActionMode switches between selfie check-in and direct checkout", () => {
@@ -89,4 +90,40 @@ test("friendlyMemberActionError keeps Office Hours errors concise", () => {
   assert.equal(friendlyMemberActionError("already_checked_in"), "You already have an open session.");
   assert.equal(friendlyMemberActionError("no_open_session"), "No open session was found.");
   assert.equal(friendlyMemberActionError("invalid_session"), "Your session updated, but this screen needs a refresh.");
+});
+
+test("resolveMemberActionSessionDrift clears stale checkout state when no open session remains", () => {
+  assert.deepEqual(
+    resolveMemberActionSessionDrift({
+      attemptedMode: "check_out",
+      errorCode: "no_open_session",
+      refreshedSession: null,
+    }),
+    {
+      clearError: true,
+      lifecycleEvent: "closed",
+      nextOpenSession: null,
+    },
+  );
+});
+
+test("resolveMemberActionSessionDrift switches to checkout when a check-in race reveals an existing session", () => {
+  assert.deepEqual(
+    resolveMemberActionSessionDrift({
+      attemptedMode: "check_in",
+      errorCode: "already_checked_in",
+      refreshedSession: {
+        id: "session-1",
+        checkin_at: "2026-04-06T16:38:17.000Z",
+      },
+    }),
+    {
+      clearError: true,
+      lifecycleEvent: "opened",
+      nextOpenSession: {
+        id: "session-1",
+        checkin_at: "2026-04-06T16:38:17.000Z",
+      },
+    },
+  );
 });

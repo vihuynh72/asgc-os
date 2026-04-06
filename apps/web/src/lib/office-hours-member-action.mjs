@@ -43,3 +43,23 @@ export function friendlyMemberActionError(code) {
       return code || "Something went wrong.";
   }
 }
+
+export function resolveMemberActionSessionDrift({ attemptedMode, errorCode, refreshedSession }) {
+  if (attemptedMode === "check_out" && errorCode === "no_open_session" && !refreshedSession) {
+    return {
+      nextOpenSession: null,
+      clearError: true,
+      lifecycleEvent: "closed",
+    };
+  }
+
+  if (attemptedMode === "check_in" && errorCode === "already_checked_in" && refreshedSession?.id) {
+    return {
+      nextOpenSession: refreshedSession,
+      clearError: true,
+      lifecycleEvent: "opened",
+    };
+  }
+
+  return null;
+}
