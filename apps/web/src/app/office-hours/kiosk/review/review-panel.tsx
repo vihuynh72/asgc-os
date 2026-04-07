@@ -50,7 +50,7 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   return data;
 }
 
-export function KioskPhotoReviewPanel() {
+export function KioskPhotoReviewPanel({ canEdit = false }: { canEdit?: boolean }) {
   const [startDate, setStartDate] = useState<string>(() => addDaysDateOnly(todayDateString(), -7) ?? todayDateString());
   const [endDate, setEndDate] = useState<string>(() => addDaysDateOnly(todayDateString(), 1) ?? todayDateString());
   const [status, setStatus] = useState<string>("");
@@ -303,53 +303,63 @@ export function KioskPhotoReviewPanel() {
                 label={mode === "active" ? "Needs review" : "Quarantined"}
                 count={filtered.length}
               />
-              <label className="flex items-center gap-2 text-xs text-foreground/65">
-                <input
-                  type="checkbox"
-                  checked={allChecked}
-                  onChange={(event) => {
-                    if (event.target.checked) setSelectedIds(new Set(filtered.map((s) => s.id)));
-                    else setSelectedIds(new Set());
-                  }}
-                />
-                Select all
-              </label>
+              {canEdit ? (
+                <label className="flex items-center gap-2 text-xs text-foreground/65">
+                  <input
+                    type="checkbox"
+                    checked={allChecked}
+                    onChange={(event) => {
+                      if (event.target.checked) setSelectedIds(new Set(filtered.map((s) => s.id)));
+                      else setSelectedIds(new Set());
+                    }}
+                  />
+                  Select all
+                </label>
+              ) : null}
             </div>
           </div>
         </div>
 
-        <div className="grid gap-2 border-t border-[var(--admin-border-soft)] pt-3 md:grid-cols-[1fr_auto] md:items-center">
-          {mode === "active" ? (
-            <input
-              type="text"
-              className="kiosk-input h-12 rounded-xl px-3 text-sm"
-              value={bulkReason}
-              onChange={(event: ChangeEvent<HTMLInputElement>) => setBulkReason(event.target.value)}
-              placeholder="Quarantine reason (optional)"
-            />
-          ) : (
-            <p className="text-xs text-foreground/65">Restore selected sessions to active review.</p>
-          )}
+        {canEdit ? (
+          <div className="grid gap-2 border-t border-[var(--admin-border-soft)] pt-3 md:grid-cols-[1fr_auto] md:items-center">
+            {mode === "active" ? (
+              <input
+                type="text"
+                className="kiosk-input h-12 rounded-xl px-3 text-sm"
+                value={bulkReason}
+                onChange={(event: ChangeEvent<HTMLInputElement>) => setBulkReason(event.target.value)}
+                placeholder="Quarantine reason (optional)"
+              />
+            ) : (
+              <p className="text-xs text-foreground/65">Restore selected sessions to active review.</p>
+            )}
 
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              variant="outline"
-              className="h-11 rounded-xl px-4"
-              onClick={() => void bulkAction()}
-              disabled={selectedCount === 0}
-            >
-              {mode === "active" ? `Quarantine (${selectedCount})` : `Restore (${selectedCount})`}
-            </Button>
-            <Button
-              variant="ghost"
-              className="h-11 rounded-xl px-4"
-              onClick={clearSelection}
-              disabled={selectedCount === 0}
-            >
-              Clear
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                variant="outline"
+                className="h-11 rounded-xl px-4"
+                onClick={() => void bulkAction()}
+                disabled={selectedCount === 0}
+              >
+                {mode === "active" ? `Quarantine (${selectedCount})` : `Restore (${selectedCount})`}
+              </Button>
+              <Button
+                variant="ghost"
+                className="h-11 rounded-xl px-4"
+                onClick={clearSelection}
+                disabled={selectedCount === 0}
+              >
+                Clear
+              </Button>
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="border-t border-[var(--admin-border-soft)] pt-3">
+            <p className="text-xs text-foreground/65">
+              View-only access. Quarantine and restore actions require full admin or EVP access.
+            </p>
+          </div>
+        )}
       </section>
 
       {actionStatus ? <KioskNotice tone="neutral">{actionStatus}</KioskNotice> : null}
@@ -376,19 +386,21 @@ export function KioskPhotoReviewPanel() {
             <article key={s.id} className="kiosk-section space-y-3">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <label className="flex min-w-0 items-start gap-3">
-                  <input
-                    type="checkbox"
-                    className="mt-1.5"
-                    checked={checked}
-                    onChange={(event) => {
-                      setSelectedIds((prev) => {
-                        const next = new Set(prev);
-                        if (event.target.checked) next.add(s.id);
-                        else next.delete(s.id);
-                        return next;
-                      });
-                    }}
-                  />
+                  {canEdit ? (
+                    <input
+                      type="checkbox"
+                      className="mt-1.5"
+                      checked={checked}
+                      onChange={(event) => {
+                        setSelectedIds((prev) => {
+                          const next = new Set(prev);
+                          if (event.target.checked) next.add(s.id);
+                          else next.delete(s.id);
+                          return next;
+                        });
+                      }}
+                    />
+                  ) : null}
                   <div className="min-w-0 space-y-2">
                     <div>
                       <p className="truncate text-base font-medium">{s.user_display_name || "—"}</p>
@@ -431,7 +443,7 @@ export function KioskPhotoReviewPanel() {
                   >
                     {expanded ? "Hide selfie" : "View selfie"}
                   </Button>
-                  {mode === "active" ? (
+                  {canEdit && mode === "active" ? (
                     <Button
                       variant="outline"
                       className="h-10 rounded-xl px-3"
@@ -442,7 +454,8 @@ export function KioskPhotoReviewPanel() {
                     >
                       Quarantine
                     </Button>
-                  ) : (
+                  ) : null}
+                  {canEdit && mode !== "active" ? (
                     <Button
                       variant="outline"
                       className="h-10 rounded-xl px-3"
@@ -450,7 +463,7 @@ export function KioskPhotoReviewPanel() {
                     >
                       Restore
                     </Button>
-                  )}
+                  ) : null}
                 </div>
               </div>
 

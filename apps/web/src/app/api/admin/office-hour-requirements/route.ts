@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
-import { requireAnyAdminRead, requirePartialAdmin } from "@/lib/adminAuth";
+import { requireOfficeHoursAdmin } from "@/lib/adminAuth";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
@@ -29,9 +29,9 @@ const PutSchema = z.object({
     .min(1),
 });
 
-// GET: Read office hour requirements (any admin tier can read)
+// GET: Read office hour requirements (Office Hours full admin + EVP only)
 export async function GET(request: NextRequest) {
-  const authz = await requireAnyAdminRead(request);
+  const authz = await requireOfficeHoursAdmin(request);
   if (!authz.ok) return authz.response;
 
   const url = request.nextUrl;
@@ -65,9 +65,9 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({ termId: resolvedTermId, requirements: (requirements ?? []) as RequirementRow[] });
 }
 
-// PUT: Update office hour requirements (partial admin or higher with write access)
+// PUT: Update office hour requirements (Office Hours full admin + EVP only)
 export async function PUT(request: NextRequest) {
-  const authz = await requirePartialAdmin(request);
+  const authz = await requireOfficeHoursAdmin(request);
   if (!authz.ok) return authz.response;
 
   const parsed = PutSchema.safeParse(await request.json().catch(() => null));

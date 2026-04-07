@@ -2,6 +2,7 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
 import { buildMfaRecoveryEmail } from "@/lib/auth/mfa-recovery-email.mjs";
+import { buildPasswordResetCallbackUrl, buildPasswordResetLink } from "@/lib/auth/password-setup.mjs";
 import { sendEmail } from "@/lib/emailSender";
 import { getPublicEnv } from "@/lib/env";
 import { normalizeEmail } from "@/lib/invitesAllowlist";
@@ -48,14 +49,17 @@ export async function POST(request: NextRequest) {
 
   // Generate a Supabase recovery link (password recovery) and use it only as an email ownership proof step.
   // The callback handler will set a short-lived recovery cookie and route the user to /mfa/recover.
-  const callbackUrl = new URL("/auth/callback", origin);
-  callbackUrl.searchParams.set("redirectTo", `/mfa/recover?redirectTo=${encodeURIComponent(postResetRedirectTo)}`);
+  const mfaRecoveryRedirect = `/mfa/recover?redirectTo=${encodeURIComponent(postResetRedirectTo)}`;
+  const callbackUrl = buildPasswordResetCallbackUrl({
+    origin,
+    redirectTo: mfaRecoveryRedirect,
+  });
 
   const admin = getSupabaseAdminClient();
   const { data, error } = await admin.auth.admin.generateLink({
     type: "recovery",
     email,
-    options: { redirectTo: callbackUrl.toString() },
+    options: { redirectTo: callbackUrl },
   });
 
   if (error || !data?.properties?.hashed_token) {
@@ -63,12 +67,15 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: false }, { status: 500 });
   }
 
-  const callbackLink = new URL(callbackUrl.toString());
-  callbackLink.searchParams.set("token_hash", data.properties.hashed_token);
-  callbackLink.searchParams.set("type", "recovery");
+  const callbackLink = buildPasswordResetLink({
+    origin,
+    redirectTo: mfaRecoveryRedirect,
+    tokenHash: data.properties.hashed_token,
+    verificationType: "recovery",
+  });
 
   const emailMessage = buildMfaRecoveryEmail({
-    recoveryLink: callbackLink.toString(),
+    recoveryLink: callbackLink,
     emailOtp: data.properties.email_otp ?? null,
   });
 

@@ -23,6 +23,7 @@ export const ROLE_LABEL_BY_KEY = Object.freeze({
 });
 
 export const DEFAULT_WEEKLY_TOTAL_HOURS_BY_ROLE = Object.freeze({
+  advisor: 0,
   president: 10,
   executive: 10,
   board_member: 4,

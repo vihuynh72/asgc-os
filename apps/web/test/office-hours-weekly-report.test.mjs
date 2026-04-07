@@ -9,6 +9,7 @@ import {
   inferRoleLabel,
   reportStatusLabel,
   roleGroupLabel,
+  roleKeyRank,
   sortWeeklyReportRows,
 } from "../src/lib/office-hours-weekly-report.mjs";
 
@@ -71,12 +72,62 @@ test("sortWeeklyReportRows orders board members by number when present", () => {
 });
 
 test("roleGroupLabel and reportStatusLabel return human-friendly labels", () => {
+  assert.equal(roleKeyRank("advisor"), 0);
+  assert.equal(roleGroupLabel("advisor"), "Advisors");
   assert.equal(roleGroupLabel("executive"), "Executives");
   assert.equal(roleGroupLabel("director"), "Board Members");
   assert.equal(roleGroupLabel("unknown"), "Members");
   assert.equal(reportStatusLabel("complete"), "Complete");
   assert.equal(reportStatusLabel("missing"), "Missing");
   assert.equal(reportStatusLabel("not_required"), "Not required");
+});
+
+test("sortWeeklyReportRows keeps advisors ahead of all term-scoped Office Hours roles", () => {
+  const rows = [
+    {
+      user_id: "1",
+      week_start: "2026-04-06",
+      role_key: "volunteer",
+      email: "volunteer@gcccd.edu",
+      role: "Volunteer",
+      name: "Volunteer Person",
+      required_hours: 0,
+      total_hours: 0,
+      missing_hours: 0,
+    },
+    {
+      user_id: "2",
+      week_start: "2026-04-06",
+      role_key: "advisor",
+      email: "advisor@gcccd.edu",
+      role: "Advisor",
+      name: "Advisor Person",
+      required_hours: 0,
+      total_hours: 0,
+      missing_hours: 0,
+    },
+    {
+      user_id: "3",
+      week_start: "2026-04-06",
+      role_key: "president",
+      email: "president@gcccd.edu",
+      role: "President",
+      name: "President Person",
+      required_hours: 10,
+      total_hours: 3,
+      missing_hours: 7,
+    },
+  ];
+
+  const sorted = sortWeeklyReportRows(rows);
+  assert.deepEqual(
+    sorted.map((row) => row.role_key),
+    ["advisor", "president", "volunteer"],
+  );
+});
+
+test("inferRoleLabel returns advisor for the global advisor bucket", () => {
+  assert.equal(inferRoleLabel({ email: "advisor@gcccd.edu", roleKey: "advisor" }), "Advisor");
 });
 
 test("completionPercent handles required and not-required rows", () => {

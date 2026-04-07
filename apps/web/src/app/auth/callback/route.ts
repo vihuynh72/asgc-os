@@ -1,6 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
+import { finalizeVerifiedAuthCallback } from "@/lib/auth/auth-callback.mjs";
 import { getPublicEnv } from "@/lib/env";
 import { normalizeEmail } from "@/lib/invitesAllowlist";
 import { POST_AUTH_REDIRECT_COOKIE, safePostAuthRedirectPath, safeRedirectPathOrNull } from "@/lib/redirects";
@@ -9,6 +10,10 @@ import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 export const runtime = "nodejs";
 
 const MFA_RECOVERY_COOKIE = "asgc.mfaRecovery";
+
+function clearMfaRecoveryCookie(response: NextResponse) {
+  response.cookies.set(MFA_RECOVERY_COOKIE, "", { path: "/", maxAge: 0 });
+}
 
 export async function GET(request: NextRequest) {
   const url = request.nextUrl;
@@ -21,6 +26,7 @@ export async function GET(request: NextRequest) {
   const redirectTo = safePostAuthRedirectPath(queryRedirectTo ?? cookieRedirectTo ?? "/dashboard");
 
   const response = NextResponse.redirect(new URL(redirectTo, url.origin));
+  clearMfaRecoveryCookie(response);
 
   // Supabase emails may include either:
   // - PKCE flow: ?code=...
@@ -96,7 +102,9 @@ export async function GET(request: NextRequest) {
       const errUrl = new URL("/login", url.origin);
       errUrl.searchParams.set("error", "auth_callback_failed");
       errUrl.searchParams.set("redirectTo", redirectTo);
-      return NextResponse.redirect(errUrl);
+      const errResponse = NextResponse.redirect(errUrl);
+      clearMfaRecoveryCookie(errResponse);
+      return errResponse;
     }
 
     const inviteOk = await enforceInviteOnlyForSignedInUser();
@@ -122,7 +130,9 @@ export async function GET(request: NextRequest) {
     const errUrl = new URL("/login", url.origin);
     errUrl.searchParams.set("error", "auth_callback_failed");
     errUrl.searchParams.set("redirectTo", redirectTo);
-    return NextResponse.redirect(errUrl);
+    const errResponse = NextResponse.redirect(errUrl);
+    clearMfaRecoveryCookie(errResponse);
+    return errResponse;
   }
 
   const inviteOk = await enforceInviteOnlyForSignedInUser();
@@ -135,18 +145,21 @@ export async function GET(request: NextRequest) {
     response.cookies.set(POST_AUTH_REDIRECT_COOKIE, "", { path: "/", maxAge: 0 });
   }
 
-  // Special-case: password recovery links are used as an email-ownership proof step for MFA recovery.
-  // Route to /mfa/recover and set a short-lived cookie that authorizes the reset action.
-  if (type === "recovery") {
-    const next = redirectTo.startsWith("/mfa/recover") ? redirectTo : `/mfa/recover?redirectTo=${encodeURIComponent(redirectTo)}`;
-    response.headers.set("location", new URL(next, url.origin).toString());
-    response.cookies.set(MFA_RECOVERY_COOKIE, "1", {
-      path: "/",
-      httpOnly: true,
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
-      maxAge: 60 * 10,
-    });
+  const callbackOutcome = finalizeVerifiedAuthCallback({ type, redirectTo, inviteOk });
+  if (callbackOutcome.location) {
+    response.headers.set("location", new URL(callbackOutcome.location, url.origin).toString());
+  }
+
+  if (callbackOutcome.issueMfaRecoveryCookie) {
+      response.cookies.set(MFA_RECOVERY_COOKIE, "1", {
+        path: "/",
+        httpOnly: true,
+        sameSite: "lax",
+        secure: process.env.NODE_ENV === "production",
+        maxAge: 60 * 10,
+      });
+  } else if (callbackOutcome.clearMfaRecoveryCookie) {
+    clearMfaRecoveryCookie(response);
   }
 
   return response;

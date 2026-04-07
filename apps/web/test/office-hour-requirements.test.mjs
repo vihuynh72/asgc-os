@@ -27,6 +27,7 @@ test("buildOfficeHourRequirementPayload applies governance defaults for missing 
   });
 
   assert.deepEqual(result, [
+    { roleKey: "advisor", weeklyTotalHours: 0, weeklyInOfficeHours: 0 },
     { roleKey: "president", weeklyTotalHours: 10, weeklyInOfficeHours: 0 },
     { roleKey: "executive", weeklyTotalHours: 12, weeklyInOfficeHours: 0 },
     { roleKey: "board_member", weeklyTotalHours: 4, weeklyInOfficeHours: 0 },

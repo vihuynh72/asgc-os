@@ -30,6 +30,7 @@ function mapErrorStatus(message: string): number {
     case "verification_invalid":
     case "verification_expired":
     case "verification_used":
+    case "office_hours_role_required":
       return 403;
     case "outside_geofence":
     case "office_location_not_configured":

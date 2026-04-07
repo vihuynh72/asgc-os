@@ -1,4 +1,5 @@
-import { DEFAULT_WEEKLY_TOTAL_HOURS_BY_ROLE, TERM_ROLE_KEYS } from "./role-config.mjs";
+import { OFFICE_HOURS_ROLE_KEYS as OFFICE_HOUR_ROLE_KEYS } from "./office-hours-roles.mjs";
+import { DEFAULT_WEEKLY_TOTAL_HOURS_BY_ROLE } from "./role-config.mjs";
 
 /**
  * @typedef {{
@@ -11,7 +12,7 @@ import { DEFAULT_WEEKLY_TOTAL_HOURS_BY_ROLE, TERM_ROLE_KEYS } from "./role-confi
  * }} OfficeHourRequirementLike
  */
 
-export const OFFICE_HOUR_ROLE_KEYS = TERM_ROLE_KEYS;
+export { OFFICE_HOUR_ROLE_KEYS };
 
 export function getDefaultWeeklyTotalHours(roleKey) {
   return DEFAULT_WEEKLY_TOTAL_HOURS_BY_ROLE[roleKey] ?? 0;

@@ -39,6 +39,8 @@ export function friendlyMemberActionError(code) {
       return "Sign in again to continue.";
     case "password_setup_required":
       return "Finish your password setup before using Office Hours.";
+    case "office_hours_role_required":
+      return "You do not have an active Office Hours role right now.";
     default:
       return code || "Something went wrong.";
   }

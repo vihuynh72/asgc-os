@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 
 import { KioskShell, KioskStepHeader } from "@/components/office-hours/kiosk";
+import { canEditOfficeHoursPhotoReview } from "@/lib/office-hours-authz.mjs";
 import { getSupabaseServerComponentClient } from "@/lib/supabaseServerComponent";
 
 import { KioskPhotoReviewPanel } from "./review-panel";
@@ -25,6 +26,12 @@ export default async function KioskPhotoReviewPage() {
     redirect("/unauthorized?reason=office_hours_photos&redirectTo=/office-hours/kiosk/review");
   }
 
+  const { data: tierData } = await supabase.rpc("get_admin_tier", { _uid: user.id });
+  const canEdit = canEditOfficeHoursPhotoReview({
+    tier: (tierData?.tier as "full" | "partial" | "read-only" | null | undefined) ?? null,
+    isEvp: tierData?.is_evp ?? false,
+  });
+
   return (
     <KioskShell className="max-w-6xl items-start py-4 sm:py-6">
       <div className="kiosk-panel space-y-4">
@@ -43,7 +50,7 @@ export default async function KioskPhotoReviewPage() {
             </Link>
           }
         />
-        <KioskPhotoReviewPanel />
+        <KioskPhotoReviewPanel canEdit={canEdit} />
       </div>
     </KioskShell>
   );

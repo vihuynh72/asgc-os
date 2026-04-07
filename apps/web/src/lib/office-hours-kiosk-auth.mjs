@@ -1,5 +1,7 @@
 import crypto from "node:crypto";
 
+import { officeHoursRoleRank } from "./office-hours-roles.mjs";
+
 function digitsOnly(raw) {
   return String(raw ?? "").replace(/\D/g, "");
 }
@@ -22,16 +24,7 @@ export function maskPhoneE164(raw) {
 }
 
 function kioskRoleRank(roleKey) {
-  switch (roleKey) {
-    case "president":
-      return 0;
-    case "executive":
-      return 1;
-    case "board_member":
-      return 2;
-    default:
-      return 9;
-  }
+  return officeHoursRoleRank(roleKey);
 }
 
 export function sortKioskMembers(rows) {

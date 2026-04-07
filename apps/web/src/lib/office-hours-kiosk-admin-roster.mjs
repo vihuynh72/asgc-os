@@ -1,16 +1,8 @@
 import { inferRoleLabel } from "./office-hours-weekly-report.mjs";
+import { officeHoursRoleRank } from "./office-hours-roles.mjs";
 
 function roleRank(roleKey) {
-  switch (roleKey) {
-    case "president":
-      return 0;
-    case "executive":
-      return 1;
-    case "board_member":
-      return 2;
-    default:
-      return 9;
-  }
+  return officeHoursRoleRank(roleKey);
 }
 
 function entryStatusRank(entryStatus) {

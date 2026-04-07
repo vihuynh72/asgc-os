@@ -4,9 +4,10 @@ import assert from "node:assert/strict";
 import { deriveLoginHydrationState } from "../src/lib/auth/login-hydration-state.mjs";
 
 test("deriveLoginHydrationState keeps signed-out users on the password panel", () => {
-  assert.deepEqual(deriveLoginHydrationState({ user: null, passwordReadyAt: null }), {
+  assert.deepEqual(deriveLoginHydrationState({ user: null, passwordReadyState: "missing" }), {
     existingUser: null,
     panelMode: "password",
+    passwordSetupRequired: false,
   });
 });
 
@@ -14,24 +15,40 @@ test("deriveLoginHydrationState keeps password-ready users on the normal signed-
   assert.deepEqual(
     deriveLoginHydrationState({
       user: { email: "member@gcccd.edu" },
-      passwordReadyAt: "2026-03-23T12:00:00.000Z",
+      passwordReadyState: "ready",
     }),
     {
       existingUser: { email: "member@gcccd.edu" },
       panelMode: "password",
+      passwordSetupRequired: false,
     },
   );
 });
 
-test("deriveLoginHydrationState routes signed-in users without password_ready_at into password creation", () => {
+test("deriveLoginHydrationState flags signed-in users without password_ready_at for setup redirect", () => {
   assert.deepEqual(
     deriveLoginHydrationState({
       user: { email: "member@gcccd.edu" },
-      passwordReadyAt: null,
+      passwordReadyState: "missing",
     }),
     {
       existingUser: { email: "member@gcccd.edu" },
-      panelMode: "first_time_password",
+      panelMode: "password",
+      passwordSetupRequired: true,
+    },
+  );
+});
+
+test("deriveLoginHydrationState fails open when password readiness is temporarily unknown", () => {
+  assert.deepEqual(
+    deriveLoginHydrationState({
+      user: { email: "member@gcccd.edu" },
+      passwordReadyState: "unknown",
+    }),
+    {
+      existingUser: { email: "member@gcccd.edu" },
+      panelMode: "password",
+      passwordSetupRequired: false,
     },
   );
 });

@@ -1,8 +1,13 @@
-export function deriveLoginHydrationState({ user, passwordReadyAt }) {
+export function deriveLoginHydrationState(input) {
+  const user = input?.user ?? null;
+  const passwordReadyState = input?.passwordReadyState;
+  const passwordReadyAt = input?.passwordReadyAt ?? null;
+
   if (!user) {
     return {
       existingUser: null,
       panelMode: "password",
+      passwordSetupRequired: false,
     };
   }
 
@@ -10,15 +15,24 @@ export function deriveLoginHydrationState({ user, passwordReadyAt }) {
     email: typeof user.email === "string" ? user.email : null,
   };
 
-  if (!passwordReadyAt) {
+  const resolvedPasswordReadyState =
+    typeof passwordReadyState === "string"
+      ? passwordReadyState
+      : passwordReadyAt
+        ? "ready"
+        : "missing";
+
+  if (resolvedPasswordReadyState === "missing") {
     return {
       existingUser,
-      panelMode: "first_time_password",
+      panelMode: "password",
+      passwordSetupRequired: true,
     };
   }
 
   return {
     existingUser,
     panelMode: "password",
+    passwordSetupRequired: false,
   };
 }

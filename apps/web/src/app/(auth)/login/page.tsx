@@ -12,11 +12,14 @@ import {
   isCompleteOtpCode,
   normalizeOtpCode,
 } from "@/lib/auth/first-time-signin-flow.mjs";
+import { getPasswordReadyBypassUntil, resolvePasswordReadyState } from "@/lib/auth/password-ready-state.mjs";
+import { buildPasswordSetupHref } from "@/lib/auth/password-setup.mjs";
+import { getLoginCallbackErrorNotice } from "@/lib/login-view.mjs";
 import { safePostAuthRedirectPath } from "@/lib/redirects";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 import { cn } from "@/lib/utils";
 
-type AuthPanelMode = "password" | "password_otp" | "first_time" | "first_time_verify" | "first_time_password";
+type AuthPanelMode = "password" | "password_otp" | "first_time" | "first_time_verify";
 
 function normalizeEmail(raw: string): string {
   return raw.trim().toLowerCase();
@@ -25,15 +28,17 @@ function normalizeEmail(raw: string): string {
 function AuthCallbackErrorBanner() {
   const searchParams = useSearchParams();
   const error = searchParams.get("error");
+  const recoveryNotice = getLoginCallbackErrorNotice(error);
 
   const message =
-    error === "auth_callback_failed"
+    recoveryNotice?.message ??
+    (error === "auth_callback_failed"
       ? "That sign-in link could not be verified. Request a fresh email and try again."
       : error === "not_allowlisted"
         ? "Your email is not invited right now. Contact an admin if you need access."
         : error === "server_error"
           ? "Sign-in failed due to a server error. Try again or contact an admin."
-          : null;
+          : null);
 
   if (!message) return null;
   return <AdminInlineNotice tone="critical">{message}</AdminInlineNotice>;
@@ -80,8 +85,6 @@ function loginPanelCopy(mode: AuthPanelMode, isKioskFlow: boolean) {
         return { eyebrow: "Get started", title: "First-time sign-in", detail: "Enter your campus email." };
       case "first_time_verify":
         return { eyebrow: "Email code", title: "Enter your code", detail: "Check your email for the 6-digit code." };
-      case "first_time_password":
-        return { eyebrow: "Almost done", title: "Create a password", detail: "Set a password for next time." };
       default:
         return { eyebrow: "Sign in", title: "Sign in", detail: "Use your campus email and password." };
     }
@@ -106,12 +109,6 @@ function loginPanelCopy(mode: AuthPanelMode, isKioskFlow: boolean) {
         title: "Finish your first sign-in",
         detail: "Enter the six-digit code from your email to finish signing in on this device.",
       };
-    case "first_time_password":
-      return {
-        eyebrow: "Create password",
-        title: "Create your password",
-        detail: "You are verified. Set your password now so future sign-ins stay fast on this device.",
-      };
     default:
       return {
         eyebrow: "Member sign-in",
@@ -130,10 +127,8 @@ export default function LoginPage() {
   const [panelMode, setPanelMode] = useState<AuthPanelMode>("password");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
   const [code, setCode] = useState("");
   const [trustDevice, setTrustDevice] = useState(true);
-  const [firstTimeTrustDevice, setFirstTimeTrustDevice] = useState(true);
 
   const [busyAction, setBusyAction] = useState<"idle" | "password" | "verify" | "first_time" | "reset">("idle");
   const [notice, setNotice] = useState<{ tone: "good" | "critical"; message: string } | null>(null);
@@ -150,8 +145,9 @@ export default function LoginPage() {
     let cancelled = false;
 
     async function hydrateAuthState() {
+      let redirectTo = "/dashboard";
       try {
-        const redirectTo = safePostAuthRedirectPath(new URLSearchParams(window.location.search).get("redirectTo"));
+        redirectTo = safePostAuthRedirectPath(new URLSearchParams(window.location.search).get("redirectTo"));
         if (!cancelled) setPostAuthRedirectTo(redirectTo);
       } catch {
         // Ignore; fallback stays in place.
@@ -170,7 +166,7 @@ export default function LoginPage() {
           return;
         }
 
-        const { data: profile } = await supabase
+        const { data: profile, error: profileError } = await supabase
           .from("profile_private")
           .select("password_ready_at")
           .eq("id", user.id)
@@ -178,22 +174,35 @@ export default function LoginPage() {
 
         if (cancelled) return;
 
-        const authState = deriveLoginHydrationState({
-          user: { email: user.email ?? null },
+        if (profileError) {
+          console.error("[auth] password readiness lookup failed during login hydration", {
+            message: profileError.message,
+            userId: user.id,
+          });
+        }
+
+        const passwordReady = resolvePasswordReadyState({
           passwordReadyAt:
             (profile as { password_ready_at?: string | null } | null)?.password_ready_at ?? null,
+          passwordReadyBypassUntil: getPasswordReadyBypassUntil(user),
+          lookupError: profileError,
         });
 
+        const authState = deriveLoginHydrationState({
+          user: { email: user.email ?? null },
+          passwordReadyState: passwordReady.status,
+        });
+
+        if (authState.passwordSetupRequired) {
+          router.replace(buildPasswordSetupHref({ mode: "first_time", redirectTo }));
+          return;
+        }
+
         setExistingUser(authState.existingUser);
-        setPanelMode(authState.panelMode as AuthPanelMode);
         if (user.email) {
           setEmail((current) => current || normalizeEmail(user.email ?? ""));
         }
-        if (authState.panelMode === "first_time_password") {
-          setPassword("");
-          setConfirmPassword("");
-          setNotice({ tone: "good", message: "Finish creating your password to continue." });
-        }
+        setPanelMode(authState.panelMode as AuthPanelMode);
       } catch {
         // Ignore.
       }
@@ -203,7 +212,7 @@ export default function LoginPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [router]);
 
   function getRedirectToForRequests(): string | undefined {
     try {
@@ -312,18 +321,7 @@ export default function LoginPage() {
 
       if (panelMode === "first_time_verify" && json?.nextStep === FIRST_TIME_SIGNIN_NEXT_STEP) {
         const next = typeof json?.redirectTo === "string" && json.redirectTo.startsWith("/") ? json.redirectTo : "/dashboard";
-        if (isKioskFlow) {
-          // Navigate to the setup-password page so the proxy middleware can revalidate the session
-          // before the API call. Doing a fetch to setup-password immediately from this page
-          // can fail if the new session cookies haven't been committed by the browser yet.
-          const setupUrl = `/office-hours/setup-password?redirectTo=${encodeURIComponent(next)}`;
-          router.push(setupUrl);
-        } else {
-          setPassword("");
-          setConfirmPassword("");
-          setPanelMode("first_time_password");
-          setNotice({ tone: "good", message: "Email verified. Create your password to finish signing in." });
-        }
+        router.push(buildPasswordSetupHref({ mode: "first_time", redirectTo: next }));
         return;
       }
 
@@ -342,61 +340,16 @@ export default function LoginPage() {
     }
   }
 
-  async function onFirstTimePasswordSubmit(event: React.FormEvent) {
-    event.preventDefault();
-    setBusyAction("password");
-    setNotice(null);
-
-    if (password.length < 8) {
-      setNotice({ tone: "critical", message: "Password must be at least 8 characters." });
-      setBusyAction("idle");
-      return;
-    }
-
-    if (password !== confirmPassword) {
-      setNotice({ tone: "critical", message: "Passwords do not match." });
-      setBusyAction("idle");
-      return;
-    }
-
-    try {
-      const redirectTo = getRedirectToForRequests();
-      const response = await fetch("/api/auth/setup-password", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ password, trustDevice: firstTimeTrustDevice, redirectTo }),
-      });
-
-      const json = (await response.json().catch(() => null)) as { redirectTo?: string } | null;
-      if (!response.ok) {
-        setNotice({ tone: "critical", message: "Could not save your password. Try again." });
-        return;
-      }
-
-      const next = typeof json?.redirectTo === "string" && json.redirectTo.startsWith("/") ? json.redirectTo : "/dashboard";
-      if (isKioskFlow && next.startsWith("/office-hours")) {
-        const supabase = getSupabaseBrowserClient();
-        await supabase.auth.getUser();
-        router.push(next);
-      } else {
-        window.location.assign(next);
-      }
-    } catch {
-      setNotice({ tone: "critical", message: "Could not save your password. Try again." });
-    } finally {
-      setBusyAction("idle");
-    }
-  }
-
   async function onRequestPasswordReset() {
     setBusyAction("reset");
     setNotice(null);
 
     try {
+      const redirectTo = getRedirectToForRequests();
       const response = await fetch("/api/auth/request-password-reset", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ email: normalizedEmail, redirectTo: "/account" }),
+        body: JSON.stringify({ email: normalizedEmail, redirectTo }),
       });
 
       if (!response.ok) {
@@ -435,7 +388,7 @@ export default function LoginPage() {
                 </div>
               )}
 
-              {existingUser && panelMode !== "first_time_password" ? (
+              {existingUser ? (
                 <div className="rounded-[1.35rem] border border-emerald-200/70 bg-emerald-50/75 p-4">
                   <div className="text-xs font-semibold uppercase tracking-[0.22em] text-emerald-700">Already signed in</div>
                   <div className="mt-2 text-sm text-emerald-950">{existingUser.email ?? "Current account"}</div>
@@ -602,57 +555,6 @@ export default function LoginPage() {
                     >
                       Start over
                     </button>
-                  </div>
-                </form>
-              ) : null}
-
-              {panelMode === "first_time_password" ? (
-                <form className="space-y-4" onSubmit={onFirstTimePasswordSubmit}>
-                  <div className="rounded-[1.25rem] border border-emerald-200/80 bg-emerald-50/80 px-4 py-3 text-sm text-emerald-900">
-                    Your email is verified. Create a password now so future sign-ins on this device stay fast.
-                  </div>
-
-                  <label className="block space-y-2">
-                    <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">New password</span>
-                    <input
-                      type="password"
-                      autoComplete="new-password"
-                      value={password}
-                      onChange={(event) => setPassword(event.target.value)}
-                      placeholder="At least 8 characters"
-                      className="h-12 w-full rounded-[1.2rem] border border-slate-200 bg-white/90 px-4 text-[15px] text-slate-950 shadow-[inset_0_1px_0_rgba(255,255,255,0.85)] outline-none transition focus:border-slate-400"
-                    />
-                  </label>
-
-                  <label className="block space-y-2">
-                    <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Confirm password</span>
-                    <input
-                      type="password"
-                      autoComplete="new-password"
-                      value={confirmPassword}
-                      onChange={(event) => setConfirmPassword(event.target.value)}
-                      placeholder="Repeat your password"
-                      className="h-12 w-full rounded-[1.2rem] border border-slate-200 bg-white/90 px-4 text-[15px] text-slate-950 shadow-[inset_0_1px_0_rgba(255,255,255,0.85)] outline-none transition focus:border-slate-400"
-                    />
-                  </label>
-
-                  <label className="flex items-center gap-3 rounded-[1.2rem] border border-slate-200/80 bg-white/75 px-4 py-3 text-sm text-slate-600">
-                    <input
-                      type="checkbox"
-                      checked={firstTimeTrustDevice}
-                      onChange={(event) => setFirstTimeTrustDevice(event.target.checked)}
-                    />
-                    Remember this device for 30 days
-                  </label>
-
-                  <div className="flex flex-col gap-3 pt-1 sm:flex-row sm:items-center">
-                    <Button
-                      type="submit"
-                      className="h-12 rounded-full px-6"
-                      disabled={busyAction !== "idle" || password.length === 0 || confirmPassword.length === 0}
-                    >
-                      {busyAction === "password" ? "Saving..." : "Create password"}
-                    </Button>
                   </div>
                 </form>
               ) : null}

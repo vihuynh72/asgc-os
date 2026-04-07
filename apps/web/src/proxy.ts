@@ -1,6 +1,8 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
+import { PASSWORD_SETUP_PATH } from "@/lib/auth/password-setup.mjs";
+import { getPasswordReadyBypassUntil, resolvePasswordReadyState } from "@/lib/auth/password-ready-state.mjs";
 import { DESIGN_COOKIE_NAME, DESIGN_PARAM_NAME, normalizeDesign } from "@/lib/design-toggle.mjs";
 import {
   getOfficeHoursPasswordSetupRedirect,
@@ -128,14 +130,32 @@ export async function proxy(request: NextRequest) {
       });
     }
   } else {
-    if (isOfficeHoursSelfServicePath(pathname) && pathname !== "/office-hours/setup-password") {
-      const { data: profile } = await supabase
+    if (
+      isOfficeHoursSelfServicePath(pathname) &&
+      pathname !== "/office-hours/setup-password" &&
+      pathname !== PASSWORD_SETUP_PATH
+    ) {
+      const { data: profile, error: profileError } = await supabase
         .from("profile_private")
         .select("password_ready_at")
         .eq("id", user.id)
         .maybeSingle();
 
-      if (!profile?.password_ready_at) {
+      if (profileError) {
+        console.error("[auth] Office Hours password readiness lookup failed in proxy", {
+          message: profileError.message,
+          userId: user.id,
+          pathname,
+        });
+      }
+
+      const passwordReady = resolvePasswordReadyState({
+        passwordReadyAt: profile?.password_ready_at ?? null,
+        passwordReadyBypassUntil: getPasswordReadyBypassUntil(user),
+        lookupError: profileError,
+      });
+
+      if (passwordReady.status === "missing") {
         response = NextResponse.redirect(new URL(getOfficeHoursPasswordSetupRedirect(requestedPath), request.url));
       }
     }
