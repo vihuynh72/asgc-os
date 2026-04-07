@@ -2,6 +2,7 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
 import { getPublicEnv } from "@/lib/env";
+import { canAccessOfficeHoursAdmin } from "@/lib/office-hours-authz.mjs";
 
 /**
  * Admin access tiers:
@@ -142,6 +143,29 @@ export async function requireFullAdminOrEvp(
   }
 
   return { ok: true, userId: result.userId };
+}
+
+/**
+ * Require Office Hours admin access for routes in the Office Hours admin domain.
+ * Only full admins and EVP partial admins are allowed.
+ */
+export async function requireOfficeHoursAdmin(
+  request: NextRequest,
+): Promise<AdminAuthResult | AdminAuthFailure> {
+  const result = await getAdminTierForRequest(request);
+
+  if (!result.ok) {
+    return result;
+  }
+
+  if (!canAccessOfficeHoursAdmin(result.tierInfo)) {
+    return {
+      ok: false,
+      response: NextResponse.json({ error: "forbidden", reason: "office_hours_admin_required" }, { status: 403 }),
+    };
+  }
+
+  return result;
 }
 
 /**

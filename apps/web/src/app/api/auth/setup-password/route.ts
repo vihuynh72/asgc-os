@@ -1,12 +1,14 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
+import { buildPasswordReadyBypassUntil, PASSWORD_READY_BYPASS_METADATA_KEY } from "@/lib/auth/password-ready-state.mjs";
 import { issueTrustedDevice } from "@/lib/auth/trusted-device-server.mjs";
+import { buildPasswordSetupSuccessPayload } from "@/lib/auth/password-setup.mjs";
 import { getServerEnv } from "@/lib/envServer";
 import { OFFICE_HOURS_MEMBER_KIOSK_PATH } from "@/lib/office-hours-member-routing.mjs";
 import { safePostAuthRedirectPath, safeRedirectPathOrNull } from "@/lib/redirects";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
-import { getSupabaseRouteHandlerClientWithResponse } from "@/lib/supabaseServer";
+import { getSupabaseRouteHandlerClient } from "@/lib/supabaseServer";
 
 export const runtime = "nodejs";
 
@@ -31,24 +33,32 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: false }, { status: 400 });
   }
 
-  const response = NextResponse.json({ ok: true, redirectTo });
-  const supabase = getSupabaseRouteHandlerClientWithResponse(request, response);
+  const supabase = await getSupabaseRouteHandlerClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
 
   if (!user) {
-    return NextResponse.json({ ok: false }, { status: 401 });
+    return NextResponse.json({ ok: false, reason: "missing_session" }, { status: 401 });
   }
 
   const admin = getSupabaseAdminClient();
   const serverEnv = getServerEnv();
   const nowIso = new Date().toISOString();
+  const passwordReadyBypassUntil = buildPasswordReadyBypassUntil(nowIso);
+  const currentAppMetadata =
+    typeof user.app_metadata === "object" && user.app_metadata !== null ? user.app_metadata : {};
 
-  const { error: updatePasswordError } = await admin.auth.admin.updateUserById(user.id, { password });
+  const { error: updatePasswordError } = await admin.auth.admin.updateUserById(user.id, {
+    password,
+    app_metadata: {
+      ...currentAppMetadata,
+      [PASSWORD_READY_BYPASS_METADATA_KEY]: passwordReadyBypassUntil,
+    },
+  });
   if (updatePasswordError) {
     console.error("[auth] updateUserById failed", { message: updatePasswordError.message });
-    return NextResponse.json({ ok: false }, { status: 500 });
+    return NextResponse.json({ ok: false, reason: "password_update_failed" }, { status: 500 });
   }
 
   const { error: profileError } = await admin.from("profile_private").upsert(
@@ -60,9 +70,10 @@ export async function POST(request: NextRequest) {
     { onConflict: "id" },
   );
 
+  let warningReason: "profile_sync_failed" | undefined;
   if (profileError) {
-    console.error("[auth] profile_private upsert failed", { message: profileError.message });
-    return NextResponse.json({ ok: false }, { status: 500 });
+    console.error("[auth] profile_private upsert failed", { message: profileError.message, userId: user.id });
+    warningReason = "profile_sync_failed";
   }
 
   await admin.from("audit_log").insert({
@@ -72,8 +83,12 @@ export async function POST(request: NextRequest) {
     target_id: user.id,
     metadata: {
       password_ready_at: nowIso,
+      password_ready_bypass_until: passwordReadyBypassUntil,
+      warning_reason: warningReason ?? null,
     },
   });
+
+  const response = NextResponse.json(buildPasswordSetupSuccessPayload({ redirectTo, warningReason }));
 
   if (trustDevice) {
     await issueTrustedDevice({

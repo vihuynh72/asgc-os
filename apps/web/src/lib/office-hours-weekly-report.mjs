@@ -5,9 +5,10 @@
  */
 
 import { inferExecutiveDisplayTitleFromEmail } from "./role-config.mjs";
+import { officeHoursRoleRank } from "./office-hours-roles.mjs";
 
 /**
- * @typedef {"president"|"executive"|"board_member"|"volunteer"|string|null} RoleKey
+ * @typedef {"advisor"|"president"|"executive"|"board_member"|"volunteer"|string|null} RoleKey
  */
 
 /**
@@ -49,19 +50,8 @@ export function csvEscape(value) {
  * @param {RoleKey} roleKey
  */
 export function roleKeyRank(roleKey) {
-  switch (roleKey) {
-    case "president":
-      return 0;
-    case "executive":
-      return 1;
-    case "board_member":
-    case "director":
-      return 2;
-    case "volunteer":
-      return 3;
-    default:
-      return 9;
-  }
+  if (roleKey === "director") return 3;
+  return officeHoursRoleRank(roleKey);
 }
 
 /**
@@ -69,6 +59,8 @@ export function roleKeyRank(roleKey) {
  */
 export function roleGroupLabel(roleKey) {
   switch (roleKey) {
+    case "advisor":
+      return "Advisors";
     case "president":
       return "President";
     case "executive":
@@ -101,6 +93,7 @@ export function inferRoleLabel({ email, roleKey }) {
   const local = emailLocalPart(email);
   const compactLocal = local.replace(/^asgc[._-]?/, "").replace(/[^a-z0-9]/g, "");
 
+  if (roleKey === "advisor") return "Advisor";
   if (roleKey === "president") return "President";
 
   if (roleKey === "executive") {
@@ -249,7 +242,7 @@ export function rosterStatusLabel(status) {
 
 /**
  * Deterministic ordering for weekly report rows:
- * - role_key hierarchy: president → executive → board_member/director → volunteer → others
+ * - role_key hierarchy: advisor → president → executive → board_member/director → volunteer → others
  * - board members by board # when available
  * - then larger missing first (to surface problems)
  * - then name/email A-Z

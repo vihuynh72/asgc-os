@@ -2,6 +2,7 @@ import { cache } from "react";
 import { redirect } from "next/navigation";
 
 import { getAdminCommunicationsAccess, getAdminCommunicationTemplates } from "@/lib/admin/communications.mjs";
+import { canAccessOfficeHoursAdmin } from "@/lib/office-hours-authz.mjs";
 import { ensureOfficeHoursConfigWithKioskFallback } from "@/lib/office-hours-kiosk-setup.mjs";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 import { getSupabaseServerComponentClient } from "@/lib/supabaseServerComponent";
@@ -137,7 +138,7 @@ function getCapabilityFlags(tier: AdminTier, isEvp: boolean) {
   return {
     canAccessPeople: tier === "full",
     canAccessAudit: tier === "full",
-    canAccessOfficeHours: (tier === "full" || isEvp) && tier !== "read-only",
+    canAccessOfficeHours: canAccessOfficeHoursAdmin({ tier, isEvp }),
     isReadOnly: tier === "read-only",
   };
 }

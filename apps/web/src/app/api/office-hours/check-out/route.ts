@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
+import { getPasswordReadyBypassUntil, resolvePasswordReadyState } from "@/lib/auth/password-ready-state.mjs";
 import { getSupabaseRouteHandlerClient } from "@/lib/supabaseServer";
 
 export const runtime = "nodejs";
@@ -43,13 +44,26 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
-  const { data: profile } = await supabase
+  const { data: profile, error: profileError } = await supabase
     .from("profile_private")
     .select("password_ready_at")
     .eq("id", user.id)
     .maybeSingle();
 
-  if (!profile?.password_ready_at) {
+  if (profileError) {
+    console.error("[office-hours] password readiness lookup failed during check-out", {
+      message: profileError.message,
+      userId: user.id,
+    });
+  }
+
+  const passwordReady = resolvePasswordReadyState({
+    passwordReadyAt: profile?.password_ready_at ?? null,
+    passwordReadyBypassUntil: getPasswordReadyBypassUntil(user),
+    lookupError: profileError,
+  });
+
+  if (passwordReady.status === "missing") {
     return NextResponse.json({ error: "password_setup_required" }, { status: 403 });
   }
 

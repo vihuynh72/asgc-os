@@ -13,16 +13,18 @@ type MemberRow = {
   bootstrap_role_grant_id: string | null;
   email: string | null;
   display_name: string;
-  role_key: "president" | "executive" | "board_member";
+  role_key: "advisor" | "president" | "executive" | "board_member" | "volunteer";
   role_label: string;
   display_title: string | null;
   password_ready: boolean;
 };
 
 export function OfficeHoursKioskPanel({
+  canEdit,
   initialMembers,
   initialConfig,
 }: {
+  canEdit: boolean;
   initialMembers: MemberRow[];
   initialConfig: OfficeConfigRow;
 }) {
@@ -55,6 +57,11 @@ export function OfficeHoursKioskPanel({
         >
           Review selfies
         </Link>
+        {!canEdit ? (
+          <span className="inline-flex h-9 items-center justify-center rounded-full border border-[var(--admin-border-soft)] bg-white/70 px-4 text-xs font-medium text-foreground/60">
+            View only
+          </span>
+        ) : null}
       </div>
 
       {/* Roster */}

@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  getLoginCallbackErrorNotice,
   getLoginModeContent,
   getLoginPrimaryActionLabel,
   getLoginStatusNotice,
@@ -71,4 +72,15 @@ test("getLoginVerifyNotice handles verification failures", () => {
     getLoginVerifyNotice("error"),
     { tone: "critical", message: "That code could not be verified. Request a new one." },
   );
+});
+
+test("getLoginCallbackErrorNotice maps password setup recovery back into login copy", () => {
+  assert.deepEqual(
+    getLoginCallbackErrorNotice("password_setup_session_expired"),
+    {
+      tone: "critical",
+      message: "Your password setup session expired. Start sign-in again or request a new reset email.",
+    },
+  );
+  assert.equal(getLoginCallbackErrorNotice("unknown"), null);
 });

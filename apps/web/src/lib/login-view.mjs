@@ -79,3 +79,18 @@ export function getLoginVerifyNotice(verifyStatus) {
     message: "That code could not be verified. Request a new one.",
   };
 }
+
+/**
+ * @param {string | null | undefined} error
+ * @returns {{ tone: "critical"; message: string } | null}
+ */
+export function getLoginCallbackErrorNotice(error) {
+  if (error === "password_setup_session_expired") {
+    return {
+      tone: "critical",
+      message: "Your password setup session expired. Start sign-in again or request a new reset email.",
+    };
+  }
+
+  return null;
+}

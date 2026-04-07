@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
 import { sendEmail } from "@/lib/emailSender";
+import { buildPasswordResetCallbackUrl, buildPasswordResetLink } from "@/lib/auth/password-setup.mjs";
 import { buildPasswordResetEmail } from "@/lib/auth/password-reset-email.mjs";
 import { normalizeEmail } from "@/lib/invitesAllowlist";
 import { safePostAuthRedirectPath, safeRedirectPathOrNull } from "@/lib/redirects";
@@ -44,13 +45,15 @@ export async function POST(request: NextRequest) {
     return response;
   }
 
-  const callbackUrl = new URL("/auth/callback", origin);
-  if (postAuthRedirectTo) callbackUrl.searchParams.set("redirectTo", postAuthRedirectTo);
+  const callbackUrl = buildPasswordResetCallbackUrl({
+    origin,
+    redirectTo: postAuthRedirectTo,
+  });
 
   const { data, error } = await admin.auth.admin.generateLink({
     type: "recovery",
     email,
-    options: { redirectTo: callbackUrl.toString() },
+    options: { redirectTo: callbackUrl },
   });
 
   if (error || !data?.properties?.hashed_token || !data?.properties?.verification_type) {
@@ -58,11 +61,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: false }, { status: 500 });
   }
 
-  const resetLink = new URL(callbackUrl.toString());
-  resetLink.searchParams.set("token_hash", data.properties.hashed_token);
-  resetLink.searchParams.set("type", data.properties.verification_type);
+  const resetLink = buildPasswordResetLink({
+    origin,
+    redirectTo: postAuthRedirectTo,
+    tokenHash: data.properties.hashed_token,
+    verificationType: data.properties.verification_type,
+  });
 
-  const emailMessage = buildPasswordResetEmail({ resetLink: resetLink.toString() });
+  const emailMessage = buildPasswordResetEmail({ resetLink });
 
   try {
     await sendEmail({ to: email, subject: emailMessage.subject, text: emailMessage.text, html: emailMessage.html });

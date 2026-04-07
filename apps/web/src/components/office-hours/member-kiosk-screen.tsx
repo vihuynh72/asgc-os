@@ -31,7 +31,9 @@ import {
   getMemberKioskStateSummary,
   normalizeMemberCheckInSession,
 } from "@/lib/office-hours-member-kiosk.mjs";
+import { resolveOfficeHoursMemberAccess } from "@/lib/office-hours-member-auth.mjs";
 import { OFFICE_HOURS_MEMBER_KIOSK_PATH } from "@/lib/office-hours-member-routing.mjs";
+import { getPasswordReadyBypassUntil, resolvePasswordReadyState } from "@/lib/auth/password-ready-state.mjs";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 import { cn } from "@/lib/utils";
 
@@ -55,7 +57,7 @@ type LocationSnapshot = {
 };
 
 type KioskTone = "good" | "warning" | "critical" | "neutral";
-type KioskAuthStatus = "loading" | "authenticated" | "unauthenticated" | "needs_password";
+type KioskAuthStatus = "loading" | "authenticated" | "unauthenticated" | "needs_password" | "role_ineligible";
 
 function haversineMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const toRad = (deg: number) => (deg * Math.PI) / 180;
@@ -232,30 +234,59 @@ export function MemberKioskScreen() {
         if (!user) {
           setUserId(null);
           setOpenSession(null);
+          setSessionLoaded(false);
           setAuthStatus("unauthenticated");
           return;
         }
 
         setUserId(user.id);
 
-        const { data: profile } = await supabase
-          .from("profile_private")
-          .select("password_ready_at")
-          .eq("id", user.id)
-          .maybeSingle();
+        const [{ data: profile, error: profileError }, roleResult, sessionResult] = await Promise.all([
+          supabase.from("profile_private").select("password_ready_at").eq("id", user.id).maybeSingle(),
+          supabase.rpc("office_hours_my_role_key"),
+          fetchLatestOwnOpenSession(supabase, user.id, "id,checkin_at"),
+        ]);
 
         if (cancelled) return;
 
-        if (!profile?.password_ready_at) {
-          setAuthStatus("needs_password");
-          return;
+        if (profileError) {
+          console.error("[office-hours] member kiosk password readiness lookup failed", {
+            message: profileError.message,
+            userId: user.id,
+          });
         }
 
-        setAuthStatus("authenticated");
+        if (roleResult.error) {
+          console.error("[office-hours] member kiosk role lookup failed", {
+            message: roleResult.error.message,
+            userId: user.id,
+          });
+        }
+
+        const passwordReady = resolvePasswordReadyState({
+          passwordReadyAt: profile?.password_ready_at ?? null,
+          passwordReadyBypassUntil: getPasswordReadyBypassUntil(user),
+          lookupError: profileError,
+        });
+
+        const nextSession = (sessionResult.data as OpenSession | null) ?? null;
+        setOpenSession(nextSession);
+        setSessionLoaded(true);
+
+        const access = resolveOfficeHoursMemberAccess({
+          passwordReadyStatus: passwordReady.status,
+          officeHoursRoleKey:
+            typeof roleResult.data === "string" && roleResult.data.trim().length > 0 ? roleResult.data : null,
+          hasOpenSession: Boolean(nextSession?.id),
+          roleLookupStatus: roleResult.error ? "unknown" : "known",
+        });
+
+        setAuthStatus(access.authStatus);
       } catch {
         if (!cancelled) {
           setUserId(null);
           setOpenSession(null);
+          setSessionLoaded(false);
           setAuthStatus("unauthenticated");
         }
       }
@@ -650,6 +681,50 @@ export function MemberKioskScreen() {
                   </Link>
                 }
                 hint="After creating your password, you will be sent back here to check in."
+              />
+            </div>
+          </div>
+        </div>
+      </KioskShell>
+    );
+  }
+
+  if (authStatus === "role_ineligible") {
+    return (
+      <KioskShell className="max-w-6xl items-start py-4 sm:py-6" topNav={topNavElement}>
+        <div className="kiosk-panel">
+          <KioskStepHeader
+            eyebrow="Office Hours role required"
+            title="You cannot check in right now"
+            subtitle="Your account is signed in, but it does not have an active Office Hours role for a new session."
+            step={1}
+            totalSteps={1}
+            actions={<KioskStatusChip tone="warning" label="Role required" />}
+          />
+          <div className="mt-4">
+            <KioskNotice tone="warning">
+              Office Hours check-in is limited to advisors, presidents, executives, board members, and volunteers with an active assignment.
+            </KioskNotice>
+          </div>
+          <div className="mt-4 kiosk-section kiosk-step-card kiosk-step-card-active">
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">1. Check your assignment</div>
+              <h2 className="mt-2 text-xl font-semibold tracking-[-0.03em] text-slate-950">No active Office Hours role</h2>
+              <p className="mt-2 text-sm leading-6 text-slate-600">
+                If you should be able to check in, ask an advisor or the Executive Vice President to confirm your current Office Hours assignment.
+              </p>
+            </div>
+            <div className="kiosk-step-body">
+              <KioskActionBar
+                primary={
+                  <Link
+                    href="/dashboard"
+                    className="inline-flex h-12 items-center justify-center rounded-full bg-slate-900 px-6 text-sm font-medium text-white"
+                  >
+                    Back to dashboard
+                  </Link>
+                }
+                hint="You can return here after your role assignment is updated."
               />
             </div>
           </div>

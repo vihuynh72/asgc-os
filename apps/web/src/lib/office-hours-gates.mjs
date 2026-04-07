@@ -1,8 +1,11 @@
+import { buildPasswordSetupHref, PASSWORD_SETUP_PATH } from "./auth/password-setup.mjs";
+
 const PROTECTED_PREFIXES = [
   "/dashboard",
   "/account",
   "/mfa",
   "/office-hours",
+  "/password",
   "/tasks",
   "/meetings",
   "/docs",
@@ -19,6 +22,7 @@ const OFFICE_HOURS_SELF_SERVICE_PREFIXES = [
   "/office-hours/check-in",
   "/office-hours/check-out",
   "/office-hours/setup-password",
+  PASSWORD_SETUP_PATH,
 ];
 
 function matchesPrefix(pathname, prefix) {
@@ -43,5 +47,5 @@ export function isSignedInOfficeHoursKioskPath(pathname) {
 }
 
 export function getOfficeHoursPasswordSetupRedirect(requestedPath) {
-  return `/office-hours/setup-password?redirectTo=${encodeURIComponent(requestedPath)}`;
+  return buildPasswordSetupHref({ mode: "first_time", redirectTo: requestedPath });
 }

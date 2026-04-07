@@ -13,6 +13,7 @@ test("requiresProtectedAuth keeps normal member routes authenticated", () => {
   assert.equal(requiresProtectedAuth("/dashboard"), true);
   assert.equal(requiresProtectedAuth("/office-hours"), true);
   assert.equal(requiresProtectedAuth("/office-hours/check-in"), true);
+  assert.equal(requiresProtectedAuth("/password/setup"), true);
   assert.equal(requiresProtectedAuth("/login"), false);
 });
 
@@ -29,6 +30,7 @@ test("office hours self-service paths exclude the selfie review workspace", () =
   assert.equal(isOfficeHoursSelfServicePath("/office-hours/check-out"), true);
   assert.equal(isOfficeHoursSelfServicePath("/office-hours/kiosk"), true);
   assert.equal(isOfficeHoursSelfServicePath("/office-hours/setup-password"), true);
+  assert.equal(isOfficeHoursSelfServicePath("/password/setup"), true);
   assert.equal(isOfficeHoursSelfServicePath("/office-hours/kiosk/review"), false);
 });
 
@@ -40,6 +42,6 @@ test("signed-in kiosk paths stay inside the normal member auth model", () => {
 test("password setup redirects keep members inside office hours", () => {
   assert.equal(
     getOfficeHoursPasswordSetupRedirect("/office-hours/check-in?from=kiosk"),
-    "/office-hours/setup-password?redirectTo=%2Foffice-hours%2Fcheck-in%3Ffrom%3Dkiosk",
+    "/password/setup?mode=first_time&redirectTo=%2Foffice-hours%2Fcheck-in%3Ffrom%3Dkiosk",
   );
 });

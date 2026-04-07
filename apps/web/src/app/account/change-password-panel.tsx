@@ -2,29 +2,31 @@
 
 import { useState } from "react";
 
+import { AdminInlineNotice } from "@/components/admin/admin-inline-notice";
 import { Button } from "@/components/ui/button";
+import { getPasswordSetupFailureMessage, getPasswordSetupWarningMessage } from "@/lib/auth/password-setup.mjs";
 
 export function ChangePasswordPanel() {
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [status, setStatus] = useState<"idle" | "saving" | "success" | "error">("idle");
-  const [message, setMessage] = useState<string>("");
+  const [notice, setNotice] = useState<{ tone: "good" | "warning" | "critical"; message: string } | null>(null);
 
   const canSubmit = password.length >= 8 && password === confirm && status !== "saving";
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setStatus("saving");
-    setMessage("");
+    setNotice(null);
 
     if (password.length < 8) {
       setStatus("error");
-      setMessage("Password must be at least 8 characters.");
+      setNotice({ tone: "critical", message: "Password must be at least 8 characters." });
       return;
     }
     if (password !== confirm) {
       setStatus("error");
-      setMessage("Passwords do not match.");
+      setNotice({ tone: "critical", message: "Passwords do not match." });
       return;
     }
 
@@ -35,15 +37,22 @@ export function ChangePasswordPanel() {
     });
 
     if (!response.ok) {
+      const json = (await response.json().catch(() => null)) as { reason?: string } | null;
       setStatus("error");
-      setMessage("Could not update password.");
+      setNotice({ tone: "critical", message: getPasswordSetupFailureMessage(json?.reason) });
       return;
     }
+
+    const json = (await response.json().catch(() => null)) as { warningReason?: string } | null;
+    const warningMessage = getPasswordSetupWarningMessage(json?.warningReason);
 
     setPassword("");
     setConfirm("");
     setStatus("success");
-    setMessage("Password updated. Next time you can sign in with your password.");
+    setNotice({
+      tone: warningMessage ? "warning" : "good",
+      message: warningMessage ?? "Password updated. Next time you can sign in with your password.",
+    });
   }
 
   return (
@@ -80,9 +89,14 @@ export function ChangePasswordPanel() {
           <Button type="submit" disabled={!canSubmit} className="h-11 rounded-full px-5">
             {status === "saving" ? "Saving..." : "Update password"}
           </Button>
-          {message ? <span className="text-sm text-foreground/70">{message}</span> : null}
         </div>
       </form>
+
+      {notice ? (
+        <div className="mt-3">
+          <AdminInlineNotice tone={notice.tone}>{notice.message}</AdminInlineNotice>
+        </div>
+      ) : null}
     </section>
   );
 }

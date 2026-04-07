@@ -15,6 +15,7 @@ import {
   isOfficeHoursKioskSchemaError,
   normalizeOfficeHoursKioskError,
 } from "@/lib/office-hours-kiosk-setup.mjs";
+import { officeHoursRoleLabel, officeHoursRoleRank } from "@/lib/office-hours-roles.mjs";
 
 export type KioskIntent = "check_in" | "check_out";
 
@@ -30,7 +31,7 @@ export type OfficeGeo = {
 export type KioskMember = {
   user_id: string;
   display_name: string;
-  role_key: "president" | "executive" | "board_member";
+  role_key: "advisor" | "president" | "executive" | "board_member" | "volunteer";
   role_label: string;
   display_title: string | null;
   phone_configured: boolean;
@@ -65,22 +66,14 @@ type OtpChallengeRow = {
 };
 
 function roleRank(roleKey: string | null | undefined): number {
-  switch (roleKey) {
-    case "president":
-      return 0;
-    case "executive":
-      return 1;
-    case "board_member":
-      return 2;
-    default:
-      return 9;
-  }
+  return officeHoursRoleRank(roleKey);
 }
 
-function roleLabel(roleKey: "president" | "executive" | "board_member", displayTitle: string | null): string {
-  if (roleKey === "president") return "President";
-  if (roleKey === "executive") return displayTitle?.trim() || "Executive";
-  return "Board Member";
+function roleLabel(
+  roleKey: "advisor" | "president" | "executive" | "board_member" | "volunteer",
+  displayTitle: string | null,
+): string {
+  return officeHoursRoleLabel({ roleKey, displayTitle });
 }
 
 function sixDigitCode(): string {
@@ -199,22 +192,43 @@ export async function getKioskSmsConfig(admin: SupabaseClient): Promise<{
 
 export async function listKioskMembers(admin: SupabaseClient): Promise<KioskMember[]> {
   const currentTermId = await getCurrentTermId(admin);
-  if (!currentTermId) return [];
+  const [advisorAssignmentsResult, termAssignmentsResult] = await Promise.all([
+    admin
+      .from("role_assignments")
+      .select("user_id,role_key,display_title")
+      .eq("role_key", "advisor")
+      .is("term_id", null)
+      .is("ends_at", null),
+    currentTermId
+      ? admin
+          .from("role_assignments")
+          .select("user_id,role_key,display_title")
+          .eq("term_id", currentTermId)
+          .is("ends_at", null)
+          .in("role_key", ["president", "executive", "board_member", "volunteer"])
+      : Promise.resolve({ data: [] as Array<unknown>, error: null }),
+  ]);
 
-  const { data: assignmentsRaw, error: assignmentsErr } = await admin
-    .from("role_assignments")
-    .select("user_id,role_key,display_title")
-    .eq("term_id", currentTermId)
-    .is("ends_at", null)
-    .in("role_key", ["president", "executive", "board_member"]);
+  if (advisorAssignmentsResult.error || termAssignmentsResult.error) {
+    throw new Error(
+      advisorAssignmentsResult.error?.message ||
+        termAssignmentsResult.error?.message ||
+        "role_assignment_lookup_failed",
+    );
+  }
 
-  if (assignmentsErr) throw new Error(assignmentsErr.message || "role_assignment_lookup_failed");
-
-  const assignments = (assignmentsRaw ?? []) as Array<{
-    user_id: string;
-    role_key: "president" | "executive" | "board_member";
-    display_title?: string | null;
-  }>;
+  const assignments = [
+    ...((advisorAssignmentsResult.data ?? []) as Array<{
+      user_id: string;
+      role_key: "advisor";
+      display_title?: string | null;
+    }>),
+    ...((termAssignmentsResult.data ?? []) as Array<{
+      user_id: string;
+      role_key: "president" | "executive" | "board_member" | "volunteer";
+      display_title?: string | null;
+    }>),
+  ];
 
   const assignmentByUser = new Map<string, typeof assignments[number]>();
   for (const row of assignments) {
@@ -272,7 +286,8 @@ export async function listKioskAdminMembers(admin: SupabaseClient): Promise<Kios
 
   const [
     { data: emailsRaw, error: emailsErr },
-    { data: grantsRaw, error: grantsErr },
+    { data: termGrantsRaw, error: termGrantsErr },
+    { data: advisorGrantsRaw, error: advisorGrantsErr },
     pendingPhonesResult,
   ] = await Promise.all([
     userIds.length > 0
@@ -285,15 +300,27 @@ export async function listKioskAdminMembers(admin: SupabaseClient): Promise<Kios
           .eq("term_id", currentTermId)
           .eq("is_active", true)
           .is("consumed_at", null)
-          .in("role_key", ["president", "executive", "board_member"])
-      : Promise.resolve({ data: [] as Array<{ id: string; email: string; role_key: string; notes: string | null }>, error: null }),
+          .in("role_key", ["president", "executive", "board_member", "volunteer"])
+      : Promise.resolve({
+          data: [] as Array<{ id: string; email: string; role_key: string; notes: string | null }>,
+          error: null,
+        }),
+    admin
+      .from("bootstrap_role_grants")
+      .select("id,email,role_key,notes")
+      .is("term_id", null)
+      .eq("is_active", true)
+      .is("consumed_at", null)
+      .eq("role_key", "advisor"),
     currentTermId
       ? admin.from("office_hours_kiosk_pending_phone_allowlist").select("bootstrap_role_grant_id,phone_last4,updated_at")
       : Promise.resolve({ data: [] as Array<{ bootstrap_role_grant_id: string; phone_last4: string | null; updated_at: string | null }>, error: null }),
   ]);
 
-  if (emailsErr || grantsErr) {
-    throw new Error(emailsErr?.message || grantsErr?.message || "kiosk_admin_member_lookup_failed");
+  if (emailsErr || termGrantsErr || advisorGrantsErr) {
+    throw new Error(
+      emailsErr?.message || termGrantsErr?.message || advisorGrantsErr?.message || "kiosk_admin_member_lookup_failed",
+    );
   }
 
   const pendingPhonesErr = pendingPhonesResult.error;
@@ -315,6 +342,11 @@ export async function listKioskAdminMembers(admin: SupabaseClient): Promise<Kios
     });
   }
 
+  const grantsRaw = [
+    ...((advisorGrantsRaw ?? []) as Array<{ id: string; email: string; role_key: string; notes: string | null }>),
+    ...((termGrantsRaw ?? []) as Array<{ id: string; email: string; role_key: string; notes: string | null }>),
+  ];
+
   return buildKioskAdminMembers({
     activeMembers: activeMembers.map((member) => ({
       ...member,
@@ -325,12 +357,12 @@ export async function listKioskAdminMembers(admin: SupabaseClient): Promise<Kios
       bootstrap_role_grant_id: null,
       email: emailByUserId.get(member.user_id) ?? null,
     })),
-    pendingGrants: ((grantsRaw ?? []) as Array<{ id: string; email: string; role_key: "president" | "executive" | "board_member"; notes: string | null }>).map((grant) => {
+    pendingGrants: grantsRaw.map((grant) => {
       const pendingPhone = pendingPhoneByGrantId.get(grant.id);
       return {
         id: grant.id,
         email: grant.email,
-        role_key: grant.role_key,
+        role_key: grant.role_key as "advisor" | "president" | "executive" | "board_member" | "volunteer",
         display_title: null,
         notes: grant.notes,
         phone_last4: pendingPhone?.phone_last4 ?? null,
@@ -343,20 +375,38 @@ export async function listKioskAdminMembers(admin: SupabaseClient): Promise<Kios
 export async function getKioskMemberRole(
   admin: SupabaseClient,
   userId: string,
-): Promise<{ roleKey: "president" | "executive" | "board_member"; displayTitle: string | null } | null> {
+): Promise<{ roleKey: "advisor" | "president" | "executive" | "board_member" | "volunteer"; displayTitle: string | null } | null> {
   const currentTermId = await getCurrentTermId(admin);
-  if (!currentTermId) return null;
+  const [advisorResult, termRoleResult] = await Promise.all([
+    admin
+      .from("role_assignments")
+      .select("role_key,display_title")
+      .eq("user_id", userId)
+      .eq("role_key", "advisor")
+      .is("term_id", null)
+      .is("ends_at", null),
+    currentTermId
+      ? admin
+          .from("role_assignments")
+          .select("role_key,display_title")
+          .eq("user_id", userId)
+          .eq("term_id", currentTermId)
+          .is("ends_at", null)
+          .in("role_key", ["president", "executive", "board_member", "volunteer"])
+      : Promise.resolve({ data: [] as Array<unknown>, error: null }),
+  ]);
 
-  const { data, error } = await admin
-    .from("role_assignments")
-    .select("role_key,display_title")
-    .eq("user_id", userId)
-    .eq("term_id", currentTermId)
-    .is("ends_at", null)
-    .in("role_key", ["president", "executive", "board_member"]);
+  if (advisorResult.error || termRoleResult.error) {
+    throw new Error(advisorResult.error?.message || termRoleResult.error?.message || "role_assignment_lookup_failed");
+  }
 
-  if (error) throw new Error(error.message || "role_assignment_lookup_failed");
-  const rows = (data ?? []) as Array<{ role_key: "president" | "executive" | "board_member"; display_title: string | null }>;
+  const rows = [
+    ...((advisorResult.data ?? []) as Array<{ role_key: "advisor"; display_title: string | null }>),
+    ...((termRoleResult.data ?? []) as Array<{
+      role_key: "president" | "executive" | "board_member" | "volunteer";
+      display_title: string | null;
+    }>),
+  ];
   if (rows.length === 0) return null;
   rows.sort((a, b) => roleRank(a.role_key) - roleRank(b.role_key));
   return { roleKey: rows[0]!.role_key, displayTitle: rows[0]!.display_title ?? null };
@@ -365,26 +415,41 @@ export async function getKioskMemberRole(
 export async function getPendingKioskGrant(
   admin: SupabaseClient,
   grantId: string,
-): Promise<{ id: string; email: string; roleKey: "president" | "executive" | "board_member" } | null> {
+): Promise<{ id: string; email: string; roleKey: "advisor" | "president" | "executive" | "board_member" | "volunteer" } | null> {
   const currentTermId = await getCurrentTermId(admin);
-  if (!currentTermId) return null;
+  const [advisorGrantResult, termGrantResult] = await Promise.all([
+    admin
+      .from("bootstrap_role_grants")
+      .select("id,email,role_key")
+      .eq("id", grantId)
+      .is("term_id", null)
+      .eq("is_active", true)
+      .is("consumed_at", null)
+      .eq("role_key", "advisor")
+      .maybeSingle(),
+    currentTermId
+      ? admin
+          .from("bootstrap_role_grants")
+          .select("id,email,role_key")
+          .eq("id", grantId)
+          .eq("term_id", currentTermId)
+          .eq("is_active", true)
+          .is("consumed_at", null)
+          .in("role_key", ["president", "executive", "board_member", "volunteer"])
+          .maybeSingle()
+      : Promise.resolve({ data: null as { id?: string; email?: string; role_key?: string } | null, error: null }),
+  ]);
 
-  const { data, error } = await admin
-    .from("bootstrap_role_grants")
-    .select("id,email,role_key")
-    .eq("id", grantId)
-    .eq("term_id", currentTermId)
-    .eq("is_active", true)
-    .is("consumed_at", null)
-    .in("role_key", ["president", "executive", "board_member"])
-    .maybeSingle();
+  if (advisorGrantResult.error || termGrantResult.error) {
+    throw new Error(advisorGrantResult.error?.message || termGrantResult.error?.message || "bootstrap_grant_lookup_failed");
+  }
 
-  if (error) throw new Error(error.message || "bootstrap_grant_lookup_failed");
+  const data = advisorGrantResult.data ?? termGrantResult.data;
   if (!data?.id || !data.email || !data.role_key) return null;
   return {
     id: data.id,
     email: data.email,
-    roleKey: data.role_key,
+    roleKey: data.role_key as "advisor" | "president" | "executive" | "board_member" | "volunteer",
   };
 }
 

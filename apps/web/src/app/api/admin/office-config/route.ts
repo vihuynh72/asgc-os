@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-import { requireFullAdmin, requireFullAdminOrEvp, requireAnyAdminRead } from "@/lib/adminAuth";
+import { requireFullAdmin, requireFullAdminOrEvp, requireOfficeHoursAdmin } from "@/lib/adminAuth";
 import {
   ensureOfficeHoursConfigWithKioskFallback,
   normalizeOfficeHoursKioskError,
@@ -49,12 +49,9 @@ async function ensureOfficeConfigRow(admin: ReturnType<typeof getSupabaseAdminCl
   return (await ensureOfficeHoursConfigWithKioskFallback(admin)) as OfficeConfigRow;
 }
 
-// GET: Read office config (any admin tier can read, but EVP and full admin only see the data)
+// GET: Read office config (Office Hours full admin + EVP only)
 export async function GET(request: NextRequest) {
-  // For reading, any admin tier needs to at least see Office Hours tab
-  // But office config details are only shown to full admin or EVP in UI
-  // We allow read here; UI gates visibility
-  const authz = await requireAnyAdminRead(request);
+  const authz = await requireOfficeHoursAdmin(request);
   if (!authz.ok) return authz.response;
 
   const admin = getSupabaseAdminClient();

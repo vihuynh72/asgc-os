@@ -56,7 +56,7 @@ type CommitteeDraft = {
 };
 
 type RoleKey = "advisor" | "president" | "executive" | "board_member" | "volunteer";
-type OfficeHourRoleKey = (typeof OFFICE_HOUR_ROLE_KEYS)[number];
+type OfficeHourRoleKey = RoleKey;
 
 type OfficeLocationRow = {
   id: string;
