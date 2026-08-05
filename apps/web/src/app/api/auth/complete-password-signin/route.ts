@@ -12,6 +12,7 @@ import { getServerEnv } from "@/lib/envServer";
 import { normalizeEmail } from "@/lib/invitesAllowlist";
 import { POST_AUTH_REDIRECT_COOKIE, safePostAuthRedirectPath, safeRedirectPathOrNull } from "@/lib/redirects";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
+import { copySupabaseResponseState } from "@/lib/supabase-response-headers.mjs";
 import { getSupabaseRouteHandlerClientWithResponse } from "@/lib/supabaseServer";
 
 export const runtime = "nodejs";
@@ -98,7 +99,9 @@ export async function POST(request: NextRequest) {
   });
 
   if (setSessionError) {
-    return NextResponse.json({ ok: false }, { status: 401 });
+    const errorResponse = NextResponse.json({ ok: false }, { status: 401 });
+    copySupabaseResponseState(response, errorResponse);
+    return errorResponse;
   }
 
   try {

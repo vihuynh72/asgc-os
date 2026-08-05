@@ -3,10 +3,14 @@ import { cookies } from "next/headers";
 import type { NextRequest } from "next/server";
 
 import { getPublicEnv } from "./env";
+import { applySupabaseResponseHeaders } from "./supabase-response-headers.mjs";
 
 type ResponseCookieWriter = {
   cookies: {
     set: (name: string, value: string, options?: Record<string, unknown>) => void;
+  };
+  headers: {
+    set: (name: string, value: string) => void;
   };
 };
 
@@ -17,10 +21,11 @@ export function getSupabaseRouteHandlerClientWithResponse(request: NextRequest, 
       getAll() {
         return request.cookies.getAll();
       },
-      setAll(cookiesToSet) {
+      setAll(cookiesToSet, responseHeaders: Record<string, string> = {}) {
         for (const { name, value, options } of cookiesToSet) {
           response.cookies.set(name, value, options);
         }
+        applySupabaseResponseHeaders(response, responseHeaders);
       },
     },
   });
@@ -39,7 +44,9 @@ export async function getSupabaseRouteHandlerClient() {
       getAll() {
         return cookieStore.getAll();
       },
-      setAll() {
+      setAll(cookiesToSet, responseHeaders?: Record<string, string>) {
+        void cookiesToSet;
+        void responseHeaders;
         // No-op: JSON API endpoints don't need to refresh auth cookies.
       },
     },

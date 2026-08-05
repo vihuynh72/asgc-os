@@ -2,6 +2,7 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
 import { getPublicEnv, hasPublicSupabaseEnv } from "@/lib/env";
+import { applySupabaseResponseHeaders } from "@/lib/supabase-response-headers.mjs";
 
 export const runtime = "nodejs";
 
@@ -20,10 +21,11 @@ export async function POST(request: NextRequest) {
       getAll() {
         return request.cookies.getAll();
       },
-      setAll(cookiesToSet) {
+      setAll(cookiesToSet, responseHeaders: Record<string, string> = {}) {
         for (const { name, value, options } of cookiesToSet) {
           response.cookies.set(name, value, options);
         }
+        applySupabaseResponseHeaders(response, responseHeaders);
       },
     },
   });
@@ -35,4 +37,3 @@ export async function POST(request: NextRequest) {
 export async function GET(request: NextRequest) {
   return POST(request);
 }
-

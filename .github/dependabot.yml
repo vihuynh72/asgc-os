@@ -5,6 +5,17 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    groups:
+      supabase-version-updates:
+        applies-to: version-updates
+        patterns:
+          - "@supabase/ssr"
+          - "@supabase/supabase-js"
+      supabase-security-updates:
+        applies-to: security-updates
+        patterns:
+          - "@supabase/ssr"
+          - "@supabase/supabase-js"
   - package-ecosystem: github-actions
     directory: /
     schedule:

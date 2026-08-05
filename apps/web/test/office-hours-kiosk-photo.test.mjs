@@ -1,7 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildKioskPhotoQuarantinePath, getFileExtFromPath } from "../src/lib/office-hours-kiosk-photo.mjs";
+import {
+  buildKioskPhotoQuarantinePath,
+  getFileExtFromPath,
+  getKioskPhotoDeletedAtFilter,
+} from "../src/lib/office-hours-kiosk-photo.mjs";
 
 test("getFileExtFromPath returns lowercased extension", () => {
   assert.equal(getFileExtFromPath("kiosk-checkins/u/abc.JPG"), "jpg");
@@ -21,3 +25,8 @@ test("buildKioskPhotoQuarantinePath builds deterministic quarantine path", () =>
   );
 });
 
+test("photo review modes use the matching deleted-at filter", () => {
+  assert.equal(getKioskPhotoDeletedAtFilter(undefined), "is");
+  assert.equal(getKioskPhotoDeletedAtFilter("active"), "is");
+  assert.equal(getKioskPhotoDeletedAtFilter("quarantine"), "not.is");
+});

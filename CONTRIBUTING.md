@@ -12,6 +12,12 @@ test -f apps/web/.env.local || cp apps/web/.env.example apps/web/.env.local
 
 Use private development credentials only. Never copy production records into fixtures, screenshots, issues, or pull requests.
 
+## Commit and pull-request titles
+
+Use Conventional Commit form for every commit subject and pull-request title: `type(scope): imperative summary`. Allowed types are `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, and `revert`. The scope is optional. For example: `fix(office-hours): reject duplicate check-ins`.
+
+Keep titles specific and reviewable. Do not use placeholders such as `WIP`, `update`, `fix stuff`, or `trigger rebuild`.
+
 ## Change requirements
 
 - Keep application code under `apps/web`, database assets under `supabase`, and durable documentation under `docs`.
@@ -20,6 +26,8 @@ Use private development credentials only. Never copy production records into fix
 - Create database changes with `supabase migration new <descriptive_name>` and review the resulting SQL before applying it.
 - Add a permission or RLS smoke check for schema changes involving user data, views, functions, or storage.
 - Do not modify approved Constitution or Bylaws content without written organizational authorization.
+- Use synthetic names, addresses, phone numbers, personal dates, identifiers, and account records in code, tests, documentation, commits, issues, and pull requests.
+- Do not include real personal contact details, personal dates, student records, private URLs, credentials, or identity-specific bootstrap accounts. Official governance records require the authorization described above.
 
 ## Required checks
 
@@ -33,4 +41,4 @@ Document any live integration that could not be tested. A successful build does 
 
 ## Pull requests
 
-Describe the problem, the authorization impact, the tests run, any migration or environment changes, and a rollback path. Do not include secret values, private URLs, personal email addresses, or screenshots containing student records.
+Describe the problem, the authorization impact, the tests run, any migration or environment changes, and a rollback path. Inspect the staged diff before pushing, and remove secret values, personal content, private URLs, and screenshots containing student records.

@@ -22,7 +22,7 @@ Every check below needs a pass result, timestamp, operator, and a private eviden
 
 - [ ] Confirm the deployed commit matches the commit in the release record.
 - [ ] Confirm CI passed `npm run check`, `npm run build`, and `npm audit --omit=dev` for that commit.
-- [ ] Confirm the deployment uses Node.js 22 or newer.
+- [ ] Confirm the deployment uses Node.js 22.x.
 - [ ] Confirm the public base URL uses HTTPS and the expected custom domain.
 - [ ] Confirm health, login, and static application pages return the expected status without exposing debug details.
 

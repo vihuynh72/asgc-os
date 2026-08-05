@@ -46,7 +46,7 @@ See [`docs/governance/README.md`](docs/governance/README.md) before describing e
 
 Requirements:
 
-- Node.js 22 or newer
+- Node.js 22.x
 - npm 10 or newer
 - Supabase CLI and Docker only when running the database locally
 

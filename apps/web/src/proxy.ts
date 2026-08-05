@@ -14,6 +14,7 @@ import {
 import { OFFICE_HOURS_MEMBER_KIOSK_PATH } from "@/lib/office-hours-member-routing.mjs";
 import { getPublicEnv, hasPublicSupabaseEnv } from "@/lib/env";
 import { POST_AUTH_REDIRECT_COOKIE } from "@/lib/redirects";
+import { createSupabaseProxyResponseBuffer } from "@/lib/supabase-response-headers.mjs";
 
 export async function proxy(request: NextRequest) {
   if (!hasPublicSupabaseEnv()) {
@@ -88,16 +89,15 @@ export async function proxy(request: NextRequest) {
 
   const env = getPublicEnv();
 
-  const pendingCookies: Array<{ name: string; value: string; options: Parameters<NextResponse["cookies"]["set"]>[2] }> =
-    [];
+  const pendingSupabaseResponse = createSupabaseProxyResponseBuffer(request);
 
   const supabase = createServerClient(env.NEXT_PUBLIC_SUPABASE_URL, env.NEXT_PUBLIC_SUPABASE_ANON_KEY, {
     cookies: {
       getAll() {
         return request.cookies.getAll();
       },
-      setAll(cookiesToSet) {
-        pendingCookies.push(...cookiesToSet);
+      setAll(cookiesToSet, responseHeaders: Record<string, string> = {}) {
+        pendingSupabaseResponse.add(cookiesToSet, responseHeaders);
       },
     },
   });
@@ -190,9 +190,7 @@ export async function proxy(request: NextRequest) {
     }
   }
 
-  for (const { name, value, options } of pendingCookies) {
-    response.cookies.set(name, value, options);
-  }
+  pendingSupabaseResponse.applyTo(response);
 
   return response;
 }

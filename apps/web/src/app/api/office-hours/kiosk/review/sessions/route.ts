@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
 import { normalizeDateOnlyString } from "@/lib/dateOnly";
+import { getKioskPhotoDeletedAtFilter } from "@/lib/office-hours-kiosk-photo.mjs";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 import { getSupabaseRouteHandlerClient } from "@/lib/supabaseServer";
 
@@ -104,11 +105,11 @@ export async function GET(request: NextRequest) {
     .order("checkin_at", { ascending: false })
     .limit(max);
 
-  if ((mode ?? "active") === "active") {
-    query = query.is("kiosk_checkin_photo_deleted_at", null);
-  } else {
-    query = query.not("kiosk_checkin_photo_deleted_at", "is", null);
-  }
+  query = query.filter(
+    "kiosk_checkin_photo_deleted_at",
+    getKioskPhotoDeletedAtFilter(mode),
+    null,
+  );
 
   const { data: rawSessions, error: sessionsErr } = await query;
 

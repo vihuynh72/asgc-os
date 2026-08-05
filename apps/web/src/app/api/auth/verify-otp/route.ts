@@ -10,6 +10,7 @@ import { verifyLoginEmailChallengeCode } from "@/lib/auth/password-signin.mjs";
 import { normalizeEmail } from "@/lib/invitesAllowlist";
 import { POST_AUTH_REDIRECT_COOKIE, safePostAuthRedirectPath } from "@/lib/redirects";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
+import { applySupabaseResponseHeaders, copySupabaseResponseState } from "@/lib/supabase-response-headers.mjs";
 
 export const runtime = "nodejs";
 
@@ -94,10 +95,11 @@ export async function POST(request: NextRequest) {
       getAll() {
         return request.cookies.getAll();
       },
-      setAll(cookiesToSet) {
+      setAll(cookiesToSet, responseHeaders: Record<string, string> = {}) {
         for (const { name, value, options } of cookiesToSet) {
           response.cookies.set(name, value, options);
         }
+        applySupabaseResponseHeaders(response, responseHeaders);
       },
     },
   });
@@ -112,7 +114,9 @@ export async function POST(request: NextRequest) {
       message: error.message,
       verificationType: challenge.supabase_verification_type,
     });
-    return NextResponse.json({ ok: false }, { status: 401 });
+    const errorResponse = NextResponse.json({ ok: false }, { status: 401 });
+    copySupabaseResponseState(response, errorResponse);
+    return errorResponse;
   }
 
   try {

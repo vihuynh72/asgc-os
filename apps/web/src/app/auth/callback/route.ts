@@ -6,6 +6,7 @@ import { getPublicEnv } from "@/lib/env";
 import { normalizeEmail } from "@/lib/invitesAllowlist";
 import { POST_AUTH_REDIRECT_COOKIE, safePostAuthRedirectPath, safeRedirectPathOrNull } from "@/lib/redirects";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
+import { applySupabaseResponseHeaders, copySupabaseResponseState } from "@/lib/supabase-response-headers.mjs";
 
 export const runtime = "nodejs";
 
@@ -39,10 +40,11 @@ export async function GET(request: NextRequest) {
       getAll() {
         return request.cookies.getAll();
       },
-      setAll(cookiesToSet) {
+      setAll(cookiesToSet, responseHeaders: Record<string, string> = {}) {
         for (const { name, value, options } of cookiesToSet) {
           response.cookies.set(name, value, options);
         }
+        applySupabaseResponseHeaders(response, responseHeaders);
       },
     },
   });
@@ -103,6 +105,7 @@ export async function GET(request: NextRequest) {
       errUrl.searchParams.set("error", "auth_callback_failed");
       errUrl.searchParams.set("redirectTo", redirectTo);
       const errResponse = NextResponse.redirect(errUrl);
+      copySupabaseResponseState(response, errResponse);
       clearMfaRecoveryCookie(errResponse);
       return errResponse;
     }
@@ -131,6 +134,7 @@ export async function GET(request: NextRequest) {
     errUrl.searchParams.set("error", "auth_callback_failed");
     errUrl.searchParams.set("redirectTo", redirectTo);
     const errResponse = NextResponse.redirect(errUrl);
+    copySupabaseResponseState(response, errResponse);
     clearMfaRecoveryCookie(errResponse);
     return errResponse;
   }

@@ -19,3 +19,6 @@ export function buildKioskPhotoQuarantinePath({
   return `kiosk-quarantine/${userId}/${stamp}-${sessionId}.${safeExt}`;
 }
 
+export function getKioskPhotoDeletedAtFilter(mode) {
+  return mode === "quarantine" ? "not.is" : "is";
+}

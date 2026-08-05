@@ -13,7 +13,8 @@ export function getSupabaseServerComponentClient() {
         getAll() {
           return cookieStore.getAll();
         },
-        setAll(cookiesToSet) {
+        setAll(cookiesToSet, responseHeaders?: Record<string, string>) {
+          void responseHeaders;
           try {
             for (const { name, value, options } of cookiesToSet) {
               cookieStore.set(name, value, options);

@@ -45,5 +45,8 @@
 - Full web gate: `npm --prefix apps/web run check && npm --prefix apps/web run build`.
 - DB migrations: `supabase link --project-ref <ref>` then `supabase db push --dry-run` → `supabase db push`.
 
-## Known gotcha
-- Keep the Supabase bundling workaround: `apps/web/package.json` uses `next ... --webpack`, and `apps/web/next.config.ts` aliases `@supabase/supabase-js` to a CJS entrypoint.
+## Known build constraints
+- Keep `next dev --webpack` and `next build --webpack` in `apps/web/package.json`.
+- Do not restore the old `@supabase/supabase-js` CommonJS alias in `apps/web/next.config.ts`; the pinned Supabase packages resolve through their package exports.
+- Keep `@supabase/ssr` and `@supabase/supabase-js` pinned to exact, mutually compatible versions and update them together.
+- Keep the web runtime on Node.js `22.x` so local development, CI, and Vercel use the same major version.
