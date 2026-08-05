@@ -3,7 +3,8 @@
 
 begin;
 
-create or replace view public.v_budget_burndown as
+create or replace view public.v_budget_burndown
+with (security_invoker = true) as
 select
   bl.fiscal_year,
   bl.id as budget_line_id,

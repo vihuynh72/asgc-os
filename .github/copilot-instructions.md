@@ -1,8 +1,8 @@
 # Copilot instructions (ASGC OS)
 
 ## Read first (project reality)
-- The build packet is the source of truth: `00_product_brief.md` → `04_office_hours_spec.md` (build strictly phase-by-phase).
-- Repo status/progress lives in `README.md` (phase map + pointers to API/UI/migrations).
+- The original build packet lives in `docs/specifications`; treat it as design history, not proof of current behavior.
+- Start with `README.md` and `docs/README.md`; historical phase progress lives in `docs/history/phase-progress.md`.
 - Single Next.js App Router app in `apps/web`; backend is Supabase Postgres + Auth.
 - RLS is authoritative; UI hiding is non-authoritative.
 - Schema changes happen via SQL migrations in `supabase/migrations` (avoid Dashboard SQL editor except emergencies).
@@ -10,16 +10,16 @@
 ## Where things live
 - UI routes: `apps/web/src/app/**` (App Router).
 - API routes: `apps/web/src/app/api/**/route.ts` (example: `apps/web/src/app/api/tasks/route.ts`).
-- Auth/admin gating middleware: `apps/web/src/middleware.ts`.
+- Auth/admin gating proxy: `apps/web/src/proxy.ts`.
 
 ## Auth + admin conventions (do not break)
 - Invite-only magic link: `apps/web/src/app/api/auth/request-magic-link/route.ts` must never leak allowlist membership (always respond `{ ok: true }`).
 - Callback sets cookie session: `apps/web/src/app/auth/callback/route.ts`.
 - Admin checks use `rpc('is_admin')` (middleware + admin endpoints), e.g. `apps/web/src/app/api/admin/invites-allowlist/route.ts`.
-- Middleware behavior to preserve: redirects magic-link params to `/auth/callback`, supports kiosk fallback for office-hours flows.
+- Proxy behavior to preserve: redirects magic-link params to `/auth/callback`, supports kiosk fallback for office-hours flows.
 
 ## Supabase client patterns (use existing helpers)
-- Env is Zod-validated: `apps/web/src/lib/env.ts` (public) and `apps/web/src/lib/envServer.ts` (server-only; includes AI/email/cron schemas).
+- Env is Zod-validated: `apps/web/src/lib/env.ts` (public) and `apps/web/src/lib/envServer.ts` (server-only; includes AI, email, SMS, and cron schemas).
 - Browser client: `getSupabaseBrowserClient()` in `apps/web/src/lib/supabaseClient.ts`.
 - Server Components client: `getSupabaseServerComponentClient()` in `apps/web/src/lib/supabaseServerComponent.ts`.
 - Service-role/admin client (server-only): `getSupabaseAdminClient()` in `apps/web/src/lib/supabaseAdmin.ts`.
@@ -41,9 +41,8 @@
 - Audit: admin writes frequently call `admin.rpc("log_event", ...)` after DB mutations.
 
 ## Local workflows (what actually runs here)
-- Web dev: `cd apps/web && npm install && cp .env.example .env.local && npm run dev`.
-- Typecheck: `npx tsc -p apps/web/tsconfig.json --noEmit`.
-- Lint: `cd apps/web && npm run lint`.
+- Web dev: run `npm --prefix apps/web ci`, then `test -f apps/web/.env.local || cp apps/web/.env.example apps/web/.env.local`, then `npm --prefix apps/web run dev`.
+- Full web gate: `npm --prefix apps/web run check && npm --prefix apps/web run build`.
 - DB migrations: `supabase link --project-ref <ref>` then `supabase db push --dry-run` → `supabase db push`.
 
 ## Known gotcha

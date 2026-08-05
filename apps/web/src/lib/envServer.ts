@@ -30,7 +30,7 @@ export type AiEnv = z.infer<typeof AiEnvSchema>;
 export function getAiEnv(): AiEnv {
   const parsed = AiEnvSchema.safeParse({
     OPENAI_API_KEY: process.env.OPENAI_API_KEY,
-    OPENAI_MODEL: process.env.OPENAI_MODEL,
+    OPENAI_MODEL: process.env.OPENAI_MODEL?.trim() || undefined,
   });
 
   if (!parsed.success) {
@@ -75,6 +75,16 @@ const SmsEnvSchema = z.object({
 });
 
 export type SmsEnv = z.infer<typeof SmsEnvSchema>;
+
+const KioskOtpSecretSchema = z.string().min(16);
+
+export function getKioskOtpSecret(): string {
+  const parsed = KioskOtpSecretSchema.safeParse(process.env.OFFICE_HOURS_KIOSK_OTP_SECRET);
+  if (!parsed.success) {
+    throw new Error("Missing kiosk OTP env. Set OFFICE_HOURS_KIOSK_OTP_SECRET (>= 16 chars) in server env.");
+  }
+  return parsed.data;
+}
 
 export function getSmsEnv(): SmsEnv {
   const parsed = SmsEnvSchema.safeParse({

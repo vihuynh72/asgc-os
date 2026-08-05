@@ -1,6 +1,6 @@
 # Member Auth + Integrated Office Hours Redesign Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+> **Archive notice:** This dated plan records design intent at the time it was written. It is not current setup guidance or evidence that a task was completed. Paths, names, commands, and expected results may differ from the current repository. Current code, migrations, and the repository [`README`](../../README.md) take precedence.
 
 **Goal:** Replace the split login and public kiosk flow with a signed-in, trusted-device-aware auth journey and a selfie-based Office Hours experience that feels native to the main ASGC app.
 

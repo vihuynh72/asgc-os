@@ -292,7 +292,8 @@ revoke all on function public.my_weekly_hours() from public;
 grant execute on function public.my_weekly_hours() to authenticated;
 
 -- Optional view for PostgREST/table-style access.
-create or replace view public.v_my_weekly_hours as
+create or replace view public.v_my_weekly_hours
+with (security_invoker = true) as
 select user_id, week_start, total_minutes, in_office_minutes, deficit_minutes
 from public.my_weekly_hours();
 

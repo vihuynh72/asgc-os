@@ -86,10 +86,6 @@ function buildMemberLabel({ userId, displayName, email }) {
   return safeString(displayName) || safeString(email) || `Member ${safeString(userId).slice(0, 8) || "unknown"}`;
 }
 
-function buildMemberDescription(email) {
-  return safeString(email) || "No email on file";
-}
-
 function readJsonObject(value) {
   return typeof value === "object" && value !== null ? value : {};
 }
@@ -536,7 +532,7 @@ async function getSessionSourceById({ admin, templateId, sessionId, nowIso }) {
   });
 }
 
-async function getNotificationSourceById({ admin, viewer, templateId, notificationId }) {
+async function getNotificationSourceById({ admin, templateId, notificationId }) {
   const { data, error } = await admin
     .from("notification_log")
     .select("id,user_id,type,metadata,created_at")
@@ -679,7 +675,6 @@ export async function loadAdminCommunicationRealSource({
   if (parsed.kind === "notification") {
     return getNotificationSourceById({
       admin,
-      viewer,
       templateId,
       notificationId: parsed.primaryId,
     });

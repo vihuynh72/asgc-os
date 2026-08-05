@@ -669,9 +669,13 @@ export function IccDashboard({
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() =>
-                  (window.location.href = `/api/icc/meetings/${encodeURIComponent(selectedMeetingId)}/export`)
-                }
+                onClick={() => {
+                  const link = document.createElement("a");
+                  link.href = `/api/icc/meetings/${encodeURIComponent(selectedMeetingId)}/export`;
+                  document.body.appendChild(link);
+                  link.click();
+                  link.remove();
+                }}
               >
                 Export CSV
               </Button>

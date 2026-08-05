@@ -3,9 +3,11 @@ import assert from "node:assert/strict";
 
 import {
   computeNextCheckoutReminderAt,
+  hashKioskOtpRateLimitKey,
   hashKioskOtpCode,
   maskPhoneE164,
   normalizeKioskPhone,
+  normalizeKioskRequestIp,
   sortKioskMembers,
   verifyKioskOtpCode,
 } from "../src/lib/office-hours-kiosk-auth.mjs";
@@ -72,6 +74,28 @@ test("hashKioskOtpCode and verifyKioskOtpCode produce deterministic OTP checks",
     }),
     false,
   );
+});
+
+test("normalizeKioskRequestIp validates and canonicalizes forwarded addresses", () => {
+  assert.equal(normalizeKioskRequestIp("203.0.113.10:443"), "203.0.113.10");
+  assert.equal(normalizeKioskRequestIp("[2001:0db8:0:0:0:0:0:1]:443"), "2001:db8::1");
+  assert.equal(normalizeKioskRequestIp("not-an-ip"), null);
+});
+
+test("hashKioskOtpRateLimitKey is scoped, deterministic, and hides its subject", () => {
+  const secret = "a-long-server-side-secret";
+  const ipHash = hashKioskOtpRateLimitKey({ scope: "ip", subject: "203.0.113.10", secret });
+
+  assert.match(ipHash, /^[0-9a-f]{64}$/);
+  assert.equal(
+    ipHash,
+    hashKioskOtpRateLimitKey({ scope: "ip", subject: "203.0.113.10", secret }),
+  );
+  assert.notEqual(
+    ipHash,
+    hashKioskOtpRateLimitKey({ scope: "member", subject: "203.0.113.10", secret }),
+  );
+  assert.equal(ipHash.includes("203.0.113.10"), false);
 });
 
 test("computeNextCheckoutReminderAt uses hourly cadence from check-in or the prior reminder", () => {

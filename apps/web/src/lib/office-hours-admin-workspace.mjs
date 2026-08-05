@@ -173,47 +173,6 @@ function sessionStateSortRank(sessionState) {
   return 3;
 }
 
-function buildLaneSessionState({ shift, sessions, todayDate, nowIso, isUnscheduledSession }) {
-  if (sessions.some((session) => session?.status === "open" && !session?.checkout_at)) {
-    return "checked_in_now";
-  }
-  if (sessions.some((session) => session?.status !== "open" && session?.checkout_at)) {
-    return "completed_today";
-  }
-  if (isUnscheduledSession || !shift || shift?.status === "cancelled") {
-    return null;
-  }
-
-  const shiftDate = formatDateKeyInTimezone(shift?.starts_at ?? "", shift?.office_location_timezone ?? null);
-  const startsAt = Date.parse(shift?.starts_at ?? "");
-  const now = Date.parse(nowIso);
-  if (
-    shiftDate === todayDate &&
-    shift?.status === "scheduled" &&
-    !Number.isNaN(startsAt) &&
-    !Number.isNaN(now) &&
-    startsAt <= now
-  ) {
-    return "no_session_yet";
-  }
-  return null;
-}
-
-function compareLane(a, b) {
-  const stateRankDiff = sessionStateSortRank(a.sessionState) - sessionStateSortRank(b.sessionState);
-  if (stateRankDiff !== 0) return stateRankDiff;
-
-  const aStartsAt = Date.parse(a.shift?.starts_at ?? a.sessions?.[0]?.checkin_at ?? "");
-  const bStartsAt = Date.parse(b.shift?.starts_at ?? b.sessions?.[0]?.checkin_at ?? "");
-  if (!Number.isNaN(aStartsAt) && !Number.isNaN(bStartsAt) && aStartsAt !== bStartsAt) {
-    return aStartsAt - bStartsAt;
-  }
-
-  return `${a.userDisplayName || a.userEmail || a.userId}`.localeCompare(
-    `${b.userDisplayName || b.userEmail || b.userId}`,
-  );
-}
-
 function blockerSortRank(kind) {
   if (kind === "coverage_request") return 0;
   if (kind === "review_flag") return 1;

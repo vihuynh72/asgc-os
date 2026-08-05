@@ -1,12 +1,13 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
 import { safePostAuthRedirectPath } from "@/lib/redirects";
 
 export function RecoverClient() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const redirectTo = useMemo(() => safePostAuthRedirectPath(searchParams.get("redirectTo")), [searchParams]);
 
@@ -28,7 +29,7 @@ export function RecoverClient() {
         return;
       }
       setStatus("done");
-      window.location.assign(`/mfa?redirectTo=${encodeURIComponent(redirectTo)}`);
+      router.push(`/mfa?redirectTo=${encodeURIComponent(redirectTo)}`);
     } catch {
       setStatus("error");
       setMessage("Could not reset 2FA. Please try again.");
@@ -59,4 +60,3 @@ export function RecoverClient() {
     </div>
   );
 }
-

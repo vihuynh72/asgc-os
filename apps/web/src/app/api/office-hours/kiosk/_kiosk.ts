@@ -4,6 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
   computeNextCheckoutReminderAt,
+  hashKioskOtpRateLimitKey,
   hashKioskOtpCode,
   normalizeKioskPhone,
   sortKioskMembers,
@@ -501,7 +502,6 @@ export async function createOrRefreshKioskOtpChallenge(
     intent,
     ttlMinutes,
     otpSecret,
-    requestIp,
     userAgent,
   }: {
     userId: string;
@@ -509,7 +509,6 @@ export async function createOrRefreshKioskOtpChallenge(
     intent: KioskIntent;
     ttlMinutes: number;
     otpSecret: string;
-    requestIp: string | null;
     userAgent: string | null;
   },
 ) {
@@ -527,9 +526,6 @@ export async function createOrRefreshKioskOtpChallenge(
   if (recentErr) throw new Error(normalizeOfficeHoursKioskError(recentErr, "otp_lookup_failed"));
 
   const recent = (recentRaw ?? []) as Array<Pick<OtpChallengeRow, "id" | "phone_e164" | "intent" | "attempt_count" | "send_count" | "expires_at" | "verified_at" | "used_at" | "created_at" | "updated_at">>;
-
-  const totalSends = recent.reduce((sum, row) => sum + Math.max(1, Number(row.send_count) || 1), 0);
-  if (totalSends >= 5) throw new Error("otp_rate_limited");
 
   const latest = recent.find((row) => row.used_at === null) ?? null;
   if (latest) {
@@ -557,7 +553,7 @@ export async function createOrRefreshKioskOtpChallenge(
         verification_token: null,
         verification_expires_at: null,
         used_at: null,
-        request_ip: requestIp,
+        request_ip: null,
         user_agent: userAgent,
       })
       .eq("id", latest.id);
@@ -573,7 +569,7 @@ export async function createOrRefreshKioskOtpChallenge(
       attempt_count: 0,
       send_count: 1,
       expires_at: expiresAtIso,
-      request_ip: requestIp,
+      request_ip: null,
       user_agent: userAgent,
     });
 
@@ -581,6 +577,32 @@ export async function createOrRefreshKioskOtpChallenge(
   }
 
   return { challengeId, code, expiresAtIso };
+}
+
+export async function consumeKioskOtpRateLimit(
+  admin: SupabaseClient,
+  {
+    scope,
+    subject,
+    secret,
+  }: {
+    scope: "ip" | "member" | "phone";
+    subject: string;
+    secret: string;
+  },
+) {
+  const keyHash = hashKioskOtpRateLimitKey({ scope, subject, secret });
+  const { data, error } = await admin.rpc("consume_office_hours_kiosk_otp_rate_limit", {
+    _scope: scope,
+    _key_hash: keyHash,
+  });
+
+  if (error) {
+    throw new Error(normalizeOfficeHoursKioskError(error, "otp_rate_limit_failed"));
+  }
+  if (data !== true) {
+    throw new Error(data === false ? "otp_rate_limited" : "otp_rate_limit_failed");
+  }
 }
 
 export async function verifyKioskOtpChallengeCode(

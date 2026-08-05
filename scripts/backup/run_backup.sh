@@ -1,20 +1,70 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
-STAMP="$(date +%Y-%m-%d)"
-OUT_DIR="${1:-./backups/$STAMP}"
+usage() {
+  echo "Usage: $0 <local|linked> <backup-root>" >&2
+  echo "Example: $0 linked /secure/backups/asgc-$(date +%Y-%m-%d)" >&2
+}
 
-if ! command -v supabase >/dev/null 2>&1; then
-  echo "Supabase CLI is required. Install from https://supabase.com/docs/guides/cli"
-  exit 1
+if [[ $# -ne 2 ]]; then
+  usage
+  exit 64
 fi
 
-mkdir -p "$OUT_DIR"
+TARGET="$1"
+BACKUP_ROOT="$2"
+DESTINATION="$BACKUP_ROOT/database"
 
-echo "Writing schema dump to $OUT_DIR/db_schema.sql"
-supabase db dump --schema public > "$OUT_DIR/db_schema.sql"
+case "$TARGET" in
+  local)
+    TARGET_FLAG="--local"
+    ;;
+  linked)
+    TARGET_FLAG="--linked"
+    ;;
+  *)
+    usage
+    exit 64
+    ;;
+esac
 
-echo "Writing data dump to $OUT_DIR/db_data.sql"
-supabase db dump --schema public --data-only > "$OUT_DIR/db_data.sql"
+if [[ -e "$DESTINATION" ]]; then
+  echo "Refusing to overwrite existing database backup: $DESTINATION" >&2
+  exit 73
+fi
 
-echo "Backup complete: $OUT_DIR"
+if command -v supabase >/dev/null 2>&1; then
+  SUPABASE=(supabase)
+elif command -v npx >/dev/null 2>&1; then
+  SUPABASE=(npx --yes supabase@2.111.0)
+else
+  echo "Supabase CLI or npx is required." >&2
+  exit 69
+fi
+
+mkdir -p "$BACKUP_ROOT"
+STAGING_DIR="$(mktemp -d "$BACKUP_ROOT/.database.partial.XXXXXX")"
+cleanup() {
+  rm -rf -- "$STAGING_DIR"
+}
+trap cleanup EXIT
+
+echo "Writing database roles..."
+"${SUPABASE[@]}" db dump "$TARGET_FLAG" --role-only --file "$STAGING_DIR/roles.sql"
+
+echo "Writing database schema..."
+"${SUPABASE[@]}" db dump "$TARGET_FLAG" --file "$STAGING_DIR/schema.sql"
+
+echo "Writing database data..."
+"${SUPABASE[@]}" db dump "$TARGET_FLAG" \
+  --data-only \
+  --use-copy \
+  --exclude "storage.buckets_vectors" \
+  --exclude "storage.vector_indexes" \
+  --file "$STAGING_DIR/data.sql"
+
+mv -- "$STAGING_DIR" "$DESTINATION"
+trap - EXIT
+
+echo "Database backup complete: $DESTINATION"

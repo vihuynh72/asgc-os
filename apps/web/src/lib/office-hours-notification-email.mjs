@@ -38,8 +38,6 @@ export function buildOfficeHoursNotificationEmail({ type, metadata, origin }) {
   const m = typeof metadata === "object" && metadata !== null ? metadata : {};
   const startsLocal = safeString(m.starts_at_local);
   const endsLocal = safeString(m.ends_at_local);
-  const checkinLocal = safeString(m.checkin_at_local);
-  const checkoutLocal = safeString(m.checkout_at_local);
   const tz = safeString(m.office_tz);
   const weekStart = safeString(m.week_start);
   const weekEnd = safeString(m.week_end);

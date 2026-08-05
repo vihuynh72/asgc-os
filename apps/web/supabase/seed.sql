@@ -1,3 +1,0 @@
--- Local seed placeholder.
--- This repo's migrations live in the top-level /supabase/migrations.
--- Add seed data here if/when needed for local dev.

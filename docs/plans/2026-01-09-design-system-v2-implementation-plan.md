@@ -1,6 +1,6 @@
 # Design System v2 + Kill Switch Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+> **Archive notice:** This dated plan records design intent at the time it was written. It is not current setup guidance or evidence that a task was completed. Paths, names, commands, and expected results may differ from the current repository. Current code, migrations, and the repository [`README`](../../README.md) take precedence.
 
 **Goal:** Ship a token-driven global aesthetic refresh (v2) with a cookie/env kill switch to revert to v1 instantly.
 
@@ -104,4 +104,3 @@ Behavior:
 Run: `npm test` (from `apps/web/`)  
 Run: `npm run build` (from `apps/web/`)  
 Expected: PASS.
-

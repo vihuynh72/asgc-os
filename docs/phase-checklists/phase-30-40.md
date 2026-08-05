@@ -1,5 +1,7 @@
 # Phase 30-40 Demo + Acceptance Checklists
 
+> **Historical evidence notice:** These are acceptance criteria recorded during the phased build. An item describes what should be demonstrated; it does not prove the check was run or passed. Use current code, applied migrations, automated checks, and a dated test record for present release evidence.
+
 ## Phase 30 — Agenda builder v1
 Demo checklist:
 - Generate agenda PDF for a meeting with accepted items.

@@ -1,6 +1,6 @@
 # Navbar Sliding Active Indicator Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use `superpowers:executing-plans` to implement this plan task-by-task.
+> **Archive notice:** This dated plan records design intent at the time it was written. It is not current setup guidance or evidence that a task was completed. Paths, names, commands, and expected results may differ from the current repository. Current code, migrations, and the repository [`README`](../../README.md) take precedence.
 
 **Goal:** Add a subtle, Apple-like sliding “active pill” indicator in the navbar that smoothly animates between items when navigating.
 
@@ -90,4 +90,3 @@ export function getActiveNavKey(pathname, primaryHrefs, hasMore) {
 - Clicking between primary links shows a smooth sliding pill.
 - Navigating to routes inside “More” highlights the “More” pill.
 - Reduced motion disables the sliding animation.
-

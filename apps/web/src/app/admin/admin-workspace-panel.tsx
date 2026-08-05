@@ -1380,7 +1380,11 @@ export function AdminWorkspacePanel({
   function downloadWeeklyHoursCsv() {
     const weekStart = startOfWeekMondayDateOnly(exportWeekStart) ?? startOfWeekMondayDateOnly(todayDateString());
     const qs = weekStart ? `?weekStart=${encodeURIComponent(weekStart)}` : "";
-    window.location.href = `/api/admin/office-hours/export-week${qs}`;
+    const link = document.createElement("a");
+    link.href = `/api/admin/office-hours/export-week${qs}`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
   }
 
   function openWeeklyHoursCsvView() {
@@ -3988,7 +3992,7 @@ export function AdminWorkspacePanel({
           <div className="text-sm font-medium">Bulk add members</div>
           <div className="mt-1 text-xs text-foreground/70">
             Paste an Outlook-style list like:{" "}
-            <span className="font-mono">&quot;ASGC President&quot; &lt;asgc.president@gcccd.edu&gt;; …</span>
+            <span className="font-mono">&quot;ASGC President&quot; &lt;president@example.invalid&gt;; …</span>
           </div>
           <textarea
             className="mt-2 min-h-28 w-full rounded-md border bg-transparent px-2 py-2 text-sm"

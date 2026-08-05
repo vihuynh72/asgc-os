@@ -1,6 +1,6 @@
 # Office Hours Strict Presence Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use `superpowers:executing-plans` to implement this plan task-by-task.
+> **Archive notice:** This dated plan records design intent at the time it was written. It is not current setup guidance or evidence that a task was completed. Paths, names, commands, and expected results may differ from the current repository. Current code, migrations, and the repository [`README`](../../README.md) take precedence.
 
 **Goal:** Enforce Office Hours presence reliably even if the user closes the tab by using 10-minute location heartbeats and server-side auto-checkout after 60 minutes without a successful heartbeat (excluding kiosk sessions).
 

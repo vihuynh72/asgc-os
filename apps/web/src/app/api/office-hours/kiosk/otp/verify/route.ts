@@ -25,10 +25,8 @@ function mapErrorStatus(message: string): number {
     case "otp_expired":
     case "otp_attempt_limit":
       return 400;
-    case "member_not_found":
-      return 404;
-    case "phone_not_allowed":
-      return 403;
+    case "invalid_member_or_phone":
+      return 400;
     case "kiosk_setup_incomplete":
       return 503;
     default:
@@ -69,7 +67,10 @@ export async function POST(request: NextRequest) {
       intent,
     });
   } catch (e) {
-    const message = normalizeOfficeHoursKioskError(e, "unknown");
+    const normalized = normalizeOfficeHoursKioskError(e, "unknown");
+    const message = ["member_not_found", "phone_not_allowed"].includes(normalized)
+      ? "invalid_member_or_phone"
+      : normalized;
     return NextResponse.json({ error: message }, { status: mapErrorStatus(message) });
   }
 }

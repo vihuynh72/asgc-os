@@ -1,6 +1,6 @@
 # Office Hours Single-Bucket (No In-Office vs On-Behalf) Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use `superpowers:executing-plans` to implement this plan task-by-task.
+> **Archive notice:** This dated plan records design intent at the time it was written. It is not current setup guidance or evidence that a task was completed. Paths, names, commands, and expected results may differ from the current repository. Current code, migrations, and the repository [`README`](../../README.md) take precedence.
 
 **Goal:** Remove the “in-office” requirement and “on-behalf” split so office hours are a single simple total, without breaking existing data or workflows.
 
@@ -102,4 +102,3 @@
 1. Deploy web (Vercel) after push to `main`.
 2. Ensure Supabase migration is applied.
 3. Re-run cron job and confirm reminder email contains only total metrics.
-

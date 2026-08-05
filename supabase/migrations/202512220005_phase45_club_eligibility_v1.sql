@@ -55,7 +55,8 @@ before update on public.config_club_eligibility
 for each row
 execute function public.set_updated_at();
 
-create or replace view public.v_club_charter_completion as
+create or replace view public.v_club_charter_completion
+with (security_invoker = true) as
 select
   c.id as club_id,
   count(i.item_key) filter (where i.is_required)::int as required_items,

@@ -1,6 +1,6 @@
 # Office Hours Admin Overrides Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+> **Archive notice:** This dated plan records design intent at the time it was written. It is not current setup guidance or evidence that a task was completed. Paths, names, commands, and expected results may differ from the current repository. Current code, migrations, and the repository [`README`](../../README.md) take precedence.
 
 **Goal:** Allow full admins/EVP to close open office-hour sessions, adjust end time (within check-in → now), choose whether hours count, and notify members with a clean Apple-like admin UX.
 

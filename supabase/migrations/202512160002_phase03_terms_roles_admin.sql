@@ -5,15 +5,9 @@ begin;
 
 create extension if not exists pgcrypto;
 
--- 0) Seed allowlist for initial admins (idempotent)
-insert into public.invites_allowlist (email, is_active, notes)
-values
-  ('asgc.president@gcccd.edu', true, 'PHASE 03 seed: President email'),
-  ('vihuynh27.work@gmail.com', true, 'PHASE 03 seed: Advisor (bootstrap)')
-on conflict (email_normalized)
-do update set
-  is_active = true,
-  revoked_at = null;
+-- 0) Initial administrators are intentionally not identity-bound in source.
+-- Create allowlist entries and bootstrap role grants through the admin workflow
+-- or the parameterized bootstrap script after deployment.
 
 -- 1) Terms
 create table if not exists public.terms (
@@ -178,17 +172,8 @@ create unique index if not exists bootstrap_role_grants_active_uniq
 alter table public.bootstrap_role_grants enable row level security;
 -- Intentionally no client-facing policies. Service role / migration owner only.
 
--- Seed bootstrap grants (idempotent).
--- - President email gets PRESIDENT for the current term (resolved at consume time by using term_id = current term).
--- - Vihuynh email gets ADVISOR globally.
-insert into public.bootstrap_role_grants (email, role_key, term_id, notes)
-values
-  ('asgc.president@gcccd.edu', 'president', (select id from public.terms where is_current limit 1), 'PHASE 03 seed: President bootstrap role'),
-  ('vihuynh27.work@gmail.com', 'advisor', null, 'PHASE 03 seed: Global advisor bootstrap role')
-on conflict (email_normalized, role_key, term_id)
-where is_active and consumed_at is null
-do update set
-  is_active = true;
+-- Bootstrap grants start empty so a fresh deployment cannot inherit a real
+-- person's privileged identity from repository history.
 
 -- 5) Extend auth trigger to also consume bootstrap role grants on first login.
 -- This keeps bootstrap server-side and auditable.
