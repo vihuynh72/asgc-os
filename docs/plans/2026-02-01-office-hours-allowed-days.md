@@ -1,6 +1,6 @@
 # Office Hours Allowed Days Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use `superpowers:executing-plans` to implement this plan task-by-task.
+> **Archive notice:** This dated plan records design intent at the time it was written. It is not current setup guidance or evidence that a task was completed. Paths, names, commands, and expected results may differ from the current repository. Current code, migrations, and the repository [`README`](../../README.md) take precedence.
 
 **Goal:** Let admins configure which days/dates Office Hours check-ins are allowed (default Mon–Fri), with a one-click “Allow weekends” shortcut for testing.
 
@@ -89,4 +89,3 @@
 - Add a small unit test for weekday/date parsing/validation helpers (client-side), if new helpers added.
 - Run: `npm test` in `apps/web` (expect PASS)
 - Run: `npm run build` in `apps/web` (expect success)
-

@@ -734,4 +734,13 @@ grant execute on function public.admin_lab_check_in_office_hours(uuid, double pr
 grant execute on function public.admin_lab_record_office_hours_presence_ping(uuid, timestamptz, timestamptz, boolean, timestamptz) to service_role;
 grant execute on function public.admin_lab_record_office_hours_presence(uuid, timestamptz, timestamptz, boolean, double precision, double precision, timestamptz) to service_role;
 
+-- These owner-rights helpers accept an explicit user id and must only be
+-- reachable through the checked member and admin wrapper functions above.
+revoke all on function public._office_hours_check_in_core(uuid, double precision, double precision, timestamptz, boolean)
+  from PUBLIC, anon, authenticated, service_role;
+revoke all on function public._office_hours_presence_ping_core(uuid, timestamptz, boolean)
+  from PUBLIC, anon, authenticated, service_role;
+revoke all on function public._office_hours_presence_core(uuid, double precision, double precision, timestamptz, boolean)
+  from PUBLIC, anon, authenticated, service_role;
+
 commit;

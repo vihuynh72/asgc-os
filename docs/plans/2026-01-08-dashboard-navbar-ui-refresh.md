@@ -1,6 +1,6 @@
 # Dashboard + Navbar UI Refresh Implementation Plan
 
-> **For Codex:** If executing task-by-task, use `superpowers:executing-plans` for checkpoints. (This repo’s system instructions say not to `git commit` unless explicitly requested.)
+> **Archive notice:** This dated plan records design intent at the time it was written. It is not current setup guidance or evidence that a task was completed. Paths, names, commands, and expected results may differ from the current repository. Current code, migrations, and the repository [`README`](../../README.md) take precedence.
 
 **Goal:** Make the `/dashboard` and navbar feel Apple-simple: fewer visible choices, calmer surfaces, clearer hierarchy, and better readability.
 
@@ -118,4 +118,3 @@
 - Desktop: primary links limited to 4 + More menu + avatar menu.
 - Mobile: hamburger shows all destinations grouped; nothing is missing.
 - Dashboard: text contrast improved; surfaces look calmer; no broken links.
-

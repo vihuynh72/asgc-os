@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
+import { useRouter } from "next/navigation";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 import {
   isMissingAuthSessionError,
@@ -13,6 +14,7 @@ import {
  * Shows modal prompting re-authentication when roles are granted or revoked.
  */
 export function RoleChangeListener() {
+  const router = useRouter();
   const [showModal, setShowModal] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
   const baselineRef = useRef<string | null>(null);
@@ -39,12 +41,12 @@ export function RoleChangeListener() {
     try {
       const supabase = getSupabaseBrowserClient();
       await supabase.auth.signOut();
-      window.location.href = "/login?reason=role_changed";
     } catch (e) {
       console.error("Sign out failed:", e);
-      window.location.href = "/login?reason=role_changed";
     }
-  }, []);
+    router.replace("/login?reason=role_changed");
+    router.refresh();
+  }, [router]);
 
   useEffect(() => {
     const supabase = getSupabaseBrowserClient();

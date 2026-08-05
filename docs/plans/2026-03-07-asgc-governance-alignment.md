@@ -1,6 +1,6 @@
 # ASGC Governance Alignment Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+> **Archive notice:** This dated plan records design intent at the time it was written. It is not current setup guidance or evidence that a task was completed. Paths, names, commands, and expected results may differ from the current repository. Current code, migrations, and the repository [`README`](../../README.md) take precedence.
 
 **Goal:** Align ASGC OS with the February 27, 2026 ASGC Constitution and Bylaws, with immediate focus on officer identities, office-hour rules, and the admin/reporting logic that depends on them.
 

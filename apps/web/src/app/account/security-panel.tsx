@@ -3,6 +3,7 @@
 import QRCode from "qrcode";
 import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
+import { useRouter } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
@@ -45,7 +46,12 @@ function readTotpFactors(raw: unknown): TotpFactor[] {
       factor_type: safeString(row?.factor_type),
     }))
     .filter((row) => row.id && row.factor_type === "totp")
-    .map(({ factor_type: _ignored, ...rest }) => rest);
+    .map((row) => ({
+      id: row.id,
+      status: row.status,
+      friendly_name: row.friendly_name,
+      created_at: row.created_at,
+    }));
 }
 
 function normalizeFriendlyName(value: string | null | undefined): string {
@@ -62,6 +68,7 @@ function generateDefaultFriendlyName(existing: TotpFactor[]): string {
 }
 
 export function SecurityPanel() {
+  const router = useRouter();
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [message, setMessage] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
@@ -263,7 +270,7 @@ export function SecurityPanel() {
         )}
         {factors.some((f) => f.status === "unverified") ? (
           <p className="text-xs text-foreground/60">
-            Pending devices are not active until verified. Finish setup on <button type="button" className="underline" onClick={() => window.location.assign("/mfa?redirectTo=/account")}>the 2FA page</button>.
+            Pending devices are not active until verified. Finish setup on <button type="button" className="underline" onClick={() => router.push("/mfa?redirectTo=/account")}>the 2FA page</button>.
           </p>
         ) : null}
       </div>

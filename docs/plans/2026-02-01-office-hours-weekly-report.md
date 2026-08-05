@@ -1,6 +1,6 @@
 # Office Hours Weekly Report Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+> **Archive notice:** This dated plan records design intent at the time it was written. It is not current setup guidance or evidence that a task was completed. Paths, names, commands, and expected results may differ from the current repository. Current code, migrations, and the repository [`README`](../../README.md) take precedence.
 
 **Goal:** Produce an HR-readable weekly office hours report (role + name hierarchy, progress, and clear “missing vs complete”) with a clean CSV export.
 
@@ -55,4 +55,3 @@
 **Steps:**
 1. Run tests: `cd apps/web && npm test`
 2. Run build/typecheck: `cd apps/web && npm run build`
-

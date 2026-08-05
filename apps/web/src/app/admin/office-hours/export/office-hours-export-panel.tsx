@@ -2,6 +2,7 @@
 
 import type { ChangeEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 
 import { AdminEmptyState } from "@/components/admin/admin-empty-state";
 import { AdminStatStrip } from "@/components/admin/admin-stat-strip";
@@ -81,6 +82,7 @@ function statusPill(statusKey: string): { label: string; tone: "critical" | "war
 }
 
 export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart: string | null }) {
+  const router = useRouter();
   const [anchorDate, setAnchorDate] = useState<string>(() => normalizeDateOnlyString(initialWeekStart) ?? todayDateString());
   const [rows, setRows] = useState<AdminWeeklyHoursPreviewRow[] | null>(null);
   const [status, setStatus] = useState<string>("");
@@ -150,7 +152,11 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
 
   function downloadCsv() {
     const qs = weekStartResolved ? `?weekStart=${encodeURIComponent(weekStartResolved)}` : "";
-    window.location.href = `/api/admin/office-hours/export-week${qs}`;
+    const link = document.createElement("a");
+    link.href = `/api/admin/office-hours/export-week${qs}`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
   }
 
   function openCsvView() {
@@ -294,7 +300,7 @@ export function OfficeHoursExportPanel({ initialWeekStart }: { initialWeekStart:
         description={`Week starts ${weekStartResolved ?? "—"} • Blank-name roles are marked as Vacant.`}
         action={
           <div className="flex flex-wrap items-center gap-2">
-            <Button variant="outline" onClick={() => window.location.assign("/admin/office-hours")}>
+            <Button variant="outline" onClick={() => router.push("/admin/office-hours")}>
               Calendar view
             </Button>
             <Button variant="ghost" onClick={openCsvView}>

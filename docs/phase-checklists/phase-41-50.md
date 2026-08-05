@@ -1,5 +1,7 @@
 # Phase 41-50 Demo + Acceptance Checklists
 
+> **Historical evidence notice:** These are acceptance criteria recorded during the phased build. An item describes what should be demonstrated; it does not prove the check was run or passed. Use current code, applied migrations, automated checks, and a dated test record for present release evidence.
+
 ## Phase 41 - Clubs registry v1
 Demo checklist:
 - Create a club record with advisor info and membership counts.

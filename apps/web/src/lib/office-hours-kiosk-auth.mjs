@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import net from "node:net";
 
 import { officeHoursRoleRank } from "./office-hours-roles.mjs";
 
@@ -58,6 +59,44 @@ export function verifyKioskOtpCode({ challengeId, code, hash, secret }) {
   const hashBuffer = Buffer.from(String(hash ?? ""));
   if (expectedBuffer.length !== hashBuffer.length) return false;
   return crypto.timingSafeEqual(expectedBuffer, hashBuffer);
+}
+
+export function normalizeKioskRequestIp(raw) {
+  let candidate = String(raw ?? "").trim();
+  if (!candidate) return null;
+
+  if (candidate.startsWith("[") && candidate.includes("]")) {
+    candidate = candidate.slice(1, candidate.indexOf("]"));
+  } else {
+    const ipv4WithPort = candidate.match(/^(.+):(\d+)$/);
+    if (ipv4WithPort && net.isIP(ipv4WithPort[1]) === 4) {
+      candidate = ipv4WithPort[1];
+    }
+  }
+
+  const version = net.isIP(candidate);
+  if (version === 4) return candidate;
+  if (version !== 6) return null;
+
+  try {
+    const hostname = new URL(`http://[${candidate}]/`).hostname;
+    return hostname.slice(1, -1).toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+export function hashKioskOtpRateLimitKey({ scope, subject, secret }) {
+  const normalizedScope = String(scope ?? "").trim().toLowerCase();
+  if (!new Set(["ip", "member", "phone"]).has(normalizedScope)) {
+    throw new Error("invalid_otp_rate_limit_scope");
+  }
+
+  const normalizedSubject = String(subject ?? "").trim().toLowerCase() || "unknown";
+  return crypto
+    .createHmac("sha256", String(secret ?? ""))
+    .update(`office-hours-kiosk-otp-rate-limit:v1:${normalizedScope}:${normalizedSubject}`)
+    .digest("hex");
 }
 
 export function computeNextCheckoutReminderAt({

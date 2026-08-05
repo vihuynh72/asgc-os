@@ -681,4 +681,9 @@ $$;
 revoke all on function public.enqueue_weekly_hours_reminders(timestamptz) from public;
 grant execute on function public.enqueue_weekly_hours_reminders(timestamptz) to service_role;
 
+-- CREATE OR REPLACE preserves the private privilege set from the earlier
+-- migration, and this explicit revoke prevents future privilege drift.
+revoke all on function public._office_hours_check_in_core(uuid, double precision, double precision, timestamptz, boolean)
+  from PUBLIC, anon, authenticated, service_role;
+
 commit;

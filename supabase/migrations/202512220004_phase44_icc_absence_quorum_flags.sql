@@ -215,7 +215,8 @@ $$;
 revoke all on function public.icc_quorum_summary(uuid) from public;
 grant execute on function public.icc_quorum_summary(uuid) to authenticated;
 
-create or replace view public.v_icc_quorum_summary as
+create or replace view public.v_icc_quorum_summary
+with (security_invoker = true) as
 select qs.*
 from public.icc_meetings m
 join lateral public.icc_quorum_summary(m.id) qs on true;

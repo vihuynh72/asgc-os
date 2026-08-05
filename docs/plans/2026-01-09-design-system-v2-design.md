@@ -1,5 +1,7 @@
 # Design System v2 (Apple-Like) + Kill Switch
 
+> **Archive notice:** This dated plan records design intent at the time it was written. It is not current setup guidance or evidence that a task was completed. Paths, names, commands, and expected results may differ from the current repository. Current code, migrations, and the repository [`README`](../../README.md) take precedence.
+
 **Goal:** Upgrade the global aesthetic (typography, surfaces, radii, shadows, and neutrals) to feel modern, Apple-like, and low-cognitive-load, while keeping a fast rollback path.
 
 ## Principles
@@ -28,4 +30,3 @@ The design system is driven by CSS variables in `apps/web/src/app/globals.css`:
 ## Dashboard “Get Started” Hint
 
 For truly new users (no hours logged this week), the dashboard surfaces a small inline hint with a “Log hours” CTA and a dismiss action stored locally (localStorage). It auto-hides once hours are logged.
-

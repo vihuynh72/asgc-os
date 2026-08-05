@@ -14,14 +14,14 @@ import {
 } from "../src/lib/office-hours-weekly-report.mjs";
 
 test("inferRoleLabel does not classify VPs as President", () => {
-  assert.equal(inferRoleLabel({ email: "asgc.vpfinance@gcccd.edu", roleKey: "executive" }), "Vice President of Finance");
-  assert.equal(inferRoleLabel({ email: "asgc.execvp@gcccd.edu", roleKey: "executive" }), "Executive Vice President");
-  assert.equal(inferRoleLabel({ email: "asgc.president@gcccd.edu", roleKey: "president" }), "President");
+  assert.equal(inferRoleLabel({ email: "asgc.vpfinance@example.invalid", roleKey: "executive" }), "Vice President of Finance");
+  assert.equal(inferRoleLabel({ email: "asgc.execvp@example.invalid", roleKey: "executive" }), "Executive Vice President");
+  assert.equal(inferRoleLabel({ email: "asgc.president@example.invalid", roleKey: "president" }), "President");
 });
 
 test("inferRoleLabel maps the board affairs executive title from legacy ASGC email patterns", () => {
   assert.equal(
-    inferRoleLabel({ email: "asgc.dirboardaffairs@gcccd.edu", roleKey: "executive" }),
+    inferRoleLabel({ email: "asgc.dirboardaffairs@example.invalid", roleKey: "executive" }),
     "Director of Board Affairs",
   );
 });
@@ -32,9 +32,9 @@ test("sortWeeklyReportRows orders president before executives (even if executive
       user_id: "1",
       week_start: "2026-01-26",
       role_key: "executive",
-      email: "asgc.vpfinance@gcccd.edu",
+      email: "asgc.vpfinance@example.invalid",
       role: "Vice President of Finance",
-      name: "Khaley Kaesser",
+      name: "Executive Member",
       required_hours: 8,
       total_hours: 0,
       missing_hours: 8,
@@ -43,9 +43,9 @@ test("sortWeeklyReportRows orders president before executives (even if executive
       user_id: "2",
       week_start: "2026-01-26",
       role_key: "president",
-      email: "asgc.president@gcccd.edu",
+      email: "asgc.president@example.invalid",
       role: "President",
-      name: "Vi Huynh",
+      name: "President Member",
       required_hours: 10,
       total_hours: 4.12,
       missing_hours: 5.88,
@@ -54,14 +54,14 @@ test("sortWeeklyReportRows orders president before executives (even if executive
 
   const sorted = sortWeeklyReportRows(rows);
   assert.equal(sorted[0].role_key, "president");
-  assert.equal(sorted[0].name, "Vi Huynh");
+  assert.equal(sorted[0].name, "President Member");
 });
 
 test("sortWeeklyReportRows orders board members by number when present", () => {
   const rows = [
-    { user_id: "1", week_start: "2026-01-26", role_key: "board_member", email: "asgc.boardmember4@gcccd.edu", role: "Board Member 4" },
-    { user_id: "2", week_start: "2026-01-26", role_key: "board_member", email: "asgc.boardmember1@gcccd.edu", role: "Board Member 1" },
-    { user_id: "3", week_start: "2026-01-26", role_key: "board_member", email: "asgc.boardmember12@gcccd.edu", role: "Board Member 12" },
+    { user_id: "1", week_start: "2026-01-26", role_key: "board_member", email: "asgc.boardmember4@example.invalid", role: "Board Member 4" },
+    { user_id: "2", week_start: "2026-01-26", role_key: "board_member", email: "asgc.boardmember1@example.invalid", role: "Board Member 1" },
+    { user_id: "3", week_start: "2026-01-26", role_key: "board_member", email: "asgc.boardmember12@example.invalid", role: "Board Member 12" },
   ];
 
   const sorted = sortWeeklyReportRows(rows);
@@ -88,7 +88,7 @@ test("sortWeeklyReportRows keeps advisors ahead of all term-scoped Office Hours 
       user_id: "1",
       week_start: "2026-04-06",
       role_key: "volunteer",
-      email: "volunteer@gcccd.edu",
+      email: "volunteer@example.invalid",
       role: "Volunteer",
       name: "Volunteer Person",
       required_hours: 0,
@@ -99,7 +99,7 @@ test("sortWeeklyReportRows keeps advisors ahead of all term-scoped Office Hours 
       user_id: "2",
       week_start: "2026-04-06",
       role_key: "advisor",
-      email: "advisor@gcccd.edu",
+      email: "advisor@example.invalid",
       role: "Advisor",
       name: "Advisor Person",
       required_hours: 0,
@@ -110,7 +110,7 @@ test("sortWeeklyReportRows keeps advisors ahead of all term-scoped Office Hours 
       user_id: "3",
       week_start: "2026-04-06",
       role_key: "president",
-      email: "president@gcccd.edu",
+      email: "president@example.invalid",
       role: "President",
       name: "President Person",
       required_hours: 10,
@@ -127,7 +127,7 @@ test("sortWeeklyReportRows keeps advisors ahead of all term-scoped Office Hours 
 });
 
 test("inferRoleLabel returns advisor for the global advisor bucket", () => {
-  assert.equal(inferRoleLabel({ email: "advisor@gcccd.edu", roleKey: "advisor" }), "Advisor");
+  assert.equal(inferRoleLabel({ email: "advisor@example.invalid", roleKey: "advisor" }), "Advisor");
 });
 
 test("completionPercent handles required and not-required rows", () => {
@@ -138,8 +138,8 @@ test("completionPercent handles required and not-required rows", () => {
 
 test("deriveRosterStatus maps vacant and no-show rows", () => {
   assert.equal(deriveRosterStatus({ name: "", required_hours: 6, total_hours: 0 }), "vacant");
-  assert.equal(deriveRosterStatus({ name: "Ciana Garcia", required_hours: 6, total_hours: 0 }), "no_show");
-  assert.equal(deriveRosterStatus({ name: "Ciana Garcia", required_hours: 6, total_hours: 1 }), "assigned");
+  assert.equal(deriveRosterStatus({ name: "Board Member Example", required_hours: 6, total_hours: 0 }), "no_show");
+  assert.equal(deriveRosterStatus({ name: "Board Member Example", required_hours: 6, total_hours: 1 }), "assigned");
 });
 
 test("hoursStatusLabel and hoursFlagLabel distinguish vacant/no-show from generic missing", () => {

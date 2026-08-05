@@ -206,7 +206,11 @@ export function OfficeHoursCsvPanel({ initialWeekStart }: { initialWeekStart: st
 
   function downloadCsv() {
     const qs = weekStartResolved ? `?weekStart=${encodeURIComponent(weekStartResolved)}` : "";
-    window.location.href = `/api/admin/office-hours/export-week${qs}`;
+    const link = document.createElement("a");
+    link.href = `/api/admin/office-hours/export-week${qs}`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
   }
 
   function openReport() {

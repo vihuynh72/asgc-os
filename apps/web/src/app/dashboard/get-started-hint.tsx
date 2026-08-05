@@ -1,10 +1,33 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 
 import { ButtonLink } from "@/components/ui/button-link";
 import { Button } from "@/components/ui/button";
 import { DASHBOARD_GET_STARTED_STORAGE_KEY, shouldShowDashboardGetStarted } from "@/lib/dashboard-get-started.mjs";
+
+const DASHBOARD_GET_STARTED_DISMISSED_EVENT = "asgc:dashboard-get-started-dismissed";
+
+function subscribeToDismissedState(onStoreChange: () => void) {
+  function handleStorage(event: StorageEvent) {
+    if (event.key === DASHBOARD_GET_STARTED_STORAGE_KEY) onStoreChange();
+  }
+
+  window.addEventListener("storage", handleStorage);
+  window.addEventListener(DASHBOARD_GET_STARTED_DISMISSED_EVENT, onStoreChange);
+  return () => {
+    window.removeEventListener("storage", handleStorage);
+    window.removeEventListener(DASHBOARD_GET_STARTED_DISMISSED_EVENT, onStoreChange);
+  };
+}
+
+function getDismissedSnapshot() {
+  return window.localStorage.getItem(DASHBOARD_GET_STARTED_STORAGE_KEY) === "1";
+}
+
+function getDismissedServerSnapshot() {
+  return true;
+}
 
 export function DashboardGetStartedHint({
   totalMinutes,
@@ -13,13 +36,12 @@ export function DashboardGetStartedHint({
   totalMinutes: number;
   hasOpenSession: boolean;
 }) {
-  const [dismissed, setDismissed] = useState<boolean | null>(null);
+  const dismissed = useSyncExternalStore(
+    subscribeToDismissedState,
+    getDismissedSnapshot,
+    getDismissedServerSnapshot,
+  );
 
-  useEffect(() => {
-    setDismissed(window.localStorage.getItem(DASHBOARD_GET_STARTED_STORAGE_KEY) === "1");
-  }, []);
-
-  if (dismissed === null) return null;
   if (hasOpenSession) return null;
 
   if (!shouldShowDashboardGetStarted({ totalMinutes, dismissed })) return null;
@@ -40,7 +62,7 @@ export function DashboardGetStartedHint({
           size="sm"
           onClick={() => {
             window.localStorage.setItem(DASHBOARD_GET_STARTED_STORAGE_KEY, "1");
-            setDismissed(true);
+            window.dispatchEvent(new Event(DASHBOARD_GET_STARTED_DISMISSED_EVENT));
           }}
         >
           Dismiss
@@ -49,4 +71,3 @@ export function DashboardGetStartedHint({
     </div>
   );
 }
-

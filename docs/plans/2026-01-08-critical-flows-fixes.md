@@ -1,6 +1,6 @@
 # Critical Broken Flows Fixes Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+> **Archive notice:** This dated plan records design intent at the time it was written. It is not current setup guidance or evidence that a task was completed. Paths, names, commands, and expected results may differ from the current repository. Current code, migrations, and the repository [`README`](../../README.md) take precedence.
 
 **Goal:** Fix agenda PDF preview/download links, board vote recording, and expense logging usability (budget lines + stale lookups).
 
@@ -138,4 +138,3 @@ Run:
 
 Expected:
 - All commands succeed; build may show warnings, but no errors.
-

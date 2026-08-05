@@ -1,57 +1,61 @@
-ASGC OS web app (Next.js App Router + TypeScript).
+# ASGC OS Web Application
 
-This folder is the Next.js app for the repo.
+This directory contains the Next.js App Router application, API routes, shared components, and unit tests. Repository-wide setup, architecture, governance, and release information starts in [`../../README.md`](../../README.md).
 
-For overall architecture, phases, and the “source of truth” build packet, start at the repo root README:
-- [../../README.md](../../README.md)
+## Setup
 
-## Local dev
+From the repository root:
 
-From this directory:
-
-```bash
-npm install
-cp .env.example .env.local
-npm run dev
+```sh
+nvm use
+npm --prefix apps/web ci
+test -f apps/web/.env.local || cp apps/web/.env.example apps/web/.env.local
+npm --prefix apps/web run dev
 ```
 
-### Required env
+Open `http://localhost:3000`.
 
-Public (browser-safe):
+## Environment groups
+
+Required for authenticated application routes:
+
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-
-Server-only:
 - `SUPABASE_SERVICE_ROLE_KEY`
-- `CRON_SECRET` (used for `/api/cron/*` routes; scheduled jobs send `Authorization: Bearer $CRON_SECRET`)
 
-### Scheduled jobs (cron)
+Required only for their integrations:
 
-This repo runs scheduled Office Hours enforcement and notifications by calling `/api/cron/office-hours-reminders`.
+- Cron: `CRON_SECRET`
+- Email: `EMAIL_PROVIDER`, `EMAIL_FROM`, `RESEND_API_KEY`
+- SMS: `SMS_PROVIDER`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_MESSAGING_SERVICE_SID`, `OFFICE_HOURS_KIOSK_OTP_SECRET`
+- AI helpers: `OPENAI_API_KEY`, optional `OPENAI_MODEL`
+- UI default: optional `DESIGN_DEFAULT=v1|v2`
 
-- Vercel Cron Jobs can be plan-limited and have precision limits on Hobby.
-- Default approach here: run the schedule from GitHub Actions (`.github/workflows/office-hours-cron.yml`).
-- When using GitHub Actions, set repo secrets: `PROD_BASE_URL` (your deployed site URL) and `CRON_SECRET`.
-- The Office Hours “presence timeout” uses a 60-minute cutoff based on the last successful heartbeat, but the session may not be marked closed in the DB/UI until the next scheduled run (unless the user returns and triggers a heartbeat).
+Use [`.env.example`](.env.example) as the key inventory. Only `NEXT_PUBLIC_*` values are browser-visible. Every other value must remain server-only.
 
-PHASE 10 notifications (server-only):
-- `EMAIL_PROVIDER` (set to `resend`)
-- `EMAIL_FROM`
-- `RESEND_API_KEY`
+## Commands
 
-### Useful commands
-
-```bash
+```sh
+npm run dev
 npm run lint
-npx tsc -p tsconfig.json --noEmit
+npm run typecheck
+npm test
+npm run check
+npm run build
+npm audit --omit=dev
 ```
+
+`npm run check` is the local lint, TypeScript, and unit-test gate. Unit tests mock external providers and do not prove that a live Supabase project, cron job, email provider, SMS provider, storage bucket, or OpenAI account is configured.
+
+## Scheduled job
+
+The production Office Hours scheduler calls `/api/cron/office-hours-reminders` every five minutes, the shortest interval supported by GitHub Actions. The workflow requires repository secrets named `PROD_BASE_URL` and `CRON_SECRET`. The deployed application must use the same `CRON_SECRET`.
 
 ## Key locations
 
-- App routes: [src/app](src/app)
-- API routes: [src/app/api](src/app/api)
-- Proxy (auth/admin gates): [src/proxy.ts](src/proxy.ts)
-- Supabase clients:
-	- Browser: [src/lib/supabaseClient.ts](src/lib/supabaseClient.ts)
-	- Server components: [src/lib/supabaseServerComponent.ts](src/lib/supabaseServerComponent.ts)
-	- Service role (admin): [src/lib/supabaseAdmin.ts](src/lib/supabaseAdmin.ts)
+- Application pages and route handlers: [`src/app`](src/app)
+- Shared UI: [`src/components`](src/components)
+- Application and provider helpers: [`src/lib`](src/lib)
+- Auth and admin route gating: [`src/proxy.ts`](src/proxy.ts)
+- Tests: [`test`](test)
+- Database configuration and migrations: [`../../supabase`](../../supabase)

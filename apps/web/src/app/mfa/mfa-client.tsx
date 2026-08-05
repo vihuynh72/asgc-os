@@ -2,7 +2,7 @@
 
 import QRCode from "qrcode";
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Image from "next/image";
 
 import { Button } from "@/components/ui/button";
@@ -58,7 +58,12 @@ function readTotpFactors(raw: unknown): TotpList {
       factor_type: safeString(row?.factor_type),
     }))
     .filter((row) => row.id && row.factor_type === "totp")
-    .map(({ factor_type: _ignored, ...rest }) => rest);
+    .map((row) => ({
+      id: row.id,
+      status: row.status,
+      friendly_name: row.friendly_name,
+      created_at: row.created_at,
+    }));
 }
 
 function normalizeFriendlyName(value: string | null | undefined): string {
@@ -75,6 +80,7 @@ function generateDefaultFriendlyName(existing: TotpList): string {
 }
 
 export function MfaClient() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const redirectTo = useMemo(() => safePostAuthRedirectPath(searchParams.get("redirectTo")), [searchParams]);
 
@@ -197,7 +203,7 @@ export function MfaClient() {
       const { error } = await supabase.auth.mfa.verify({ factorId, challengeId: challenge, code: cleaned });
       if (error) throw error;
       await loadState();
-      window.location.assign(redirectTo);
+      router.push(redirectTo);
     } catch (e) {
       setChallengeId(null);
       const msg = e instanceof Error ? e.message : "Could not verify the code.";
@@ -256,10 +262,10 @@ export function MfaClient() {
         <div className="rounded-xl border bg-background p-5 shadow-sm">
           <p className="text-sm text-foreground/70">2FA verified.</p>
           <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center">
-            <Button type="button" onClick={() => window.location.assign(redirectTo)}>
+            <Button type="button" onClick={() => router.push(redirectTo)}>
               Continue
             </Button>
-            <Button type="button" variant="outline" onClick={() => window.location.assign("/account")}>
+            <Button type="button" variant="outline" onClick={() => router.push("/account")}>
               Security settings
             </Button>
           </div>
@@ -387,7 +393,7 @@ export function MfaClient() {
 
             <p className="text-xs text-foreground/60">
               {hasVerifiedTotp ? "Add a backup authenticator in " : "If you started setup earlier, verify the pending device here, or "}
-              <button type="button" className="underline" onClick={() => window.location.assign("/account")}>
+              <button type="button" className="underline" onClick={() => router.push("/account")}>
                 Account settings
               </button>
               .

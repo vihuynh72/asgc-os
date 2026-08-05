@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
-import { getSmsEnv } from "@/lib/envServer";
+import { getKioskOtpSecret, getSmsEnv } from "@/lib/envServer";
+import { normalizeKioskRequestIp } from "@/lib/office-hours-kiosk-auth.mjs";
 import { normalizeOfficeHoursKioskError } from "@/lib/office-hours-kiosk-setup.mjs";
 import { buildKioskOtpSmsText } from "@/lib/office-hours-kiosk-messages.mjs";
 import { sendSms } from "@/lib/smsSender.mjs";
@@ -9,6 +10,7 @@ import { getSupabaseAdminClient } from "@/lib/supabaseAdmin";
 
 import {
   createOrRefreshKioskOtpChallenge,
+  consumeKioskOtpRateLimit,
   getKioskSmsConfig,
   getMatchedKioskPhone,
   getOpenKioskSession,
@@ -18,20 +20,20 @@ export const runtime = "nodejs";
 
 const BodySchema = z.object({
   userId: z.string().uuid(),
-  phone: z.string().min(7),
+  phone: z.string().min(7).max(64),
 });
 
 function mapErrorStatus(message: string): number {
   switch (message) {
     case "invalid_phone":
       return 400;
-    case "member_not_found":
-      return 404;
-    case "phone_not_allowed":
+    case "invalid_member_or_phone":
+      return 400;
     case "sms_disabled":
+      return 403;
     case "otp_rate_limited":
     case "otp_resend_too_soon":
-      return 403;
+      return 429;
     case "kiosk_setup_incomplete":
       return 503;
     default:
@@ -39,22 +41,35 @@ function mapErrorStatus(message: string): number {
   }
 }
 
-function requestIp(request: NextRequest): string | null {
+function requestIp(request: NextRequest): string {
+  const vercelForwarded = request.headers.get("x-vercel-forwarded-for");
   const forwarded = request.headers.get("x-forwarded-for");
-  if (!forwarded) return null;
-  const [first] = forwarded.split(",");
-  return first?.trim() || null;
+  const [vercelFirst] = vercelForwarded?.split(",") ?? [];
+  const [first] = forwarded?.split(",") ?? [];
+  return (
+    normalizeKioskRequestIp(vercelFirst) ??
+    normalizeKioskRequestIp(first) ??
+    normalizeKioskRequestIp(request.headers.get("x-real-ip")) ??
+    "unknown"
+  );
 }
 
 export async function POST(request: NextRequest) {
-  const parsed = BodySchema.safeParse(await request.json().catch(() => null));
-  if (!parsed.success) {
-    return NextResponse.json({ error: "invalid_request" }, { status: 400 });
-  }
-
   const admin = getSupabaseAdminClient();
 
   try {
+    const otpSecret = getKioskOtpSecret();
+    await consumeKioskOtpRateLimit(admin, {
+      scope: "ip",
+      subject: requestIp(request),
+      secret: otpSecret,
+    });
+
+    const parsed = BodySchema.safeParse(await request.json().catch(() => null));
+    if (!parsed.success) {
+      return NextResponse.json({ error: "invalid_request" }, { status: 400 });
+    }
+
     const { userId, phone } = parsed.data;
     const matchedPhone = await getMatchedKioskPhone(admin, userId, phone);
     const openSession = await getOpenKioskSession(admin, userId);
@@ -68,13 +83,23 @@ export async function POST(request: NextRequest) {
     }
 
     const smsEnv = getSmsEnv();
+    await consumeKioskOtpRateLimit(admin, {
+      scope: "member",
+      subject: userId,
+      secret: otpSecret,
+    });
+    await consumeKioskOtpRateLimit(admin, {
+      scope: "phone",
+      subject: matchedPhone.phoneE164,
+      secret: otpSecret,
+    });
+
     const challenge = await createOrRefreshKioskOtpChallenge(admin, {
       userId,
       phoneE164: matchedPhone.phoneE164,
       intent,
       ttlMinutes: config.otpTtlMinutes,
       otpSecret: smsEnv.OFFICE_HOURS_KIOSK_OTP_SECRET,
-      requestIp: requestIp(request),
       userAgent: request.headers.get("user-agent"),
     });
 
@@ -134,7 +159,10 @@ export async function POST(request: NextRequest) {
       expiresAt: challenge.expiresAtIso,
     });
   } catch (e) {
-    const message = normalizeOfficeHoursKioskError(e, "unknown");
+    const normalized = normalizeOfficeHoursKioskError(e, "unknown");
+    const message = ["member_not_found", "phone_not_allowed"].includes(normalized)
+      ? "invalid_member_or_phone"
+      : normalized;
     return NextResponse.json({ error: message }, { status: mapErrorStatus(message) });
   }
 }

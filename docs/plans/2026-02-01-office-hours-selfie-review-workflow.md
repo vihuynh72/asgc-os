@@ -1,6 +1,6 @@
 # Office Hours Selfie Review Workflow Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use `superpowers:executing-plans` to implement this plan task-by-task.
+> **Archive notice:** This dated plan records design intent at the time it was written. It is not current setup guidance or evidence that a task was completed. Paths, names, commands, and expected results may differ from the current repository. Current code, migrations, and the repository [`README`](../../README.md) take precedence.
 
 **Goal:** Make kiosk selfie review fast and safe: easy access from Office Hours, richer context, and admin “Quarantine / Restore” actions (recoverable for 30 days).
 
@@ -88,4 +88,3 @@
 **Steps:**
 - Run `npm test` in `apps/web` (expect PASS)
 - Run `npm run build` in `apps/web` (expect success)
-

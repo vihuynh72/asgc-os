@@ -189,9 +189,9 @@ export function AdminCommunicationsLab({
       .then((nextSources) => {
         if (cancelled) return;
         setSources(nextSources);
-        if (!nextSources.some((source) => source.id === sourceId)) {
-          setSourceId(nextSources[0]?.id ?? "");
-        }
+        setSourceId((currentSourceId) =>
+          nextSources.some((source) => source.id === currentSourceId) ? currentSourceId : (nextSources[0]?.id ?? ""),
+        );
       })
       .catch((nextError) => {
         if (cancelled) return;

@@ -309,14 +309,6 @@ function rosterClasses(status: "assigned" | "vacant" | "no_show") {
   return "bg-slate-100 text-slate-700";
 }
 
-function currentTimeMarkerLabel(nowIso: string, timeZone?: string | null) {
-  return new Intl.DateTimeFormat(undefined, {
-    timeZone: timeZone ?? undefined,
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(new Date(nowIso));
-}
-
 function formatAuthMethodLabel(method: string | null | undefined): string {
   switch (method) {
     case "selfie":
@@ -454,7 +446,7 @@ export function AdminOfficeHoursPanel({
   const [drawerMode, setDrawerMode] = useState<"create" | "detail">(initialComposeOpen ? "create" : "detail");
   const [selectedCellKey, setSelectedCellKey] = useState("");
   const [selectedShiftId, setSelectedShiftId] = useState("");
-  const [draftDate, setDraftDate] = useState<string>(() => startOfWeekMondayDateOnly(initialAnchorDate ?? todayDateString()) ?? todayDateString());
+  const [, setDraftDate] = useState<string>(() => startOfWeekMondayDateOnly(initialAnchorDate ?? todayDateString()) ?? todayDateString());
   const [submitting, setSubmitting] = useState(false);
   const [form, setForm] = useState<ShiftFormState>(
     defaultForm({
@@ -615,7 +607,7 @@ export function AdminOfficeHoursPanel({
       collection.sort((a, b) => Date.parse(a.checkin_at) - Date.parse(b.checkin_at));
     }
     return byDay;
-  }, [filteredSessions]);
+  }, [filteredSessions, tz]);
 
   const monthGrid = useMemo(() => {
     if (view !== "month") return { days: [] as Array<string | null>, monthStart: startDate };

@@ -42,14 +42,6 @@ function safeNumber(value: unknown): number | null {
   return null;
 }
 
-function formatMinutes(totalMinutes: number | null): string {
-  if (totalMinutes === null) return "n/a";
-  const minutes = Math.max(0, Math.round(totalMinutes));
-  const hoursPart = Math.floor(minutes / 60);
-  const minutesPart = minutes % 60;
-  return `${hoursPart}h ${minutesPart}m`;
-}
-
 async function cleanupKioskCheckinPhotos(supabase: ReturnType<typeof getSupabaseAdminClient>) {
   const cutoff = new Date(Date.now() - KIOSK_PHOTO_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
@@ -127,29 +119,10 @@ async function handle(request: NextRequest) {
     env = getCronEnv();
   } catch (e) {
     const message = e instanceof Error ? e.message : "missing cron env";
-    return NextResponse.json(
-      {
-        error: message,
-        debug: {
-          vercel_env: process.env.VERCEL_ENV ?? null,
-          vercel_url: process.env.VERCEL_URL ?? null,
-          vercel_git_sha: process.env.VERCEL_GIT_COMMIT_SHA ?? null,
-          vercel_git_ref: process.env.VERCEL_GIT_COMMIT_REF ?? null,
-        },
-      },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: message }, { status: 500 });
   }
-  const debug = {
-    vercel_env: process.env.VERCEL_ENV ?? null,
-    vercel_url: process.env.VERCEL_URL ?? null,
-    vercel_git_sha: process.env.VERCEL_GIT_COMMIT_SHA ?? null,
-    vercel_git_ref: process.env.VERCEL_GIT_COMMIT_REF ?? null,
-    has_authorization_header: request.headers.has("authorization"),
-    has_legacy_cron_header: request.headers.has("x-cron-secret"),
-  };
   if (!isAuthorizedCronRequest(request.headers, { cronSecret: env.CRON_SECRET })) {
-    return NextResponse.json({ error: "unauthorized", debug }, { status: 401 });
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
   const origin = new URL(request.url).origin;

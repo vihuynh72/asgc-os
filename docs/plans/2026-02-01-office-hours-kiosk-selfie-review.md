@@ -1,6 +1,6 @@
 # Office Hours Kiosk Selfie + Reviewer Access Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+> **Archive notice:** This dated plan records design intent at the time it was written. It is not current setup guidance or evidence that a task was completed. Paths, names, commands, and expected results may differ from the current repository. Current code, migrations, and the repository [`README`](../../README.md) take precedence.
 
 **Goal:** Make the kiosk check-in mobile-first with an easy selfie capture flow, and add a separate permissioned reviewer experience for viewing kiosk check-in selfies.
 
@@ -54,4 +54,3 @@
 **Steps:**
 1. `cd apps/web && npm test`
 2. `cd apps/web && npm run build`
-
